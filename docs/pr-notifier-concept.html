@@ -1,0 +1,693 @@
+<title>PR 리뷰 자동화 — 개념과 흐름</title>
+<style>
+  :root {
+    --font-sans: system-ui, "Segoe UI", "Malgun Gothic", "Apple SD Gothic Neo", "Noto Sans KR", sans-serif;
+    --font-mono: ui-monospace, "Cascadia Code", "JetBrains Mono", Consolas, "SF Mono", Menlo, monospace;
+
+    /* neutrals — cool slate, chosen not defaulted */
+    --bg: #e9edf1;
+    --surface: #ffffff;
+    --surface-2: #f3f6f9;
+    --ink: #161b22;
+    --muted: #5a6675;
+    --faint: #8b96a4;
+    --line: #d5dce4;
+    --line-strong: #c2cbd6;
+
+    /* structural accent — teal */
+    --accent: #0f766e;
+    --accent-ink: #0c5f58;
+    --accent-soft: rgba(15, 118, 110, 0.10);
+
+    /* actors */
+    --gh: #2b3138;
+    --gh-bg: rgba(43, 49, 56, 0.09);
+    --mw: #0f766e;
+    --mw-bg: rgba(15, 118, 110, 0.11);
+    --claude: #b25233;
+    --claude-bg: rgba(178, 82, 51, 0.11);
+    --slack: #7b2f86;
+    --slack-bg: rgba(123, 47, 134, 0.11);
+    --human: #35618f;
+    --human-bg: rgba(53, 97, 143, 0.11);
+
+    /* semantic decision branches */
+    --ok: #1c7d4d;
+    --ok-bg: rgba(28, 125, 77, 0.10);
+    --warn: #b64409;
+    --warn-bg: rgba(182, 68, 9, 0.10);
+
+    --radius: 14px;
+    --shadow: 0 1px 2px rgba(18, 26, 38, 0.05), 0 8px 24px -16px rgba(18, 26, 38, 0.18);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0d1117;
+      --surface: #161b22;
+      --surface-2: #1c232d;
+      --ink: #e6edf3;
+      --muted: #9aa5b1;
+      --faint: #6b7684;
+      --line: #29313c;
+      --line-strong: #38424f;
+      --accent: #2dd4bf;
+      --accent-ink: #5eead4;
+      --accent-soft: rgba(45, 212, 191, 0.12);
+      --gh: #c9d1d9;
+      --gh-bg: rgba(201, 209, 217, 0.09);
+      --mw: #2dd4bf;
+      --mw-bg: rgba(45, 212, 191, 0.13);
+      --claude: #e0895f;
+      --claude-bg: rgba(224, 137, 95, 0.13);
+      --slack: #cf8fd6;
+      --slack-bg: rgba(207, 143, 214, 0.13);
+      --human: #7fb0e6;
+      --human-bg: rgba(127, 176, 230, 0.13);
+      --ok: #4ec98a;
+      --ok-bg: rgba(78, 201, 138, 0.13);
+      --warn: #f0894e;
+      --warn-bg: rgba(240, 137, 78, 0.13);
+      --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 10px 30px -18px rgba(0, 0, 0, 0.7);
+    }
+  }
+
+  :root[data-theme="light"] {
+    --bg: #e9edf1; --surface: #ffffff; --surface-2: #f3f6f9;
+    --ink: #161b22; --muted: #5a6675; --faint: #8b96a4;
+    --line: #d5dce4; --line-strong: #c2cbd6;
+    --accent: #0f766e; --accent-ink: #0c5f58; --accent-soft: rgba(15,118,110,0.10);
+    --gh: #2b3138; --gh-bg: rgba(43,49,56,0.09);
+    --mw: #0f766e; --mw-bg: rgba(15,118,110,0.11);
+    --claude: #b25233; --claude-bg: rgba(178,82,51,0.11);
+    --slack: #7b2f86; --slack-bg: rgba(123,47,134,0.11);
+    --human: #35618f; --human-bg: rgba(53,97,143,0.11);
+    --ok: #1c7d4d; --ok-bg: rgba(28,125,77,0.10);
+    --warn: #b64409; --warn-bg: rgba(182,68,9,0.10);
+    --shadow: 0 1px 2px rgba(18,26,38,0.05), 0 8px 24px -16px rgba(18,26,38,0.18);
+  }
+  :root[data-theme="dark"] {
+    --bg: #0d1117; --surface: #161b22; --surface-2: #1c232d;
+    --ink: #e6edf3; --muted: #9aa5b1; --faint: #6b7684;
+    --line: #29313c; --line-strong: #38424f;
+    --accent: #2dd4bf; --accent-ink: #5eead4; --accent-soft: rgba(45,212,191,0.12);
+    --gh: #c9d1d9; --gh-bg: rgba(201,209,217,0.09);
+    --mw: #2dd4bf; --mw-bg: rgba(45,212,191,0.13);
+    --claude: #e0895f; --claude-bg: rgba(224,137,95,0.13);
+    --slack: #cf8fd6; --slack-bg: rgba(207,143,214,0.13);
+    --human: #7fb0e6; --human-bg: rgba(127,176,230,0.13);
+    --ok: #4ec98a; --ok-bg: rgba(78,201,138,0.13);
+    --warn: #f0894e; --warn-bg: rgba(240,137,78,0.13);
+    --shadow: 0 1px 2px rgba(0,0,0,0.4), 0 10px 30px -18px rgba(0,0,0,0.7);
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--font-sans);
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  .wrap {
+    max-width: 940px;
+    margin: 0 auto;
+    padding: clamp(28px, 6vw, 72px) clamp(18px, 4vw, 40px) 96px;
+  }
+
+  .eyebrow {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    color: var(--accent-ink);
+    margin: 0 0 14px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .eyebrow::before {
+    content: "";
+    width: 26px; height: 2px;
+    background: var(--accent);
+    display: inline-block;
+  }
+
+  h1 {
+    font-size: clamp(28px, 5vw, 44px);
+    line-height: 1.12;
+    letter-spacing: -0.02em;
+    margin: 0 0 16px;
+    text-wrap: balance;
+    font-weight: 750;
+  }
+  .lede {
+    font-size: clamp(16px, 2.2vw, 19px);
+    color: var(--muted);
+    max-width: 60ch;
+    margin: 0 0 24px;
+  }
+  .lede strong { color: var(--ink); font-weight: 650; }
+
+  .meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .tag {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    padding: 5px 11px;
+    border-radius: 999px;
+    border: 1px solid var(--line-strong);
+    color: var(--muted);
+    background: var(--surface);
+  }
+  .tag.on { color: var(--accent-ink); border-color: color-mix(in srgb, var(--accent) 40%, var(--line-strong)); background: var(--accent-soft); }
+
+  /* section heading */
+  .sec-head {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+    margin: 68px 0 24px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid var(--line);
+  }
+  .sec-head h2 {
+    font-size: 20px;
+    margin: 0;
+    letter-spacing: -0.01em;
+  }
+  .sec-head .n {
+    font-family: var(--font-mono);
+    font-size: 13px;
+    color: var(--faint);
+  }
+
+  /* actor legend */
+  .legend {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 10px;
+    margin-top: 20px;
+  }
+  .legend .actor {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 14px;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+  }
+  .dot { width: 10px; height: 10px; border-radius: 50%; flex: none; }
+  .actor .nm { font-weight: 600; font-size: 14px; }
+  .actor .rl { font-size: 12px; color: var(--faint); }
+  .a-gh { color: var(--gh); } .a-gh .dot { background: var(--gh); }
+  .a-mw { color: var(--mw); } .a-mw .dot { background: var(--mw); }
+  .a-claude { color: var(--claude); } .a-claude .dot { background: var(--claude); }
+  .a-slack { color: var(--slack); } .a-slack .dot { background: var(--slack); }
+  .a-human { color: var(--human); } .a-human .dot { background: var(--human); }
+
+  /* pipeline flow */
+  .flow { position: relative; margin-top: 8px; }
+  .stage {
+    display: grid;
+    grid-template-columns: 52px 1fr;
+    gap: 18px;
+    position: relative;
+    padding-bottom: 26px;
+  }
+  /* connector rail */
+  .stage::before {
+    content: "";
+    position: absolute;
+    left: 25px;
+    top: 44px;
+    bottom: -8px;
+    width: 2px;
+    background: repeating-linear-gradient(
+      to bottom,
+      var(--line-strong) 0 6px,
+      transparent 6px 12px
+    );
+    background-size: 2px 12px;
+    animation: flowline 0.9s linear infinite;
+  }
+  .stage:last-child::before { display: none; }
+
+  @keyframes flowline {
+    to { background-position: 0 12px; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .stage::before { animation: none; }
+  }
+
+  .node {
+    width: 52px; height: 52px;
+    border-radius: 14px;
+    display: grid;
+    place-items: center;
+    font-family: var(--font-mono);
+    font-size: 18px;
+    font-weight: 600;
+    background: var(--surface);
+    border: 1px solid var(--line-strong);
+    color: var(--ink);
+    position: relative;
+    z-index: 1;
+  }
+
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 18px 20px;
+    box-shadow: var(--shadow);
+  }
+  .card .top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-bottom: 8px;
+  }
+  .card h3 { font-size: 16px; margin: 0; letter-spacing: -0.01em; }
+  .card p { margin: 0; color: var(--muted); font-size: 14.5px; }
+  .card p + p { margin-top: 8px; }
+
+  .chip {
+    font-size: 11.5px;
+    font-weight: 600;
+    padding: 4px 10px;
+    border-radius: 999px;
+    letter-spacing: 0.02em;
+    white-space: nowrap;
+  }
+  .chip.gh { color: var(--gh); background: var(--gh-bg); }
+  .chip.mw { color: var(--mw); background: var(--mw-bg); }
+  .chip.claude { color: var(--claude); background: var(--claude-bg); }
+  .chip.slack { color: var(--slack); background: var(--slack-bg); }
+  .chip.human { color: var(--human); background: var(--human-bg); }
+
+  code, .mono {
+    font-family: var(--font-mono);
+    font-size: 12.5px;
+  }
+  .card code {
+    background: var(--surface-2);
+    border: 1px solid var(--line);
+    padding: 1px 6px;
+    border-radius: 6px;
+    color: var(--ink);
+    word-break: break-word;
+  }
+  .metaline {
+    margin-top: 10px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 8px;
+    align-items: center;
+  }
+  .metaline .k {
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    color: var(--faint);
+    padding: 3px 8px;
+    border: 1px dashed var(--line-strong);
+    border-radius: 6px;
+    background: transparent;
+  }
+
+  .badge-async {
+    display: inline-flex; align-items: center; gap: 6px;
+    font-size: 11.5px; font-weight: 600;
+    color: var(--accent-ink);
+    background: var(--accent-soft);
+    border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
+    padding: 4px 10px; border-radius: 999px;
+    margin-top: 10px;
+  }
+  .badge-async::before { content: "⇢"; font-family: var(--font-mono); }
+
+  /* decision branch */
+  .branch-note {
+    grid-column: 2;
+    margin: -6px 0 14px;
+    font-size: 13px;
+    color: var(--faint);
+    font-family: var(--font-mono);
+  }
+  .branches {
+    grid-column: 2;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 14px;
+  }
+  .branch {
+    border-radius: 12px;
+    padding: 16px;
+    border: 1px solid var(--line);
+    background: var(--surface);
+  }
+  .branch.yes { border-left: 4px solid var(--ok); }
+  .branch.no { border-left: 4px solid var(--warn); }
+  .branch .lbl {
+    display: inline-flex; align-items: center; gap: 7px;
+    font-weight: 700; font-size: 14px; margin-bottom: 6px;
+  }
+  .branch.yes .lbl { color: var(--ok); }
+  .branch.no .lbl { color: var(--warn); }
+  .branch p { font-size: 13.5px; color: var(--muted); margin: 0; }
+  .branch .arrow { font-family: var(--font-mono); margin-top: 8px; font-size: 12.5px; color: var(--faint); }
+
+  /* slack card mockup */
+  .mock {
+    margin-top: 22px;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    overflow: hidden;
+    max-width: 560px;
+  }
+  .mock .bar {
+    display: flex; align-items: center; gap: 8px;
+    padding: 10px 16px;
+    background: var(--surface-2);
+    border-bottom: 1px solid var(--line);
+    font-size: 12px; color: var(--faint);
+    font-family: var(--font-mono);
+  }
+  .mock .bar .sq { width: 9px; height: 9px; border-radius: 3px; background: var(--slack); }
+  .mock .body { padding: 16px 18px; }
+  .mock .m-title {
+    font-weight: 650; font-size: 14px;
+  }
+  .mock .m-title a { color: var(--accent-ink); text-decoration: none; }
+  .mock .m-sub {
+    font-family: var(--font-mono);
+    font-size: 12px; color: var(--faint); margin-top: 4px;
+  }
+  .ai-block {
+    margin-top: 14px;
+    border: 1px solid color-mix(in srgb, var(--claude) 28%, var(--line));
+    background: var(--claude-bg);
+    border-radius: 10px;
+    padding: 13px 15px;
+  }
+  .ai-block .h {
+    display: flex; align-items: center; gap: 7px;
+    font-weight: 700; font-size: 13px; color: var(--claude);
+    margin-bottom: 8px;
+  }
+  .ai-block .sum { font-size: 13.5px; color: var(--ink); margin: 0 0 10px; }
+  .ai-block .grp-label {
+    font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase;
+    color: var(--muted); font-weight: 700; margin: 8px 0 4px;
+  }
+  .ai-block ul { margin: 0; padding-left: 18px; }
+  .ai-block li { font-size: 13px; color: var(--muted); margin: 2px 0; }
+  .mock .m-btns { display: flex; gap: 10px; margin-top: 15px; }
+  .btn {
+    font-size: 13px; font-weight: 600;
+    padding: 8px 16px; border-radius: 8px; border: 1px solid transparent;
+    cursor: default;
+  }
+  .btn.approve { background: var(--ok); color: #fff; }
+  .btn.reject { background: transparent; color: var(--warn); border-color: var(--warn); }
+
+  /* concept callouts */
+  .concepts {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 14px;
+    margin-top: 20px;
+  }
+  .concept {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 18px 18px 20px;
+    position: relative;
+  }
+  .concept .ic {
+    font-family: var(--font-mono);
+    font-size: 12px; font-weight: 700;
+    color: var(--accent-ink);
+    letter-spacing: 0.05em;
+  }
+  .concept h3 { font-size: 15px; margin: 8px 0 8px; letter-spacing: -0.01em; }
+  .concept p { font-size: 13.5px; color: var(--muted); margin: 0; }
+  .concept code {
+    font-family: var(--font-mono); font-size: 12px;
+    background: var(--surface-2); border: 1px solid var(--line);
+    padding: 1px 5px; border-radius: 5px; color: var(--ink);
+  }
+
+  .foot {
+    margin-top: 64px;
+    padding-top: 20px;
+    border-top: 1px solid var(--line);
+    display: flex; gap: 14px; flex-wrap: wrap;
+    align-items: center;
+    font-size: 13px; color: var(--faint);
+  }
+  .foot .scope {
+    display: inline-flex; gap: 8px; flex-wrap: wrap;
+  }
+  .foot .scope span {
+    font-family: var(--font-mono); font-size: 11.5px;
+    padding: 3px 9px; border-radius: 6px; border: 1px solid var(--line);
+  }
+  .foot .scope .in { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 35%, var(--line)); }
+  .foot .scope .out { color: var(--faint); text-decoration: line-through; }
+
+  /* reveal animation */
+  .reveal { opacity: 0; transform: translateY(10px); animation: reveal 0.5s ease forwards; }
+  @keyframes reveal { to { opacity: 1; transform: none; } }
+  @media (prefers-reduced-motion: reduce) {
+    .reveal { opacity: 1; transform: none; animation: none; }
+  }
+
+  @media (max-width: 560px) {
+    .stage { grid-template-columns: 42px 1fr; gap: 12px; }
+    .stage::before { left: 20px; }
+    .node { width: 42px; height: 42px; font-size: 15px; border-radius: 12px; }
+    .branches { grid-template-columns: 1fr; }
+  }
+</style>
+
+<div class="wrap">
+
+  <header>
+    <p class="eyebrow reveal">설계 개념 · CONCEPT</p>
+    <h1 class="reveal" style="animation-delay:.05s">GitHub PR을 Slack으로 가져와,<br>AI가 요약하고 사람이 클릭한다</h1>
+    <p class="lede reveal" style="animation-delay:.1s">
+      PR이 열리면 미들웨어가 변경 내용을 <strong>Claude로 분석</strong>해 요점을 정리하고,
+      리뷰어는 <strong>GitHub를 열지 않고 Slack에서</strong> 승인/변경요청을 누른다.
+      그 결과는 GitHub에 정식 리뷰로 기록된다.
+    </p>
+    <div class="meta reveal" style="animation-delay:.15s">
+      <span class="tag on">FastAPI 미들웨어</span>
+      <span class="tag on">Claude Opus 4.8</span>
+      <span class="tag">GitHub Webhook</span>
+      <span class="tag">Slack Interactivity</span>
+      <span class="tag">DB 없음 · 무상태</span>
+    </div>
+  </header>
+
+  <!-- actors -->
+  <div class="sec-head">
+    <span class="n">A</span>
+    <h2>등장 요소</h2>
+  </div>
+  <div class="legend">
+    <div class="actor a-gh"><span class="dot"></span><span><span class="nm">GitHub</span><br><span class="rl">PR 이벤트 · 리뷰 기록</span></span></div>
+    <div class="actor a-mw"><span class="dot"></span><span><span class="nm">미들웨어</span><br><span class="rl">FastAPI · 검증 · 오케스트레이션</span></span></div>
+    <div class="actor a-claude"><span class="dot"></span><span><span class="nm">Claude</span><br><span class="rl">변경 분석 · 요점 정리</span></span></div>
+    <div class="actor a-slack"><span class="dot"></span><span><span class="nm">Slack</span><br><span class="rl">알림 · 버튼 · 모달</span></span></div>
+    <div class="actor a-human"><span class="dot"></span><span><span class="nm">리뷰어</span><br><span class="rl">최종 판단(사람)</span></span></div>
+  </div>
+
+  <!-- forward flow -->
+  <div class="sec-head">
+    <span class="n">B</span>
+    <h2>흐름 ① — PR 생성부터 Slack 게시까지</h2>
+  </div>
+  <div class="flow">
+
+    <div class="stage">
+      <div class="node">1</div>
+      <div class="card">
+        <div class="top"><h3>PR이 열린다</h3><span class="chip gh">GitHub</span></div>
+        <p>개발자가 PR을 <code>opened</code> / <code>reopened</code> 하면 GitHub가 웹훅을 발사한다.</p>
+        <div class="metaline"><span class="k">POST /webhooks/github</span><span class="k">X-Hub-Signature-256</span></div>
+      </div>
+    </div>
+
+    <div class="stage">
+      <div class="node">2</div>
+      <div class="card">
+        <div class="top"><h3>수신 · 검증 · 즉시 응답</h3><span class="chip mw">미들웨어</span></div>
+        <p>HMAC 서명을 검증한 뒤 GitHub에는 <strong style="color:var(--ink)">곧바로 200</strong>을 돌려준다. 실제 분석·게시는 백그라운드로 넘긴다.</p>
+        <span class="badge-async">여기서부터 백그라운드 (AI는 수 초~수십 초)</span>
+      </div>
+    </div>
+
+    <div class="stage">
+      <div class="node">3</div>
+      <div class="card">
+        <div class="top"><h3>변경 내용 조회</h3><span class="chip gh">GitHub API</span></div>
+        <p>백그라운드에서 PR의 <strong style="color:var(--ink)">diff와 변경 파일 전체</strong>를 가져온다.</p>
+        <div class="metaline"><span class="k">GET /repos/{repo}/pulls/{n}</span><span class="k">.diff + files</span></div>
+      </div>
+    </div>
+
+    <div class="stage">
+      <div class="node">4</div>
+      <div class="card">
+        <div class="top"><h3>AI 분석</h3><span class="chip claude">Claude · Opus 4.8</span></div>
+        <p>diff와 파일을 근거로 <strong style="color:var(--ink)">무엇이 어떻게 바뀌었는지</strong>를 분석해 요약·주요 변경점·살펴볼 지점을 구조화 출력한다. 승인/거절은 판단하지 않는다.</p>
+        <div class="metaline"><span class="k">adaptive thinking</span><span class="k">effort: high</span><span class="k">messages.parse()</span></div>
+      </div>
+    </div>
+
+    <div class="stage">
+      <div class="node">5</div>
+      <div class="card">
+        <div class="top"><h3>Slack에 게시</h3><span class="chip slack">Slack</span></div>
+        <p>AI 카드와 함께 <strong style="color:var(--ink)">[Yes · 승인] [No · 변경요청]</strong> 버튼을 채널에 올린다. 버튼에는 PR 정보를 담은 서명 토큰이 들어간다.</p>
+        <div class="metaline"><span class="k">chat.postMessage</span><span class="k">value = action token</span></div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- slack mockup -->
+  <div class="mock reveal">
+    <div class="bar"><span class="sq"></span> #pr-reviews · Slack에 보이는 모습</div>
+    <div class="body">
+      <div class="m-title">PR 리뷰 요청 &nbsp;<a href="#">#123 · Add background AI review</a></div>
+      <div class="m-sub">feature/ai-review → main · 작성자 jaecheon</div>
+
+      <div class="ai-block">
+        <div class="h">🤖 AI 요약</div>
+        <p class="sum">웹훅 처리를 백그라운드로 전환하고, PR diff를 Claude로 분석해 Slack 카드에 요약을 붙이는 변경.</p>
+        <div class="grp-label">주요 변경점</div>
+        <ul>
+          <li><code>ai_reviewer.py</code> 신규 — diff/파일 → 구조화 리뷰</li>
+          <li>웹훅을 즉시 ack + 백그라운드 처리로 전환</li>
+        </ul>
+        <div class="grp-label">살펴볼 지점</div>
+        <ul>
+          <li>대형 PR에서 토큰·비용이 커질 수 있음 (캡 확인)</li>
+          <li>백그라운드 실패 시 Slack 게시 누락 처리</li>
+        </ul>
+      </div>
+
+      <div class="m-btns">
+        <span class="btn approve">Yes · 승인</span>
+        <span class="btn reject">No · 변경요청</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- return flow -->
+  <div class="sec-head">
+    <span class="n">C</span>
+    <h2>흐름 ② — 버튼 클릭부터 GitHub 리뷰까지</h2>
+  </div>
+  <div class="flow">
+
+    <div class="stage">
+      <div class="node">6</div>
+      <div class="card">
+        <div class="top"><h3>사람이 판단한다</h3><span class="chip human">리뷰어</span></div>
+        <p>리뷰어가 Slack에서 버튼을 누르면 미들웨어로 상호작용이 전달된다. 서명과 5분 타임스탬프, 토큰, 승인자 허용목록을 모두 검증한다.</p>
+        <div class="metaline"><span class="k">POST /webhooks/slack/actions</span><span class="k">X-Slack-Signature</span></div>
+      </div>
+    </div>
+
+    <div class="stage">
+      <div class="node" style="color:var(--faint)">⑃</div>
+      <div class="branch-note">// 버튼에 따라 두 갈래로</div>
+      <div class="branches">
+        <div class="branch yes">
+          <div class="lbl">● Yes · 승인</div>
+          <p>확인 다이얼로그 후 곧바로 GitHub에 <strong>APPROVE</strong> 리뷰를 제출한다.</p>
+          <div class="arrow">→ event: "APPROVE"</div>
+        </div>
+        <div class="branch no">
+          <div class="lbl">● No · 변경요청</div>
+          <p>사유 입력 모달을 띄우고, 제출된 사유와 함께 <strong>REQUEST_CHANGES</strong> 리뷰를 남긴다.</p>
+          <div class="arrow">→ modal → event: "REQUEST_CHANGES"</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="stage">
+      <div class="node">7</div>
+      <div class="card">
+        <div class="top"><h3>GitHub 기록 + Slack 갱신</h3><span class="chip gh">GitHub</span></div>
+        <p>결정이 GitHub PR에 <strong style="color:var(--ink)">정식 리뷰</strong>로 남고, Slack 원본 메시지는 "✅ 승인됨 / ❌ 변경 요청됨" 결과로 갱신된다.</p>
+        <div class="metaline"><span class="k">POST /repos/{repo}/pulls/{n}/reviews</span><span class="k">chat.update</span></div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- concepts -->
+  <div class="sec-head">
+    <span class="n">D</span>
+    <h2>핵심 개념 넷</h2>
+  </div>
+  <div class="concepts">
+    <div class="concept">
+      <span class="ic">01 · ASYNC</span>
+      <h3>왜 백그라운드인가</h3>
+      <p>AI 분석은 수 초~수십 초. 그런데 Slack은 <strong style="color:var(--ink)">3초 안에</strong> 응답을 기대한다. 그래서 즉시 ack하고 뒤에서 처리하는 것이 선택이 아니라 필수다.</p>
+    </div>
+    <div class="concept">
+      <span class="ic">02 · STATELESS</span>
+      <h3>DB 없는 무상태</h3>
+      <p>버튼이 눌렸을 때 필요한 PR 정보를 <code>HMAC 서명 토큰</code>(24h 만료)에 담아 버튼 <code>value</code>로 전달한다. 서버는 아무 상태도 저장하지 않는다.</p>
+    </div>
+    <div class="concept">
+      <span class="ic">03 · SECURITY</span>
+      <h3>3중 검증</h3>
+      <p>GitHub 서명 · Slack 서명 + 리플레이 방지 · action token 서명·만료 · 승인자 허용목록. 모든 진입 경로를 상수시간 비교로 검증한다.</p>
+    </div>
+    <div class="concept">
+      <span class="ic">04 · COST</span>
+      <h3>AI 비용 캡</h3>
+      <p>호출 전 <code>count_tokens</code>로 크기를 재고, 예산을 넘으면 큰 파일은 diff-only로 강등한다. <strong style="color:var(--ink)">무엇을 뺐는지 로그로 남긴다</strong>(조용한 truncation 금지).</p>
+    </div>
+  </div>
+
+  <!-- footer scope -->
+  <div class="foot">
+    <span>MVP 범위</span>
+    <span class="scope">
+      <span class="in">✓ PR 알림</span>
+      <span class="in">✓ AI 요약</span>
+      <span class="in">✓ 사람 승인</span>
+      <span class="out">AI 자동 판정</span>
+      <span class="out">자동 머지</span>
+    </span>
+  </div>
+
+</div>
+
+<script>
+  // stagger the reveal of pipeline stages
+  document.querySelectorAll('.stage, .concept, .actor').forEach(function (el, i) {
+    el.classList.add('reveal');
+    el.style.animationDelay = (0.04 * i) + 's';
+  });
+</script>
