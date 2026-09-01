@@ -8,3 +8,13 @@ __pycache__/
 .ruff_cache/
 htmlcov/
 .coverage
+*.db
+*.db-wal
+*.db-shm
+.poller_state.json
+*.log
+pytest_out*.txt
+workspaces/
+reports/
+.orchestration/
+_e2e_reset.py

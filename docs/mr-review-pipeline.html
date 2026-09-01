@@ -1,0 +1,813 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MR 리뷰 파이프라인 — 승인/의견 → AI 재생성 루프 (SQLite 기반 v2 · 설계 v4)</title>
+<style>
+:root{
+  --bg:#f2f5f7; --panel:#ffffff; --line:#c8d3dc; --line-strong:#b3c1cd;
+  --ink:#1c2733; --ink-2:#4a5a6a; --ink-3:#7d8b99;
+  --accent:#0f8fa8; --accent-soft:#e2f2f5;
+  --ai:#0f8fa8; --ai-soft:#e2f2f5;
+  --human:#7c3aed; --human-soft:#f1eafd;
+  --ok:#15803d; --ok-soft:#e4f4ea;
+  --warn:#b45309; --warn-soft:#fdf1e0;
+  --crit:#b91c1c; --crit-soft:#fdeaea;
+  --grid:rgba(28,39,51,.045);
+  --mono:Consolas,"Cascadia Mono",ui-monospace,monospace;
+  --shadow:0 1px 2px rgba(28,39,51,.04),0 8px 22px rgba(28,39,51,.06);
+}
+@media (prefers-color-scheme: dark){
+  :root{
+    --bg:#10161d; --panel:#18212b; --line:#31404f; --line-strong:#42566a;
+    --ink:#dde5f0; --ink-2:#a3aec0; --ink-3:#6f7d90;
+    --accent:#3fb7cc; --accent-soft:#12303a;
+    --ai:#3fb7cc; --ai-soft:#12303a;
+    --human:#a78bfa; --human-soft:#251b3a;
+    --ok:#4ade80; --ok-soft:#12301c;
+    --warn:#f0a24b; --warn-soft:#332413;
+    --crit:#f87171; --crit-soft:#391818;
+    --grid:rgba(221,229,240,.04);
+    --shadow:0 1px 2px rgba(0,0,0,.3),0 10px 28px rgba(0,0,0,.35);
+  }
+}
+*{box-sizing:border-box}
+body{
+  margin:0; padding:28px 20px 56px; color:var(--ink);
+  background:var(--bg);
+  background-image:linear-gradient(var(--grid) 1px,transparent 1px),
+                   linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+  background-size:24px 24px;
+  font:15px/1.55 -apple-system,"Segoe UI","Malgun Gothic",system-ui,sans-serif;
+}
+.wrap{max-width:1180px;margin:0 auto}
+.mono{font-family:var(--mono)}
+
+/* ---------- header ---------- */
+header{margin-bottom:26px}
+.eyebrow{font-family:var(--mono);font-size:11px;letter-spacing:.18em;color:var(--accent);text-transform:uppercase;display:flex;align-items:center;gap:10px}
+.eyebrow::before{content:"";width:22px;height:2px;background:var(--accent);display:inline-block}
+h1{margin:8px 0 12px;font-size:clamp(20px,3.2vw,28px);letter-spacing:-.02em;text-wrap:balance}
+.lede{max-width:78ch;color:var(--ink-2);font-size:14px;margin:0 0 16px}
+.chips{display:flex;flex-wrap:wrap;gap:8px}
+.chip{font-family:var(--mono);font-size:11.5px;color:var(--ink-2);
+  border:1px solid var(--line);background:var(--panel);border-radius:999px;padding:4px 11px}
+.chip b{color:var(--ink);font-weight:600}
+
+/* ---------- section scaffolding ---------- */
+section.sect{margin-top:34px}
+.sec-head{display:flex;align-items:baseline;gap:14px;margin-bottom:16px}
+.sec-head h2{font-size:16px;font-weight:700;margin:0;letter-spacing:-.01em}
+.sec-head .num{font-family:var(--mono);font-size:11.5px;color:var(--ink-3);
+  border:1px solid var(--line);border-radius:6px;padding:2px 8px}
+.sec-head .rule{flex:1;height:1px;background:var(--line);align-self:center}
+
+/* ---------- band/card base ---------- */
+.band{background:var(--panel);border:1px solid var(--line);border-radius:12px;
+  padding:18px 18px 20px;margin-bottom:14px;box-shadow:var(--shadow);position:relative}
+
+/* ---------- ① component map ---------- */
+.comp-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.comp-card{border:1px solid var(--line-strong);border-radius:12px;padding:16px 18px;background:var(--panel);box-shadow:var(--shadow)}
+/* .ci 클래스명은 v3.2 이전 CI 파이프라인 시대의 잔재 — v4부터는 "AI 실행기" 카드를 가리키는 이름일 뿐, CI와 무관 (v4.2 주석 정리) */
+.comp-card.ci{border-color:color-mix(in srgb,var(--ai) 50%,var(--line))}
+.comp-card.mid{border-color:color-mix(in srgb,var(--human) 50%,var(--line))}
+.comp-card .ctitle{display:flex;align-items:center;gap:8px;font-weight:700;font-size:15px;margin-bottom:2px}
+.comp-card.ci .ctitle{color:var(--ai)}
+.comp-card.mid .ctitle{color:var(--human)}
+.comp-card .csub{font-family:var(--mono);font-size:11px;color:var(--ink-3);margin-bottom:12px}
+.comp-card .badge{display:inline-block;font-family:var(--mono);font-size:10px;padding:1px 8px;
+  border-radius:999px;border:1px solid currentColor;margin-left:6px}
+.job-block{border:1px dashed var(--line-strong);border-radius:9px;padding:10px 12px;margin-bottom:10px;background:var(--bg)}
+.job-block:last-of-type{margin-bottom:0}
+.job-block .jl{font-family:var(--mono);font-weight:700;font-size:12.5px;margin-bottom:4px}
+.job-block .jl .tag{font-weight:400;color:var(--ink-3);font-size:11px}
+.job-block ul{margin:4px 0 0;padding-left:18px}
+.job-block li{font-size:12.5px;color:var(--ink-2);margin:3px 0}
+.job-block code{font-family:var(--mono);font-size:11.5px;background:var(--panel);border:1px solid var(--line);border-radius:4px;padding:0 4px;color:var(--ink)}
+.principle{margin-top:14px;font-family:var(--mono);font-size:11.5px;color:var(--ink-2);
+  border-top:1px dashed var(--line);padding-top:12px}
+.principle b{color:var(--ink)}
+.link-note{grid-column:1/-1;display:flex;align-items:center;justify-content:center;gap:10px;
+  font-family:var(--mono);font-size:11.5px;color:var(--ink-3);margin-top:-4px;margin-bottom:2px}
+.link-note .seg{border:1px dashed var(--line-strong);border-radius:999px;padding:3px 12px}
+
+/* ---------- ② main flow ---------- */
+.flow{display:flex;flex-direction:column;gap:0}
+.down{display:flex;justify-content:center;margin:2px 0}
+.down svg{display:block}
+.scenario{border-radius:12px;padding:16px 18px 18px;margin-bottom:0;position:relative;
+  border:1px solid var(--line);background:var(--panel);box-shadow:var(--shadow)}
+.scenario .s-tag{position:absolute;top:-11px;left:14px;font-family:var(--mono);
+  font-size:11px;letter-spacing:.1em;padding:2px 10px;border-radius:999px;border:1px solid var(--line);background:var(--panel)}
+.scenario.s1{border-color:color-mix(in srgb,var(--ai) 45%,var(--line))}
+.scenario.s1 .s-tag{color:var(--ai);border-color:var(--ai)}
+.scenario.s2{border-color:color-mix(in srgb,var(--ok) 45%,var(--line))}
+.scenario.s2 .s-tag{color:var(--ok);border-color:var(--ok)}
+.scenario.s3{border-color:color-mix(in srgb,var(--warn) 45%,var(--line))}
+.scenario.s3 .s-tag{color:var(--warn);border-color:var(--warn)}
+.scenario.s4{border-color:color-mix(in srgb,var(--human) 45%,var(--line))}
+.scenario.s4 .s-tag{color:var(--human);border-color:var(--human)}
+.scenario h3{margin:6px 0 10px;font-size:14.5px}
+.steps-rail{display:flex;align-items:stretch;gap:0;overflow-x:auto;padding:4px 2px 8px}
+.step{flex:1 1 148px;min-width:148px;border:1px solid var(--line);background:var(--bg);
+  border-radius:9px;padding:9px 11px;position:relative}
+.step.ai{border-color:color-mix(in srgb,var(--ai) 55%,var(--line));background:var(--ai-soft)}
+.step.hum{border-color:color-mix(in srgb,var(--human) 55%,var(--line));background:var(--human-soft)}
+.step.ok{border-color:color-mix(in srgb,var(--ok) 55%,var(--line));background:var(--ok-soft)}
+.step.warn{border-color:color-mix(in srgb,var(--warn) 55%,var(--line));background:var(--warn-soft)}
+.step .no{font-family:var(--mono);font-size:10px;color:var(--ink-3);letter-spacing:.1em}
+.step .tt{font-size:12.5px;font-weight:700;margin:2px 0 3px;letter-spacing:-.01em}
+.step .ss{font-size:11px;color:var(--ink-2);line-height:1.4}
+.step .ss .mono{font-size:10px}
+.sarrow{flex:0 0 22px;display:flex;align-items:center;justify-content:center;color:var(--ink-3)}
+.sarrow svg{display:block}
+.ai-session-group{flex:1 1 460px;min-width:300px;border:1.5px dashed color-mix(in srgb,var(--ai) 65%,var(--line));
+  border-radius:11px;padding:18px 10px 10px;position:relative;display:flex;gap:0;align-items:stretch}
+.ai-session-group .gl-label{position:absolute;top:-10px;left:12px;font-family:var(--mono);font-size:10.5px;
+  font-weight:700;letter-spacing:.06em;color:var(--ai);background:var(--panel);padding:1px 8px;border-radius:999px;
+  border:1px solid color-mix(in srgb,var(--ai) 55%,var(--line))}
+.ai-session-group .step{background:var(--ai-soft)}
+
+/* ---------- s4-ci-rail: vertical stack, scoped to avoid affecting S1-S3 .steps-rail — "ci"는 클래스명 잔재일 뿐 CI 파이프라인과 무관(v4.2 주석 정리) ---------- */
+.s4-ci-rail{display:flex;flex-direction:column;align-items:stretch;gap:10px;overflow-x:visible;overflow-y:visible;padding:4px 2px 8px}
+.s4-ci-rail>.step{flex:0 0 auto;width:100%;min-width:0}
+.s4-ci-rail>.sarrow{flex:0 0 auto;align-self:center;transform:rotate(90deg)}
+.s4-ci-rail>.loopback{align-self:center;text-align:center;max-width:100%}
+.s4-ci-rail>.ai-session-group{flex:0 0 auto;width:100%;min-width:0}
+.guard{margin-top:10px;display:flex;flex-wrap:wrap;gap:8px}
+.guard .g{font-family:var(--mono);font-size:11px;border:1px dashed var(--crit);color:var(--crit);
+  background:var(--crit-soft);border-radius:7px;padding:5px 10px;flex:1 1 220px}
+.subnote{margin-top:10px;font-size:12px;color:var(--ink-2)}
+.subnote .mono{font-size:11px;color:var(--accent)}
+
+/* ---------- ③ state machine ---------- */
+.state-diagram{display:flex;flex-direction:column;gap:10px;align-items:center}
+.mermaid-scroll{width:100%;max-width:none;overflow-x:auto}
+.mermaid-scroll .mermaid{display:flex;justify-content:center}
+.mermaid-scroll svg{width:100% !important;height:auto !important;max-width:none !important;min-width:720px}
+.state-row{display:flex;align-items:center;gap:6px;flex-wrap:wrap;justify-content:center}
+.state{font-family:var(--mono);font-size:12.5px;font-weight:700;border-radius:9px;padding:9px 16px;
+  border:1.5px solid var(--line-strong);background:var(--panel);white-space:nowrap}
+.state.st-reviewing{border-color:var(--ai);color:var(--ai);background:var(--ai-soft)}
+/* .st-approved: v3.2 이전 "approved" 상태의 잔재 스타일 — 현 5-상태 머신에 approved 상태 없음, 사용되지 않음(v4.2 주석 정리) */
+.state.st-approved{border-color:var(--ok);color:var(--ok);background:var(--ok-soft)}
+.state.st-merged{border-color:var(--ink-3);color:var(--ink-2);background:var(--bg)}
+.state.st-revise_pending{border-color:var(--warn);color:var(--warn);background:var(--warn-soft)}
+.state.st-revising{border-color:var(--warn);color:var(--warn);background:var(--warn-soft);border-style:dashed}
+.state.st-merging{border-color:var(--warn);color:var(--warn);background:var(--warn-soft);border-style:dashed}
+.state.st-manual{border-color:var(--human);color:var(--human);background:var(--human-soft)}
+.sm-arrow{display:flex;flex-direction:column;align-items:center;font-family:var(--mono);font-size:10.5px;color:var(--ink-2);gap:2px;min-width:60px}
+.sm-arrow svg{display:block;color:var(--ink-3)}
+.sm-arrow.hum{color:var(--human)}
+.sm-arrow.ok{color:var(--ok)}
+.sm-arrow.warn{color:var(--warn)}
+.loopback{font-family:var(--mono);font-size:10.5px;color:var(--warn);border:1px dashed var(--warn);
+  border-radius:7px;padding:3px 9px;background:var(--warn-soft)}
+.sm-legend{display:flex;flex-wrap:wrap;gap:14px;justify-content:center;margin-top:6px;font-size:11.5px;color:var(--ink-2)}
+.sm-legend .lg{display:inline-flex;gap:6px;align-items:center;font-family:var(--mono);font-size:11px}
+.sm-legend .sw{width:10px;height:10px;border-radius:3px}
+
+/* ---------- ④ schema ---------- */
+.schema-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+.tbl-card{border:1px solid var(--line-strong);border-radius:11px;overflow:hidden;background:var(--panel);box-shadow:var(--shadow)}
+.tbl-card .th{font-family:var(--mono);font-weight:700;font-size:13px;padding:10px 14px;
+  background:var(--surface-2,var(--bg));border-bottom:1px solid var(--line);color:var(--accent)}
+.tbl-card .tb{padding:10px 14px;display:grid;gap:7px}
+.col{font-family:var(--mono);font-size:11.5px;color:var(--ink);display:grid;grid-template-columns:1fr;gap:1px}
+.col .cn{font-weight:700}
+.col .cc{color:var(--ink-3);font-size:10.5px;font-family:-apple-system,"Segoe UI","Malgun Gothic",sans-serif}
+.schema-note{margin-top:12px;font-size:12.5px;color:var(--ink-2)}
+.schema-note .mono{font-size:11.5px;color:var(--warn)}
+
+/* ---------- ⑤ dual record table ---------- */
+.dual-table{width:100%;border-collapse:collapse;font-size:13px}
+.dual-table th{font-family:var(--mono);font-size:11px;text-transform:uppercase;letter-spacing:.06em;
+  color:var(--ink-3);text-align:left;padding:8px 12px;border-bottom:1px solid var(--line-strong)}
+.dual-table td{padding:10px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+.dual-table tr:last-child td{border-bottom:none}
+.dual-table .db{font-family:var(--mono);font-size:12px;color:var(--ai)}
+.dual-table .gl{font-family:var(--mono);font-size:12px;color:var(--human)}
+.dual-table td:first-child{font-weight:700;font-size:12.5px;white-space:nowrap}
+.recover-note{margin-top:12px;display:flex;gap:8px;align-items:flex-start;font-size:12.5px;color:var(--ink-2);
+  border-top:1px dashed var(--line);padding-top:12px}
+.recover-note b{color:var(--warn)}
+
+/* ---------- ⑥ failure modes ---------- */
+.fail-table{width:100%;border-collapse:collapse;font-size:13px}
+.fail-table th{font-family:var(--mono);font-size:11px;text-transform:uppercase;letter-spacing:.06em;
+  color:var(--ink-3);text-align:left;padding:8px 12px;border-bottom:1px solid var(--line-strong)}
+.fail-table td{padding:10px 12px;border-bottom:1px solid var(--line);vertical-align:top;color:var(--ink-2);font-size:12.5px}
+.fail-table tr:last-child td{border-bottom:none}
+.fail-table td:first-child{font-weight:700;color:var(--ink);white-space:nowrap;font-size:13px}
+.fail-table .rec{color:var(--ok)}
+
+/* ---------- ⑦ notes ---------- */
+.notes{display:grid;gap:10px;grid-template-columns:repeat(auto-fit,minmax(260px,1fr))}
+.note{border:1px solid var(--line);border-left:3px solid var(--warn);border-radius:8px;
+  padding:11px 13px;background:var(--panel);font-size:12.5px;color:var(--ink-2)}
+.note .nt{font-family:var(--mono);font-size:10.5px;font-weight:700;text-transform:uppercase;
+  letter-spacing:.06em;color:var(--warn);margin-bottom:4px;display:block}
+.note.hold{border-left-color:var(--ink-3)}
+.note.hold .nt{color:var(--ink-3)}
+.note.v2{border-left-color:var(--accent)}
+.note.v2 .nt{color:var(--accent)}
+
+/* ---------- v3 revision markers ---------- */
+.v3-badge{display:inline-block;font-family:var(--mono);font-size:10px;padding:1px 8px;
+  border-radius:999px;border:1px solid var(--accent);color:var(--accent);margin-left:6px;vertical-align:middle}
+.rev-history{border:1px solid var(--accent);border-radius:12px;padding:16px 18px;margin-bottom:26px;
+  background:var(--accent-soft);box-shadow:var(--shadow)}
+.rev-history .rh-title{font-family:var(--mono);font-weight:700;font-size:12.5px;color:var(--accent);
+  display:flex;align-items:center;gap:8px;margin-bottom:10px}
+.rev-history ol{margin:0;padding-left:18px}
+.rev-history li{font-size:12.5px;color:var(--ink-2);margin:4px 0}
+.rev-history li b{color:var(--ink)}
+
+footer{margin-top:30px;font-family:var(--mono);font-size:10.5px;color:var(--ink-3);letter-spacing:.06em;
+  border-top:1px solid var(--line);padding-top:16px}
+
+@media (max-width:860px){
+  .comp-grid{grid-template-columns:1fr}
+  .schema-grid{grid-template-columns:1fr}
+  .state-row{flex-direction:column}
+  .sm-arrow{transform:rotate(90deg);margin:4px 0}
+  .dual-table,.fail-table{font-size:12px}
+}
+@media (max-width:760px){
+  .steps-rail{flex-direction:column}
+  .step{min-width:0}
+  .sarrow{transform:rotate(90deg);padding:2px 0}
+  .ai-session-group{flex-direction:column;min-width:0;padding-top:22px}
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <div class="eyebrow">MR REVIEW PIPELINE · DOCS-PIPELINE · SQLITE v2 · DESIGN v4</div>
+  <h1>MR 리뷰 파이프라인 — 승인/의견 → <b class="mono" style="color:var(--accent)">AI 재생성 루프</b> (SQLite 기반 v2 · v4.3)</h1>
+  <p class="lede">AI가 생성한 문서 MR을 Slack에서 리뷰하고, 의견을 AI 재생성의 입력으로 사용하는 승인 게이트. 상태·의견은 SQLite에, 실행(claude CLI)·알림은 모두 미들웨어에 위임한다. <span class="v3-badge">v4 개정</span></p>
+  <div class="chips">
+    <span class="chip">스코프 <b>MR 발행 후 ~ 머지 전</b></span>
+    <span class="chip">상태 저장 <b>SQLite (미들웨어)</b></span>
+    <span class="chip">재생성 <b>미들웨어 (claude CLI)</b></span>
+    <span class="chip">머지 <b>승인 후 자동(poll)</b> <span class="v3-badge" style="font-size:9px;margin-left:2px">v4.2</span></span>
+    <span class="chip">Docusaurus <b>스코프 외 (머지 후)</b></span>
+  </div>
+</header>
+
+<div class="rev-history">
+  <div class="rh-title">개정 이력 (v3 / v3.1 / v3.2 / v4 / v4.1 / v4.2 / v4.3) <span class="v3-badge">v3 개정</span><span class="v3-badge">v3.1 개정</span><span class="v3-badge">v3.2 개정</span><span class="v3-badge">v4 개정</span><span class="v3-badge">v4.1 개정</span><span class="v3-badge">v4.2 개정</span><span class="v3-badge">v4.3 개정</span> · REV 2026-07-27</div>
+  <ol>
+    <li><b>[1]</b> 상태 전이를 원자적 CAS(<span class="mono">UPDATE … WHERE status=?</span>) 한 문장으로 명시하고 누락 엣지 4개 추가 → check-then-act 레이스 제거, 상태기계를 완전하게 함</li>
+    <li><b>[2]</b> round 상한·사람커밋 감지 가드를 CI에서 미들웨어(Pipeline Trigger 직전)로 이동 → 2-엔드포인트 원칙(doc:299)을 지키면서 가드 결과를 안전하게 기록</li>
+    <li><b>[3]</b> <span class="mono">-o ci.skip</span>을 봇 전용 경량 파이프라인으로, 즉시 merge를 mergeable-poll 방식으로 교체 → "Pipelines must succeed" 설정과의 충돌 해소</li>
+    <li><b>[4]</b> <span class="mono">/internal/notify</span>에 Idempotency-Key 도입, <span class="mono">opinion</span>에 UNIQUE 제약 추가 → 재시도·이중 클릭 시 중복 알림·중복 의견 방지</li>
+    <li><b>[5]</b> SHA 신선도 검증을 클릭 시점 GitLab API 조회로 변경 → 사람이 새로 push한 이후에도 최신본을 정확히 판단</li>
+    <li><b>[6]</b> §⑦에 전제조건 블록 신설(GitLab 티어, 봇 계정 분리, protected branch 권한 등) → 구축 전 필수 확인 항목을 명시</li>
+    <li><b>[7]</b> 장애 모드·라벨 미러링 서술을 실제 동작과 정합화(Slack 202+재시도 큐, round 라벨 미러, report.html 다운로드 링크 명시)</li>
+    <li><b>[8]</b> S4 AI 체인을 오케스트레이터+서브에이전트 구조로 개정 — 3c 검증을 독립 컨텍스트로 분리해 자기 채점 편향 제거, 재시도를 원인 분류(스펙 결함→3a, 구현 누락→3b) 라우팅으로 정밀화 <span class="v3-badge">v3.1 신규</span></li>
+    <li><b>[9]</b> 재감사 잔존 결함 7건(N2/N4/N6/N7/N9/N11/N12) 반영 — 3c 대조검증을 의견 원문 대조로 전환, revise 실패 재시도 주체를 미들웨어 즉시 1회 재트리거로 명확화, 의견 제출 처리 순서를 3곳에서 단일 순서로 통일, 승인·머지 사이 중간 상태 <span class="mono">merging</span> 도입, <span class="mono">applied_round</span>를 의견별 판정으로 기록, 서브에이전트 재시도 예산을 라운드당 총 2회로 단일화, 문서 경계를 넘는 의견을 위한 cross-doc 정합성 워커 분기 추가 <span class="v3-badge">v3.2 개정</span></li>
+    <li><b>[10]</b> v4: B안 전환 — CI 파이프라인·Runner·.gitlab-ci.yml 전제 제거, 미들웨어가 claude CLI 직접 실행, 웹훅 수신구 신설, 머지 게이트 승인 기반 전환. N1·N3·N10·N13 소멸, N5·N8·N14 재정의.</li>
+    <li><b>[11]</b> v4.1: 접합부 감사(critical 4) 반영 — review-prep 기동 조건 축소, GitLab approve 단계 제거(머지 API 단일화), 외부 머지/닫힘 웹훅 감지, opinion PK·last_verdict 및 event_log 발송 상태 스키마 보강. 장애모드·의견로더·재발급 정합(M1-M5). 워크스페이스·merging 레일·권한·타이머 정합(M7-M12).</li>
+    <li><b>[12]</b> v4.2: 재감사 잔존 구현 정합 3건([1]-[3]) 및 표기 정리 8건(m1-m8) 반영 — §S4 구현 상태(현재는 단일 claude CLI 호출 러너 v1, 오케스트레이터+서브에이전트 체인은 백로그) 명시, 운영자 재개 전이 미구현(백로그) 표기, revise 성공 vs 외부 머지/닫힘 경합 시 DB 불변이나 원격 잔존 커밋은 사람 확인 대상으로 명시. 헤더 chip·CI 시대 용어·[A]/[B] 레터링·내부 함수 인자 표기·"발신"→"결과 처리" 블록명·event_log.kind 목록/네임스페이스 구분·DB 유실 복구 범위(부분 복구로 하향)·CSS 잔재 클래스 주석 정리. <span class="v3-badge">v4.2 신규</span></li>
+    <li><b>[13]</b> v4.3: §③ 상태 기계 도표를 Mermaid(top-down)로 교체 — 가독성 개선, 전이·사유는 구현(state_machine.py) 기준으로 정렬. 렌더 크기·가독성 조정.</li>
+  </ol>
+</div>
+
+<!-- ① 컴포넌트 맵 -->
+<section class="sect">
+  <div class="sec-head"><span class="num">①</span><h2>컴포넌트 맵</h2><span class="rule"></span><span class="v3-badge">v4 개정</span></div>
+  <div class="comp-grid">
+    <div class="comp-card ci">
+      <div class="ctitle">🤖 AI 실행기 <span class="badge">claude CLI 서브프로세스</span><span class="v3-badge">v4 개정</span></div>
+      <div class="csub">미들웨어 내부 구성요소 · claude CLI 서브프로세스 + git 워크스페이스 <span class="v3-badge">v4 개정</span></div>
+
+      <div class="job-block">
+        <div class="jl">[A] review-prep 실행 <span class="tag">MR open 웹훅 수신 직후 / revise 완료 직후(내부 호출)</span> <span class="v3-badge">v4.1 개정</span></div>
+        <ul>
+          <li>맥락 diff JSON + <code>report.html</code> 생성 (claude)</li>
+          <li>코어에 내부 함수 호출로 결과 전달(notify) — CI 없이 미들웨어 프로세스 내에서 직접 수행 <span class="v3-badge">v4 개정</span></li>
+        </ul>
+      </div>
+      <div class="job-block">
+        <div class="jl">[B] revise 실행 <span class="tag">미들웨어가 직접 기동(내부 함수 호출, <span class="mono">session_id, mr_iid</span> 인자) · MR 단위 직렬화 큐(락)</span> <span class="v3-badge">v4 개정</span><span class="v3-badge">v4.2 개정</span></div>
+        <ul>
+          <li>의견 반영해 문서 재생성 — <b>메타프롬프팅 → 재생성 → 대조검증</b> 오케스트레이터 + 서브에이전트 3단 체인 (단일 세션·호출 1회) <span class="v3-badge">v3.1 개정</span></li>
+          <li>MR 커밋 → <code>[A]</code> 재호출</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="comp-card mid">
+      <div class="ctitle">💬 미들웨어 <span class="badge">Slack + 상태 + AI 실행 전담</span> <span class="v3-badge">v4 개정</span></div>
+      <div class="csub">FastAPI + SQLite · 상시 실행</div>
+
+      <div class="job-block">
+        <div class="jl">수신 <span class="tag">/webhooks/gitlab/mr <span class="v3-badge">v4 신규</span></span></div>
+        <ul>
+          <li>GitLab 웹훅: MR open/update/merge/close · push 이벤트 · secret token 검증(comment 이벤트는 구독하지 않음 — 의견 유입은 Slack 모달 단일 경로이고, MR 코멘트는 미들웨어의 발신 전용 미러라 소비자가 없음) <span class="v3-badge">v4 신규</span><span class="v3-badge">v4.1 개정</span></li>
+          <li>MR <b>open</b> 시에만 AI 실행기(review-prep) 기동(그 외 재기동은 revise 완료 직후 내부 호출뿐) · push/merge/close → 사람 push 정책·외부 머지/닫힘 감지 레일로 평가(§③ 상태 기계 참조) — push와 MR update 이벤트가 동시 발화하므로 update 이벤트는 review-prep 재기동에 사용하지 않는다 <span class="v3-badge">v4.1 개정</span></li>
+        </ul>
+      </div>
+      <div class="job-block">
+        <div class="jl">결과 처리 <span class="tag">AI 실행기 결과(내부 호출: kind ok | failed) 수신</span> <span class="v3-badge">v4 개정</span><span class="v3-badge">v4.2 개정</span></div>
+        <ul>
+          <li>Block Kit 렌더 → Slack 발송 (메인 메시지 + 스레드 <span class="mono">report.html</span> 다운로드 링크)</li>
+          <li>세션 기록 · 발송 재시도 큐 + event_log 발송 상태(pending/sent/failed)로 관리 — round 카운터 소유자는 미들웨어 <span class="v3-badge">v4 개정</span></li>
+          <li>담당자 매핑이 공집합인 세션은 알림 시점에 즉시 <span class="mono">status=manual</span> 분기 + Slack 채널 경고 메시지로 종료(승인 클릭 권한 규칙 §⑦ 참조) <span class="v3-badge">v4.1 개정</span></li>
+        </ul>
+      </div>
+      <div class="job-block">
+        <div class="jl">수신 <span class="tag">/webhooks/slack/actions</span></div>
+        <ul>
+          <li>승인 버튼 → 클릭 시점 GitLab API로 최신 SHA 재조회 후 merge API poll 호출(SHA 고정, GitLab 측 approve 호출 없음 — 공식 승인 기록은 Slack 클릭 + DB 세션 기록 + MR 코멘트 미러) <span class="v3-badge">v4.1 개정</span></li>
+          <li>의견 버튼 → 모달 저장 → opinion INSERT(+ GitLab 코멘트 이중 기록) → 가드(a)(b) 평가 → CAS 잠금(<span class="mono">reviewing→revising</span>, 거부 시 <span class="mono">reviewing→manual</span>) → 미들웨어가 revise 실행기(claude CLI 서브프로세스)를 직접 기동 → Slack 갱신 <span class="v3-badge">v4 개정</span></li>
+          <li>상태 갱신(CAS)</li>
+        </ul>
+      </div>
+      <div class="job-block">
+        <div class="jl">내부 조회 <span class="tag">미반영 의견 조회(내부 함수 호출)</span> <span class="v3-badge">v4 개정</span></div>
+        <ul>
+          <li>revise 실행기가 미반영 의견을 내부 함수 호출로 조회 — 대상 = <span class="mono">applied_round IS NULL AND created_at ≤ 잠금(CAS) 시각</span> <span class="v3-badge">v4.1 개정</span></li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="link-note"><span class="seg">claude · git → 미들웨어 내부 실행기 전용</span> <span class="v3-badge">v4 개정</span>⇄<span class="seg">실행기↔코어 내부 호출 계약</span> <span class="v3-badge">v4 개정</span>⇄<span class="seg">Slack 자격증명 · ts · 상태 → 미들웨어 전용</span></div>
+  </div>
+  <div class="principle" style="background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin-top:2px">
+    <b>원칙</b>: Slack 자격증명·메시지 ts·상태·claude·git은 모두 미들웨어 프로세스 내부에만 존재한다. AI 실행은 미들웨어 내부 함수 호출이며, <span class="mono">/internal/notify</span>·<span class="mono">/internal/opinions</span> HTTP 엔드포인트는 폐지되고 실행기↔코어 내부 호출 계약으로 대체됐다. 외부 접점은 <span class="mono">/webhooks/gitlab/mr</span>(GitLab 웹훅 수신)과 <span class="mono">/webhooks/slack/actions</span>(Slack actions 수신) 2개뿐이다. <span class="v3-badge">v4 개정</span>
+  </div>
+</section>
+
+<!-- ② 메인 플로우 -->
+<section class="sect">
+  <div class="sec-head"><span class="num">②</span><h2>메인 플로우</h2><span class="rule"></span></div>
+  <div class="flow">
+
+    <!-- S1 -->
+    <div class="scenario s1">
+      <div class="s-tag">S1 · 최초 알림</div>
+      <h3>웹훅(MR open) 수신 → 미들웨어가 claude로 리뷰 자료 생성 → Slack 알림 <span class="v3-badge">v4.1 개정</span></h3>
+      <div class="steps-rail">
+        <div class="step hum">
+          <div class="no">1</div><div class="tt">/webhooks/gitlab/mr 수신</div>
+          <div class="ss">MR open 이벤트 · secret token 검증 — update 이벤트는 push와 동시 발화하므로 이 흐름을 재기동하지 않음(§③ 참조) <span class="v3-badge">v4.1 개정</span></div>
+        </div>
+        <div class="sarrow"><svg width="16" height="12" viewBox="0 0 16 12" fill="none"><path d="M0 6h12M8 1l6 5-6 5" stroke="currentColor" stroke-width="1.5"/></svg></div>
+        <div class="step ai">
+          <div class="no">2</div><div class="tt">[A] review-prep</div>
+          <div class="ss">미들웨어가 claude CLI 서브프로세스로 맥락 diff 생성<br><span class="mono">변경동인·서술이동·독자영향</span> <span class="v3-badge">v4 개정</span></div>
+        </div>
+        <div class="sarrow"><svg width="16" height="12" viewBox="0 0 16 12" fill="none"><path d="M0 6h12M8 1l6 5-6 5" stroke="currentColor" stroke-width="1.5"/></svg></div>
+        <div class="step ai">
+          <div class="no">3</div><div class="tt">등급 · 확인질문</div>
+          <div class="ss">문서별 🔴주장변경 🟡보강 🟢표현만<br>+ 확인질문 리스트</div>
+        </div>
+        <div class="sarrow"><svg width="16" height="12" viewBox="0 0 16 12" fill="none"><path d="M0 6h12M8 1l6 5-6 5" stroke="currentColor" stroke-width="1.5"/></svg></div>
+        <div class="step">
+          <div class="no">4</div><div class="tt">내부 호출 → notify</div>
+          <div class="ss">코어로 결과 전달(같은 프로세스 내부 호출) <span class="v3-badge">v4 개정</span></div>
+        </div>
+        <div class="sarrow"><svg width="16" height="12" viewBox="0 0 16 12" fill="none"><path d="M0 6h12M8 1l6 5-6 5" stroke="currentColor" stroke-width="1.5"/></svg></div>
+        <div class="step hum">
+          <div class="no">5</div><div class="tt">Slack 발송</div>
+          <div class="ss">담당자 멘션 · 요약+확인질문<br>[승인][의견] 버튼 (HMAC 토큰:<span class="mono">session_id+sha</span>)</div>
+        </div>
+        <div class="sarrow"><svg width="16" height="12" viewBox="0 0 16 12" fill="none"><path d="M0 6h12M8 1l6 5-6 5" stroke="currentColor" stroke-width="1.5"/></svg></div>
+        <div class="step hum">
+          <div class="no">6</div><div class="tt">스레드 업로드</div>
+          <div class="ss"><span class="mono">report.html</span> 첨부 — Slack은 HTML 인라인 렌더 불가, <b>다운로드 링크</b>로 제공됨 (§⑦ v2 옵션의 HTML→PNG와 연결) <span class="v3-badge">v3 개정</span></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="down"><svg width="18" height="20" viewBox="0 0 18 22" fill="none"><path d="M9 0v16M3 12l6 7 6-7" stroke="var(--ink-3)" stroke-width="1.6"/></svg></div>
+
+    <!-- S2 -->
+    <div class="scenario s2">
+      <div class="s-tag">S2 · 승인 분기</div>
+      <h3>[✅ 승인] 버튼 → 미들웨어가 merge 진행 (사람 게이트는 Slack 승인 버튼 하나뿐, 대기 없음 · 공식 승인 기록은 Slack 클릭 + DB 세션 기록 + MR 코멘트 미러, GitLab 쪽 동작은 merge API 호출뿐) <span class="v3-badge">v3 개정</span><span class="v3-badge">v4.1 개정</span></h3>
+      <div class="steps-rail">
+        <div class="step warn">
+          <div class="no">0</div><div class="tt">권한 검사</div>
+          <div class="ss">클릭자가 해당 세션의 매핑 담당자 집합에 속하는지 확인 — 불일치/공집합 시 ephemeral 응답으로 거부, 상태 전이 없음(status 불변) <span class="v3-badge">v4.1 개정</span></div>
+        </div>
+        <div class="sarrow"><svg width="16" height="12" viewBox="0 0 16 12" fill="none"><path d="M0 6h12M8 1l6 5-6 5" stroke="currentColor" stroke-width="1.5"/></svg></div>
+        <div class="step hum">
+          <div class="no">1</div><div class="tt">버튼 클릭</div>
+          <div class="ss">3초 내 즉시 응답<br>background 처리 시작</div>
+        </div>
+        <div class="sarrow"><svg width="16" height="12" viewBox="0 0 16 12" fill="none"><path d="M0 6h12M8 1l6 5-6 5" stroke="currentColor" stroke-width="1.5"/></svg></div>
+        <div class="step warn">
+          <div class="no">2</div><div class="tt">sha 신선도 확인</div>
+          <div class="ss">GitLab API로 <b>현재 head SHA를 즉시 조회</b>해 토큰 sha와 비교(DB <span class="mono">mr_sha</span> 비교 폐기)<br>불일치 → 거부 "새 버전 도착"</div>
+        </div>
+        <div class="sarrow"><svg width="16" height="12" viewBox="0 0 16 12" fill="none"><path d="M0 6h12M8 1l6 5-6 5" stroke="currentColor" stroke-width="1.5"/></svg></div>
+        <div class="step ok">
+          <div class="no">3</div><div class="tt">CAS 잠금 status=merging</div>
+          <div class="ss"><span class="mono">reviewing→merging</span> — 중복 클릭은 rowcount=0으로 거부 <span class="v3-badge">v3.2 개정</span></div>
+        </div>
+        <div class="sarrow"><svg width="16" height="12" viewBox="0 0 16 12" fill="none"><path d="M0 6h12M8 1l6 5-6 5" stroke="currentColor" stroke-width="1.5"/></svg></div>
+        <div class="step ok">
+          <div class="no">4</div><div class="tt">GitLab merge — poll</div>
+          <div class="ss">봇이 대신 머지 버튼을 누른다. GitLab approve는 안 씀 — 승인 기록은 Slack 클릭·DB·MR 코멘트 <span class="v3-badge">v4.1 개정</span><br>승인 시점 <span class="mono">sha</span>를 같이 보냄 → 그 사이 새 커밋이 오면 GitLab이 거부(안 본 코드 머지 방지) <span class="v3-badge">v4 개정</span><br>직후엔 <span class="mono">checking</span>이라 결과가 안 나옴 → <span class="mono">mergeable</span> 될 때까지 3초 × 10회 확인(background)<br>30초 넘으면 포기 → <span class="mono">merging→manual</span>(사람에게 넘김) <span class="v3-badge">v3.2 개정</span></div>
+        </div>
+        <div class="sarrow"><svg width="16" height="12" viewBox="0 0 16 12" fill="none"><path d="M0 6h12M8 1l6 5-6 5" stroke="currentColor" stroke-width="1.5"/></svg></div>
+        <div class="step ok">
+          <div class="no">5</div><div class="tt">status=merged</div>
+          <div class="ss"><span class="mono">merging→merged</span>(CAS) · 라벨 <span class="mono">docs-approved</span> <span class="v3-badge">v3.2 개정</span></div>
+        </div>
+        <div class="sarrow"><svg width="16" height="12" viewBox="0 0 16 12" fill="none"><path d="M0 6h12M8 1l6 5-6 5" stroke="currentColor" stroke-width="1.5"/></svg></div>
+        <div class="step ok">
+          <div class="no">6</div><div class="tt">Slack 메인 메시지 갱신</div>
+          <div class="ss">"✅ 승인·머지 완료"</div>
+        </div>
+      </div>
+      <div class="guard">
+        <div class="g">⚠️ 머지 실패 (충돌·권한): <span class="mono">merging→manual</span> + Slack 스레드 "⚠️ 머지 실패: 사유. GitLab 확인 필요" <span class="v3-badge">v3.2 개정</span></div>
+        <div class="g">⚠️ 머지 차단 (poll N회 실패 — 머지 조건 미충족: 충돌·보호 브랜치 설정 등): <span class="mono">merging→manual</span> + 전용 Slack 메시지 "머지 차단: 조건 미충족" <span class="v3-badge">v4 개정</span></div>
+        <div class="g">⏱️ 미들웨어가 poll 도중 죽는 경우: <span class="mono">merging_since</span> 타임아웃 스위퍼가 <span class="mono">manual</span>로 수렴 <span class="v3-badge">v3.2 신규</span></div>
+      </div>
+      <div class="subnote">대기 없음, poll 기반이라 즉시(1회 호출)는 아님 — 구 스케줄 방식의 최대 30분 지연은 여전히 소멸. 머지 이후 main 변경은 배포(Docusaurus 빌드·wiki 배포, 본 설계 스코프 외)가 감지한다.</div>
+    </div>
+
+    <div class="down"><svg width="18" height="20" viewBox="0 0 18 22" fill="none"><path d="M9 0v16M3 12l6 7 6-7" stroke="var(--ink-3)" stroke-width="1.6"/></svg></div>
+
+    <!-- S3 -->
+    <div class="scenario s3">
+      <div class="s-tag">S3 · 의견 분기</div>
+      <h3>[✏️ 의견] 버튼 → 모달 → 가드 → 세션 잠금 → revise 기동 <span class="v3-badge">v3.2 개정</span></h3>
+      <div class="steps-rail">
+        <div class="step hum">
+          <div class="no">1</div><div class="tt">버튼 클릭</div>
+          <div class="ss">모달 오픈</div>
+        </div>
+        <div class="sarrow"><svg width="16" height="12" viewBox="0 0 16 12" fill="none"><path d="M0 6h12M8 1l6 5-6 5" stroke="currentColor" stroke-width="1.5"/></svg></div>
+        <div class="step hum">
+          <div class="no">2</div><div class="tt">모달 입력</div>
+          <div class="ss">확인질문 체크박스 + 자유 텍스트</div>
+        </div>
+        <div class="sarrow"><svg width="16" height="12" viewBox="0 0 16 12" fill="none"><path d="M0 6h12M8 1l6 5-6 5" stroke="currentColor" stroke-width="1.5"/></svg></div>
+        <div class="step warn">
+          <div class="no">3</div><div class="tt">opinion INSERT</div>
+          <div class="ss">+ MR 코멘트 이중 기록</div>
+        </div>
+        <div class="sarrow"><svg width="16" height="12" viewBox="0 0 16 12" fill="none"><path d="M0 6h12M8 1l6 5-6 5" stroke="currentColor" stroke-width="1.5"/></svg></div>
+        <div class="step warn">
+          <div class="no">4</div><div class="tt">가드 (a)(b) 평가</div>
+          <div class="ss">round≥3 · 사람 커밋 여부 — CAS 잠금 이전에 평가하므로 거부 전이는 <span class="mono">reviewing→manual</span> <span class="v3-badge">v3.2 개정</span></div>
+        </div>
+        <div class="sarrow"><svg width="16" height="12" viewBox="0 0 16 12" fill="none"><path d="M0 6h12M8 1l6 5-6 5" stroke="currentColor" stroke-width="1.5"/></svg></div>
+        <div class="step warn">
+          <div class="no">5</div><div class="tt">CAS 잠금 status=revising</div>
+          <div class="ss">가드 통과 시에만 <span class="mono">reviewing→revising</span></div>
+        </div>
+        <div class="sarrow"><svg width="16" height="12" viewBox="0 0 16 12" fill="none"><path d="M0 6h12M8 1l6 5-6 5" stroke="currentColor" stroke-width="1.5"/></svg></div>
+        <div class="step ai">
+          <div class="no">6</div><div class="tt">revise 실행기 기동</div>
+          <div class="ss">미들웨어가 revise 실행기(claude CLI 서브프로세스)를 직접 기동 — MR 단위 직렬화 큐(락) 획득 후 실행 <span class="v3-badge">v4 개정</span></div>
+        </div>
+        <div class="sarrow"><svg width="16" height="12" viewBox="0 0 16 12" fill="none"><path d="M0 6h12M8 1l6 5-6 5" stroke="currentColor" stroke-width="1.5"/></svg></div>
+        <div class="step hum">
+          <div class="no">7</div><div class="tt">Slack 갱신</div>
+          <div class="ss">메인 메시지 <span class="mono">chat.update</span>로 버튼 제거 · "🔄 개선 작업 진행 중" (가드 거부 시 "⚠️ 자동개선 한도" / "👤 수동 편집 감지")</div>
+        </div>
+      </div>
+      <div class="subnote">S4① 참조 — 동일 사건의 단일 처리 순서(opinion INSERT → 가드(a)(b) → CAS 잠금 → 미들웨어가 revise 실행기 기동 <span class="v3-badge">v4 개정</span> → Slack 갱신). 2차 방어: 모든 상태 전이는 미들웨어가 원자적 CAS 한 문장 <span class="mono">UPDATE review_session SET status=? WHERE id=? AND status=?</span>으로 수행 — 잠금 직전 모달을 열어둔 사람의 늦은 제출은 이 CAS의 <span class="mono">rowcount=0</span>으로 자동 거부(check-then-act 아님) — "개선 작업 진행 중, 새 버전 알림에서 다시". <span class="v3-badge">v3 개정</span></div>
+    </div>
+
+    <div class="band" style="padding:10px 14px;margin:4px 0">
+      <div style="font-family:var(--mono);font-size:11.5px;font-weight:700;color:var(--warn);margin-bottom:6px">동시성 규칙 (여러 담당자 매핑 시)</div>
+      <table class="dual-table">
+        <thead><tr><th>상황</th><th>처리</th></tr></thead>
+        <tbody>
+          <tr><td>승인+승인</td><td>첫 번째 클릭이 CAS로 <span class="mono">reviewing→merging</span> 전환에 성공, 두 번째 클릭은 CAS <span class="mono">rowcount=0</span>으로 자체 거부 (GitLab 응답에 기대지 않음) <span class="v3-badge">v3.2 개정</span></td></tr>
+          <tr><td>승인 후 의견</td><td>동일하게 CAS <span class="mono">rowcount=0</span>으로 거부</td></tr>
+          <tr><td>revising 중 모든 버튼</td><td>버튼 자체가 제거됨(동결). 레이스 제출도 CAS <span class="mono">WHERE status='reviewing'</span> 조건 불일치로 거부</td></tr>
+          <tr><td>권한 없는 클릭</td><td>0단계 권한 검사에서 매핑 담당자 집합 불일치/공집합으로 거부 — ephemeral 응답만 반환, CAS 시도 자체가 발생하지 않으므로 상태 불변 <span class="v3-badge">v4.1 신규</span></td></tr>
+          <tr><td>외부 머지 웹훅 vs 진행 중 전이</td><td>승인 클릭·의견 제출 등 진행 중이던 전이와 외부 머지/닫힘 웹훅이 동시에 CAS를 다투면 먼저 성공한 쪽이 확정되고 후착은 <span class="mono">rowcount=0</span>으로 무효 처리(§③ 651 참조) <span class="v3-badge">v4.1 신규</span></td></tr>
+          <tr><td>revise 성공 vs 외부 머지/닫힘 경합</td><td>CAS 패배 시 DB(round·applied_round·sha)는 불변이나 push된 커밋은 원격 브랜치에 잔존(DB 불변 ≠ 원격 불변) → 세션은 merged/manual로 종료되고, 잔존 커밋은 사람 확인 대상으로 남는다 <span class="v3-badge">v4.2 신규</span></td></tr>
+          <tr><td>원칙</td><td>모든 전이는 CAS 한 문장으로 수행되며, 승인·의견 모두 <span class="mono">status=reviewing</span> 조건을 만족할 때만 rowcount&gt;0. revising 중 의견은 "곧 교체될 버전에 대한 의견"이라 받지 않음 — 새 버전에서 재판단</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="down"><svg width="18" height="20" viewBox="0 0 18 22" fill="none"><path d="M9 0v16M3 12l6 7 6-7" stroke="var(--ink-3)" stroke-width="1.6"/></svg></div>
+
+    <!-- S4 -->
+    <div class="scenario s4">
+      <div class="s-tag">S4 · revise 루프</div>
+      <h3>이벤트 구동(미들웨어가 직접 기동) → 가드 → git 워크스페이스 fetch/checkout → 의견 로드 → claude 단일 세션(오케스트레이터: 메타프롬프팅 → 재생성 → 대조검증 서브에이전트) → 재알림 → 루프 <span class="v3-badge">v4 개정</span></h3>
+
+      <div class="band" style="border:1.5px solid var(--warn);background:var(--warn-soft);padding:12px 14px;margin-bottom:14px">
+        <b style="color:var(--warn)">⚠️ 구현 상태 (v4.2 명시)</b> <span class="v3-badge">v4.2 신규</span>
+        <div style="font-size:12.5px;color:var(--ink-2);margin-top:6px">현 구현(v1)은 단일 <span class="mono">claude</span> CLI 호출 러너다: 워크스페이스에서 의견을 반영하고 <span class="mono">{applied, unapplied(사유), summary}</span> JSON을 반환하는 한 번의 호출로 끝난다. 아래에서 서술하는 오케스트레이터 + 3a(메타프롬프팅)/3b(재생성)/3c(대조검증) 서브에이전트 체인은 <b>향후 확장 설계(백로그)</b>이며 아직 구현되지 않았다. 이하 §S4의 체인 서술은 설계 목표로서 유지한다.</div>
+      </div>
+
+      <div style="font-family:var(--mono);font-size:11.5px;font-weight:700;color:var(--human);margin:2px 0 8px">① 의견 접수 순간 (미들웨어)</div>
+      <div class="steps-rail">
+        <div class="step warn">
+          <div class="no">1</div><div class="tt">opinion INSERT</div>
+          <div class="ss">+ MR 코멘트 이중 기록 · <span class="mono">UNIQUE(session_id,user,body_hash)</span>로 모달 이중 제출 흡수</div>
+        </div>
+        <div class="sarrow"><svg width="16" height="12" viewBox="0 0 16 12" fill="none"><path d="M0 6h12M8 1l6 5-6 5" stroke="currentColor" stroke-width="1.5"/></svg></div>
+        <div class="step warn">
+          <div class="no">2</div><div class="tt">가드 (a)(b) 평가</div>
+          <div class="ss"><b>CAS 잠금 이전, 미들웨어가 수행</b> — 거부 시 전이는 <span class="mono">reviewing→manual</span> <span class="v3-badge">v3.2 개정</span><br>(a) round≥3 → DB round 체크(claude 호출 낭비 없음) <span class="v3-badge">v4.2 개정</span><br>(b) 사람 커밋 → GitLab commits API 1회 조회<br>사람 push 후 재발급되는 버튼은 [승인] 버튼만 — [의견] 버튼은 비활성(사람 커밋 이후 자동 revise 금지, 가드(b)와 항상 정합) <span class="v3-badge">v4.1 개정</span></div>
+        </div>
+        <div class="sarrow"><svg width="16" height="12" viewBox="0 0 16 12" fill="none"><path d="M0 6h12M8 1l6 5-6 5" stroke="currentColor" stroke-width="1.5"/></svg></div>
+        <div class="step warn">
+          <div class="no">3</div><div class="tt">CAS 잠금 status=revising</div>
+          <div class="ss">가드 통과 시에만 CAS <span class="mono">status='reviewing'→'revising'</span><br>버튼 제거(완전 동결) · 레이스 제출은 CAS rowcount=0으로 거부</div>
+        </div>
+        <div class="sarrow"><svg width="16" height="12" viewBox="0 0 16 12" fill="none"><path d="M0 6h12M8 1l6 5-6 5" stroke="currentColor" stroke-width="1.5"/></svg></div>
+        <div class="step ai">
+          <div class="no">4</div><div class="tt">revise 실행기 기동</div>
+          <div class="ss">CAS 잠금 성공 시 미들웨어가 revise 실행기(claude CLI 서브프로세스)를 직접 기동 — MR 단위 직렬화 큐(락) 경유, 큐 대기 상한(기본 10분, 초과 시 <span class="mono">kind=failed</span>로 <span class="mono">revise_attempts</span> 규칙 합류) 有 · 큐를 실제로 획득해 실행이 시작되는 시점에 <span class="mono">revising_since</span> 재설정 <span class="v3-badge">v4 개정</span><span class="v3-badge">v4.1 개정</span></div>
+        </div>
+        <div class="sarrow"><svg width="16" height="12" viewBox="0 0 16 12" fill="none"><path d="M0 6h12M8 1l6 5-6 5" stroke="currentColor" stroke-width="1.5"/></svg></div>
+        <div class="step hum">
+          <div class="no">5</div><div class="tt">Slack 갱신</div>
+          <div class="ss">"✏️ 의견 접수 · 🔄 개선 시작" (가드 거부 시 "⚠️ 자동개선 한도" / "👤 수동 편집 감지")</div>
+        </div>
+      </div>
+      <div class="subnote">가드 (a)(b)는 실행기 기동 직전 미들웨어가 수행 — 실행기는 실제로 기동된 이후의 실패(revise 실패)만 인지한다. <span class="v3-badge">v4 개정</span></div>
+
+      <div style="font-family:var(--mono);font-size:11.5px;font-weight:700;color:var(--ai);margin:16px 0 8px">② revise 실행기 (미들웨어 내부) <span class="v3-badge">v4 개정</span></div>
+      <div class="steps-rail s4-ci-rail">
+        <div class="step ai">
+          <div class="no">1</div><div class="tt">git 워크스페이스 fetch/checkout</div>
+          <div class="ss">미들웨어 내부 git 워크스페이스에서 MR 브랜치 fetch/checkout — 메타프롬프팅이 대상 문서·주장을 특정하려면 실제 문서가 먼저 필요 <span class="v3-badge">v4 개정</span></div>
+        </div>
+        <div class="sarrow"><svg width="16" height="12" viewBox="0 0 16 12" fill="none"><path d="M0 6h12M8 1l6 5-6 5" stroke="currentColor" stroke-width="1.5"/></svg></div>
+        <div class="step ai">
+          <div class="no">2</div><div class="tt">미반영 의견 로드</div>
+          <div class="ss">대상 = <span class="mono">applied_round IS NULL AND created_at ≤ 잠금(CAS) 시각</span> <span class="v3-badge">v4.1 개정</span></div>
+        </div>
+        <div class="sarrow"><svg width="16" height="12" viewBox="0 0 16 12" fill="none"><path d="M0 6h12M8 1l6 5-6 5" stroke="currentColor" stroke-width="1.5"/></svg></div>
+        <div class="ai-session-group">
+          <div class="gl-label">CLAUDE 단일 세션(호출 1회) — 최상위는 오케스트레이터. 3a·3b·3c는 각각 독립 컨텍스트의 서브에이전트로 수행. 단계별 별도 CLI 호출 금지. 오케스트레이터는 의견 원문·문서 전문을 직접 읽지 않고 구조화 산출물과 영수증만 다룬다 <span class="v3-badge">v3.1 개정</span></div>
+          <div class="step ai">
+            <div class="no">3a</div><div class="tt">의견 메타프롬프팅 (서브에이전트)</div>
+            <div class="ss">입력 = 의견 원문 + diff + 문서 목록. 출력 = 의견별 구조화 스펙 JSON: <span class="mono">{opinion_id, 대상문서: [..], 범위: local|cross-doc, 대상주장, 수정방향, 근거, 통합(중복 의견 id 배열), 충돌해소}</span><br>오케스트레이터는 스키마 형태만 검사, 내용 재해석 금지 <span class="v3-badge">v3.2 개정</span></div>
+          </div>
+          <div class="sarrow"><svg width="16" height="12" viewBox="0 0 16 12" fill="none"><path d="M0 6h12M8 1l6 5-6 5" stroke="currentColor" stroke-width="1.5"/></svg></div>
+          <div class="step ai">
+            <div class="no">3b</div><div class="tt">재생성 (문서별 워커 서브에이전트)</div>
+            <div class="ss">범위=local 항목: 각 워커는 자기 문서 + 그 문서에 해당하는 스펙 항목만 받음(전체 의견 전달 금지 — 월권 수정 방지, local 한정)<br>범위=cross-doc 항목: 전용 "정합성 워커"가 관련 문서 집합을 함께 받아 처리 <span class="v3-badge">v3.2 신규</span><br>반환 = 수정본 + 영수증(처리한 opinion_id / 못 한 것 + 사유)<br>기본 순차, 대상 문서가 완전히 분리된 경우에만 병렬</div>
+          </div>
+          <div class="sarrow"><svg width="16" height="12" viewBox="0 0 16 12" fill="none"><path d="M0 6h12M8 1l6 5-6 5" stroke="currentColor" stroke-width="1.5"/></svg></div>
+          <div class="step ai">
+            <div class="no">3c</div><div class="tt">의견↔수정본 대조 검증 (fresh-context 서브에이전트)</div>
+            <div class="ss">입력은 의견 원문 + 스펙 + 수정본 셋 — 3b의 영수증·작성 맥락은 공유하지 않음(자기 채점 방지). 판정 축은 의견 원문(스펙은 참고용) — 3a가 원문을 잘못 옮긴 오역도 3c가 원문 대비로 잡아낸다 <span class="v3-badge">v3.2 개정</span>. 의견별 반영/미반영/부분 + 근거(문서 내 위치) 판정<br>오케스트레이터가 3c 판정과 3b 영수증을 대조하고, 불일치 시 3c를 신뢰(워커의 "했다"는 주장이지 증거가 아님)<br>미반영 발견 시 오케스트레이터가 원인 분류: (i) 3b 구현 누락 → 해당 문서 워커에 3c 근거를 첨부해 재투입, (ii) 스펙 모호·모순 → 해당 의견만 3a에 재투입 후 갱신 스펙으로 3b 재실행. 재시도는 라운드당 서브에이전트 재투입 총 2회 한정(3a·3b 합산, 사람 라운드 소모 없음), 재시도분만 3c 재검증<br>재시도도 실패 → 그대로 진행 + 재알림에 "⚠️ 의견 N번 미반영 + 사유" 정직 표기 — 사유는 3b의 변명이 아니라 3c의 판정문을 인용</div>
+          </div>
+        </div>
+        <div class="loopback">↺ 원인 분류 라우팅: 구현 누락→3b 재투입 / 스펙 모호→3a 재투입 — 라운드당 서브에이전트 재투입 총 2회 한정(3a·3b 합산) (round 소모 X) <span class="v3-badge">v3.2 개정</span></div>
+        <div class="sarrow"><svg width="16" height="12" viewBox="0 0 16 12" fill="none"><path d="M0 6h12M8 1l6 5-6 5" stroke="currentColor" stroke-width="1.5"/></svg></div>
+        <div class="step ai">
+          <div class="no">4</div><div class="tt">커밋 · push</div>
+          <div class="ss">봇 계정으로 커밋·push. CI를 쓰지 않으므로 봇 커밋이 파이프라인을 유발하는 문제 자체가 없음(v3.2의 N1 우려 소멸) <span class="v3-badge">v4 개정</span></div>
+        </div>
+        <div class="sarrow"><svg width="16" height="12" viewBox="0 0 16 12" fill="none"><path d="M0 6h12M8 1l6 5-6 5" stroke="currentColor" stroke-width="1.5"/></svg></div>
+        <div class="step ai">
+          <div class="no">5</div><div class="tt">[A] review-prep</div>
+          <div class="ss">내부 함수 호출로 notify — 결과 객체 <span class="mono">{kind: ok|failed, unapplied: [{opinion_id, reason}]}</span>을 코어에 반환(3c 미반영 목록 = <span class="mono">unapplied</span>, reason은 3c 판정문 인용). revise 실패 시 <span class="mono">kind=failed</span> — 외부 접점 수는 2개 유지 <span class="v3-badge">v4 개정</span></div>
+        </div>
+      </div>
+      <div class="subnote">사람 라운드는 상한 3회의 희소 자원, 서브에이전트 재시도는 싼 자원 — 대조검증(3c)에서 원인 분류 후 한 번 더 돌고 나가는 것이 항상 이득. 수렴 규칙: 라운드당 서브에이전트 재투입은 총 2회 한정(3a·3b 합산), 소진 시 정직 표기로 전진 — 모든 경로가 "성공" 또는 "표기 후 진행"으로 종료(무한 루프 없음). round·사람커밋 가드는 ①에서 이미 통과했으므로 실행기가 유일하게 인지하는 실패는 revise 자체 실패(<span class="mono">kind=failed</span>)뿐이다. <span class="v3-badge">v4 개정</span></div>
+
+      <div style="font-family:var(--mono);font-size:11.5px;font-weight:700;color:var(--human);margin:16px 0 8px">③ 재알림 (미들웨어)</div>
+      <div class="steps-rail">
+        <div class="step ok">
+          <div class="no">1</div><div class="tt">round+1 · mr_sha 갱신</div>
+          <div class="ss">3c 판정이 "반영"인 의견에 한해 <span class="mono">applied_round</span> 기록, 미반영/부분은 NULL 유지(다음 라운드 자동 재포함, 재제출 불필요) — 전제: 3c 판정 목록(의견별 반영/미반영/부분)이 revise 완료 시 미들웨어에 전달됨 <span class="v3-badge">v3.2 개정</span></div>
+        </div>
+        <div class="sarrow"><svg width="16" height="12" viewBox="0 0 16 12" fill="none"><path d="M0 6h12M8 1l6 5-6 5" stroke="currentColor" stroke-width="1.5"/></svg></div>
+        <div class="step hum">
+          <div class="no">2</div><div class="tt">재알림</div>
+          <div class="ss">기존 스레드 · 새 <span class="mono">report.html</span><br>"🔄 N차 개선본·의견 M건 반영" · 새 SHA 토큰 버튼<br>결과 객체의 <span class="mono">kind=ok</span> + <span class="mono">unapplied</span> 비어있지 않음 = 부분 성공 → "⚠️ 미반영 의견 + 사유" 표기(사유=3c 판정문) <span class="v3-badge">v4 개정</span></div>
+        </div>
+        <div class="sarrow"><svg width="16" height="12" viewBox="0 0 16 12" fill="none"><path d="M0 6h12M8 1l6 5-6 5" stroke="currentColor" stroke-width="1.5"/></svg></div>
+        <div class="step ok">
+          <div class="no">3</div><div class="tt">잠금 해제</div>
+          <div class="ss">새 SHA 토큰으로 버튼 복원 → <span class="mono">status=reviewing</span> 복귀, 담당자 재판단 대기</div>
+        </div>
+      </div>
+
+      <div class="guard">
+        <div class="g">🛡️ 안전망 ①: CI를 쓰지 않으므로 봇 커밋이 파이프라인을 유발하는 문제 자체가 없음 — review-prep/revise 재기동 없음 <span class="v3-badge">v4 개정</span><span class="v3-badge">v4.2 개정</span></div>
+        <div class="g">🛡️ 안전망 ②: revise 기동은 오직 사람의 의견 제출 경유 — 모든 라운드 시작점에 사람</div>
+        <div class="g">🛡️ 안전망 ③: round ≥ 3 → manual 강제 전환 (미들웨어가 실행기 기동 전 DB round 체크로 판단) <span class="v3-badge">v4 개정</span></div>
+      </div>
+    </div>
+
+  </div>
+</section>
+
+<!-- ③ 상태 기계 -->
+<section class="sect">
+  <div class="sec-head"><span class="num">③</span><h2>상태 기계</h2><span class="rule"></span><span class="v3-badge">v3 개정</span><span class="v3-badge">v3.2 개정</span><span class="v3-badge">v4.3 개정</span></div>
+  <div class="band">
+    <div class="principle" style="margin-top:0;border-top:none;padding-top:0">
+      <b>원칙</b>: 모든 전이는 미들웨어가 소유한 원자적 CAS 한 문장 <span class="mono">UPDATE review_session SET status=? WHERE id=? AND status=?</span>로 수행된다. <span class="mono">rowcount=0</span>이면 그 전이는 거부된 것 — check-then-act가 아니라 단일 SQL 문이 곧 잠금이다.
+    </div>
+    <div class="state-diagram">
+      <div class="subnote" style="max-width:820px;margin-top:0">
+        <span class="v3-badge">v4.3 개정</span> 아래 도표는 <span class="mono">Mermaid</span>(<span class="mono">stateDiagram-v2</span>, top-down)로 렌더링된다 — 전이·사유 라벨은 <span class="mono">app/state_machine.py</span>의 <span class="mono">ALLOWED_TRANSITIONS</span> 전이표를 그대로 옮긴 것이다. 스크립트/네트워크 문제로 다이어그램이 렌더링되지 않아도 아래 범례(상태 설명)는 그대로 남아 정보가 유실되지 않는다.
+      </div>
+      <div class="subnote" style="max-width:820px;margin-top:0">브라우저에서 확대(Ctrl+휠)하거나 가로 스크롤로 볼 수 있음.</div>
+      <div class="mermaid-scroll">
+      <pre class="mermaid">
+stateDiagram-v2
+    direction TB
+
+    [*] --> reviewing : MR open
+
+    reviewing --> merging : 승인 클릭 (CAS)
+    reviewing --> revising : 의견 제출 (즉시 동결, CAS)
+    reviewing --> manual : 가드 거부 (round≥3·사람 커밋<br/>/ 담당자 매핑 공집합)
+    reviewing --> manual : 외부 close 웹훅
+    reviewing --> merged : 외부 머지 웹훅
+
+    merging --> merged : merge poll 성공
+    merging --> merged : 외부 머지 웹훅
+    merging --> manual : poll 실패·타임아웃<br/>(merging_since 초과 포함)
+    merging --> manual : merging 중 사람 push 수신
+    merging --> manual : 외부 close 웹훅
+
+    revising --> reviewing : revise 성공<br/>(round+1, attempts 리셋)
+    revising --> manual : 사람 push 수신
+    revising --> manual : revising_since 타임아웃 (스위퍼)
+    revising --> manual : revise_attempts ≥ 2
+    revising --> manual : 외부 close 웹훅
+    revising --> merged : 외부 머지 웹훅
+
+    manual --> merged : 사람이 직접 머지
+    manual --> reviewing : ⚠️ 운영자 재개 (미구현·백로그)
+
+    merged --> [*]
+      </pre>
+      </div>
+
+      <div class="sm-legend">
+        <span class="lg"><span class="sw" style="background:var(--ai)"></span>reviewing</span>
+        <span class="lg"><span class="sw" style="background:var(--warn)"></span>merging (승인 접수·머지 진행 중, merging_since 타임아웃 有) <span class="v3-badge">v3.2 신규</span></span>
+        <span class="lg"><span class="sw" style="background:var(--ok)"></span>merged</span>
+        <span class="lg"><span class="sw" style="background:var(--warn)"></span>revising (완전 동결, revising_since 타임아웃 有)</span>
+        <span class="lg"><span class="sw" style="background:var(--human)"></span>manual (사람 개입)</span>
+      </div>
+
+      <div class="subnote" style="max-width:640px">↺ <span class="mono">reviewing</span> 자기유지(상태 전이 아님): <span class="mono">/webhooks/gitlab/mr</span> push 수신(발화 주체=웹훅) → 새 SHA로 [승인] 버튼만 재발급([의견] 버튼은 비활성 — 사람 커밋 이후 자동 revise 금지, 가드(b)와 일치), <span class="mono">reviewing</span> 유지 <span class="v3-badge">v3 신규</span><span class="v3-badge">v4 개정</span><span class="v3-badge">v4.1 개정</span></div>
+      <div class="subnote" style="max-width:640px">merging 중 사람 push 수신 시 즉시 <span class="mono">merging→manual</span> — 서버측 <span class="mono">sha</span> 파라미터 거부(M8a)와 이중 방어. poll 도중 새 커밋이 들어오면 머지를 진행하지 않고 담당자 재판단으로 회수한다. <span class="v3-badge">v4.1 개정</span></div>
+      <div class="subnote" style="max-width:640px">사람 push 중 자동 revise를 진행 중이던 경우 즉시 중단(<span class="mono">revising→manual</span>) — 사람 커밋이 CI를 유발하는 모순은 CI 부재로 소멸. <span class="v3-badge">v4 개정</span></div>
+      <div class="subnote" style="max-width:640px">외부 머지 웹훅(action=merge) 수신 시 <span class="mono">(reviewing|revising|merging)→merged</span> — 사람이 GitLab에서 직접 머지. 외부 닫힘 웹훅(action=close) 수신 시 <span class="mono">(reviewing|revising|merging)→manual</span>로 전이. 두 경우 모두 처리: Slack 버튼 회수(<span class="mono">chat.update</span>) + 스레드에 "⚠️ 외부 머지/닫힘 감지" 알림. 이 전이도 CAS 한 문장으로 수행되며 진행 중이던 다른 전이(승인 클릭 등)와 경합 시 먼저 성공한 쪽이 확정, 후착은 <span class="mono">rowcount=0</span>으로 거부된다. <span class="v3-badge">v4.1 신규</span></div>
+      <div class="subnote" style="max-width:640px">revise 실패 → <span class="mono">revising</span> 상태 유지, 미들웨어가 즉시 1회 자동 재트리거 · <span class="mono">revise_attempts</span>는 <span class="mono">kind=failed</span> 수신 시 +1, <span class="mono">revise_attempts≥2</span> → manual(<span class="mono">revising→manual</span>) <span class="v3-badge">v3.2 개정</span></div>
+      <div class="subnote" style="max-width:640px">⚠️ <b>미구현(백로그)</b> — <span class="mono">manual→reviewing</span>(운영자 재개)은 상태머신에 전이 정의만 예약돼 있을 뿐, 이를 발동하는 운영자 인터페이스(커맨드·API·UI)는 현재 존재하지 않는다. manual 세션은 실질적으로 사람이 GitLab에서 직접 처리(§ manual→merged 참조)하거나 방치된다. <span class="v3-badge">v4.2 개정</span></div>
+    </div>
+  </div>
+</section>
+
+<!-- ④ SQLite 스키마 -->
+<section class="sect">
+  <div class="sec-head"><span class="num">④</span><h2>SQLite 스키마</h2><span class="rule"></span></div>
+  <div class="schema-grid">
+    <div class="tbl-card">
+      <div class="th">review_session</div>
+      <div class="tb">
+        <div class="col"><span class="cn">project_id, mr_iid</span><span class="cc">UNIQUE 쌍 — 세션 식별</span></div>
+        <div class="col"><span class="cn">mr_sha</span><span class="cc">최근 통지된 커밋 SHA — <b>표시용으로 강등</b>, 토큰 검증은 클릭 시점 GitLab API 조회 사용 <span class="v3-badge">v3 개정</span></span></div>
+        <div class="col"><span class="cn">round</span><span class="cc">revise 반복 횟수 (0부터)</span></div>
+        <div class="col"><span class="cn">status</span><span class="cc">reviewing / merging / revising / manual / merged <span class="v3-badge">v3.2 개정</span></span></div>
+        <div class="col"><span class="cn">revising_since</span><span class="cc">MR 단위 직렬화 큐를 <b>획득해 실행이 시작되는 시점</b>(CAS 잠금 시점이 아님)에 재설정됨 — 타임아웃 스위퍼 판단 기준 <span class="v3-badge">v3 신규</span><span class="v3-badge">v4.1 개정</span></span></div>
+        <div class="col"><span class="cn">merging_since</span><span class="cc">merging 진입 시각 — 타임아웃 스위퍼 판단 기준 <span class="v3-badge">v3.2 신규</span></span></div>
+        <div class="col"><span class="cn">revise_attempts</span><span class="cc">revise 실패 재시도 횟수 — 2 이상이면 manual <span class="v3-badge">v3 신규</span> · 라운드 성공(<span class="mono">round+1</span>) 시 0 리셋 <span class="v3-badge">v4.1 개정</span></span></div>
+        <div class="col"><span class="cn">repo_slug</span><span class="cc">담당자 매핑용 레포 식별</span></div>
+        <div class="col"><span class="cn">slack_channel, slack_ts</span><span class="cc">메인 메시지 좌표 (갱신·스레드용)</span></div>
+      </div>
+    </div>
+    <div class="tbl-card">
+      <div class="th">opinion</div>
+      <div class="tb">
+        <div class="col"><span class="cn">id</span><span class="cc">INTEGER PK — 내부 계약 <span class="mono">{opinion_id, reason}</span>의 <span class="mono">opinion_id</span>가 참조하는 대상 <span class="v3-badge">v4.1 신규</span></span></div>
+        <div class="col"><span class="cn">session_id</span><span class="cc">review_session FK</span></div>
+        <div class="col"><span class="cn">slack_user</span><span class="cc">의견 작성자</span></div>
+        <div class="col"><span class="cn">question_refs</span><span class="cc">체크된 확인질문 참조</span></div>
+        <div class="col"><span class="cn">body</span><span class="cc">자유 텍스트 의견</span></div>
+        <div class="col"><span class="cn">applied_round</span><span class="cc">3c "반영" 판정 의견만 opinion별로 기록, NULL = 미반영 큐(다음 revise 대상, 재제출 불필요) <span class="v3-badge">v3.2 개정</span></span></div>
+        <div class="col"><span class="cn">last_verdict</span><span class="cc">3c 판정문 저장 — 내부 계약 <span class="mono">unapplied: [{opinion_id, reason}]</span>의 <span class="mono">reason</span>이 이 컬럼에 영속되어 다음 라운드 재표기 근거로 쓰임 <span class="v3-badge">v4.1 신규</span></span></div>
+        <div class="col"><span class="cn">UNIQUE(session_id, slack_user, body_hash)</span><span class="cc">모달 이중 제출 흡수 <span class="v3-badge">v3 신규</span></span></div>
+      </div>
+    </div>
+    <div class="tbl-card">
+      <div class="th">event_log</div>
+      <div class="tb">
+        <div class="col"><span class="cn">session_id</span><span class="cc">review_session FK</span></div>
+        <div class="col"><span class="cn">kind</span><span class="cc">notify / approve / opinion / revise_start / revise_fail(=notify kind=failed로 기록) / merge / push / webhook_missed … <span class="v3-badge">v4.2 개정</span></span></div>
+        <div class="col"><span class="cc">주의: 이 <span class="mono">kind</span>는 내부 계약 결과 객체의 <span class="mono">kind(ok|failed)</span>와 이름만 같을 뿐 서로 다른 네임스페이스 — event_log.kind는 이벤트 종류, 내부 계약 kind는 revise 성패 플래그다 <span class="v3-badge">v4.2 신규</span></span></div>
+        <div class="col"><span class="cn">detail</span><span class="cc">자유 형식 컨텍스트 (디버그·감사용)</span></div>
+        <div class="col"><span class="cn">send_state</span><span class="cc">pending / sent / failed — 미들웨어 내부 발송 재시도 큐가 참조하는 발송 상태(§⑥ 738 서사와 일치) <span class="v3-badge">v4.1 신규</span></span></div>
+        <div class="col"><span class="cn">attempts</span><span class="cc">발송 재시도 횟수 <span class="v3-badge">v4.1 신규</span></span></div>
+        <div class="col"><span class="cn">idempotency_key</span><span class="cc">UNIQUE, nullable — <span class="mono">hash(project_id|mr_iid|round|sha)</span>, <b>Slack 발송 dedup 전용</b>: notify 재시도 dedup에만 사용. revise_fail 등 감사 행은 키를 채우지 않고 append-only로 적재되므로 같은 round/sha에서 실패가 2회 기록돼도 UNIQUE 충돌이 나지 않는다 <span class="v3-badge">v4.1 개정</span></span></div>
+      </div>
+    </div>
+  </div>
+  <div class="schema-note">
+    <b>WAL 모드</b> 사용. 단일 writer 미들웨어 + WAL + CAS 갱신으로 충분 — 배포는 <span class="mono">uvicorn --workers 1</span> 고정. <span class="v3-badge">v3 개정</span>
+  </div>
+</section>
+
+<!-- ⑤ 이중 기록 -->
+<section class="sect">
+  <div class="sec-head"><span class="num">⑤</span><h2>이중 기록 — DB=원본, GitLab=사람용 미러</h2><span class="rule"></span></div>
+  <div class="band" style="padding:6px 0">
+    <table class="dual-table">
+      <thead><tr><th>영역</th><th>DB (원본)</th><th>GitLab (사람용 미러)</th></tr></thead>
+      <tbody>
+        <tr><td>리뷰 단계</td><td class="db">session.status</td><td class="gl">라벨 docs-review / docs-revise / <span class="mono">docs-merging</span> / docs-approved / docs-manual — 5-상태 머신과 1:1 정합 <span class="v3-badge">v4.1 개정</span></td></tr>
+        <tr><td>round</td><td class="db">session.round</td><td class="gl">라벨 <span class="mono">docs-revise-1/2/3</span>로 라운드 번호 자체를 미러링 <span class="v3-badge">v3 신규</span></td></tr>
+        <tr><td>의견</td><td class="db">opinion 레코드</td><td class="gl">MR 코멘트</td></tr>
+        <tr><td>메시지 좌표</td><td class="db">slack_ts</td><td class="gl">Slack permalink를 MR 코멘트로 미러링 <span class="v3-badge">v3 신규</span></td></tr>
+        <tr><td>승인·머지</td><td class="db">status=merged</td><td class="gl">GitLab merge만 호출(approve 단계 없음) — 승인의 공식 기록은 Slack 클릭 + DB 세션 기록 + MR 코멘트 미러(단일 경로) <span class="v3-badge">v4.1 개정</span></td></tr>
+        <tr><td>이력</td><td class="db">event_log</td><td class="gl">— (없음)</td></tr>
+      </tbody>
+    </table>
+    <div class="recover-note">⚠️ <span><b>DB 유실 시</b> 부분 복구만 가능(상태·round·의견 본문·메시지 좌표는 라벨·코멘트·permalink 미러로 재구성) — <span class="mono">applied_round</span>·<span class="mono">revise_attempts</span>·발송 상태(event_log)는 미러가 없어 복구 불가. <span class="v3-badge">v3 개정</span><span class="v3-badge">v4.2 개정</span></span></div>
+  </div>
+</section>
+
+<!-- ⑥ 장애 모드 -->
+<section class="sect">
+  <div class="sec-head"><span class="num">⑥</span><h2>장애 모드</h2><span class="rule"></span></div>
+  <div class="band" style="padding:6px 0">
+    <table class="fail-table">
+      <thead><tr><th>구성요소</th><th>증상</th><th>복구</th></tr></thead>
+      <tbody>
+        <tr><td>미들웨어 다운</td><td>알림·버튼·승인·머지·revise 기동 전부 정지</td><td class="rec">진행 중이던 revise는 유실(claude가 자식 프로세스), 재기동 시 워크스페이스 reset 후 <span class="mono">revise_attempts</span> 규칙으로 재시도. 이미 push된 라운드 산출물만 MR에 잔존. 미들웨어 내부 발송 재시도 큐 + event_log 발송 상태(pending/sent/failed)로 재기동 후 자동 정상화 <span class="v3-badge">v4 개정</span><span class="v3-badge">v4.1 개정</span></td></tr>
+        <tr><td>claude CLI 실행 실패/타임아웃·호스트 자원 부족</td><td>새 문서 생성·revise 불가</td><td class="rec">이미 알림이 발송된 세션의 버튼·승인·머지는 정상(미들웨어 처리) — 신규 MR 알림(review-prep)·revise는 불가. <span class="mono">revising</span> 세션은 동결됨 — 타임아웃 스위퍼가 <span class="mono">manual</span>로 전환 + Slack 알림. <span class="mono">revise_attempts</span> 규칙은 기존 그대로 <span class="v3-badge">v4 개정</span><span class="v3-badge">v4.1 개정</span></td></tr>
+        <tr><td>claude 실패</td><td>맥락 diff 요약 없음</td><td class="rec">실패 알림은 그대로 발송. revise 실패는 <span class="mono">revising</span> 상태 유지 + 미들웨어 즉시 1회 자동 재트리거, <span class="mono">revise_attempts≥2</span>면 manual <span class="v3-badge">v3.2 개정</span></td></tr>
+        <tr><td>웹훅 유실</td><td><span class="mono">/webhooks/gitlab/mr</span> 이벤트 미수신 — (a) 신규 MR 알림 누락 (b) 사람 push 정책 미평가(승인 게이트가 구 SHA 기준으로 열려 있음) (c) 외부 머지/닫힘 미감지 — revise 기동은 Slack 의견 제출(내부 경로)이 유일한 발화점이라 웹훅 유실과 무관</td><td class="rec">수동 재기동 또는 poller 보완 — §⑦ 미결 참조. 승인 클릭 시 head SHA 재조회(§① 319)가 (b)를 부분적으로 커버함 <span class="v3-badge">v4 신규</span><span class="v3-badge">v4.1 개정</span></td></tr>
+        <tr><td>Slack 장애</td><td>메시지 발송·버튼 응답 불가</td><td class="rec">미들웨어 내부 재시도 큐로 발송 재시도 — 실행기 재실행 불필요 <span class="v3-badge">v4 개정</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ⑦ 기본값·미결 -->
+<section class="sect">
+  <div class="sec-head"><span class="num">⑦</span><h2>기본값 · 미결</h2><span class="rule"></span><span class="v3-badge">v3 개정</span></div>
+  <div class="band" style="margin-bottom:14px;border-left:3px solid var(--crit)">
+    <div style="font-family:var(--mono);font-size:11.5px;font-weight:700;color:var(--crit);margin-bottom:8px">전제조건 (구축 전 확인 필수) <span class="v3-badge">v3 신규</span><span class="v3-badge">v4 개정</span></div>
+    <ul style="margin:0;padding-left:18px;font-size:12.5px;color:var(--ink-2)">
+      <li>미들웨어 호스트에 <span class="mono">claude</span> CLI · <span class="mono">git</span> 설치 (AI 실행기 동작 전제) <span class="v3-badge">v4 신규</span></li>
+      <li>봇 계정 PAT — <span class="mono">api</span> 스코프, push+merge 권한을 갖는 Maintainer 역할 <span class="v3-badge">v4 신규</span></li>
+      <li>GitLab 프로젝트 웹훅 등록: MR open/update/merge/close · push 이벤트, secret token 설정 (<span class="mono">/webhooks/gitlab/mr</span> 대상) — comment 이벤트는 등록하지 않음(현 설계에 소비자 없음, §① 참조) <span class="v3-badge">v4 신규</span><span class="v3-badge">v4.1 개정</span></li>
+      <li>git 워크스페이스 = MR(<span class="mono">project_id/mr_iid</span>)별 디렉터리로 분리 — 필요 디스크 공간은 "동시 진행 가능 MR 수 × 워크스페이스 1개 용량"으로 산정. claude 서브프로세스는 전역 동시 실행 상한(기본 1, 글로벌 세마포어)을 두어 초과분은 직렬화 큐에서 대기 <span class="v3-badge">v4 신규</span><span class="v3-badge">v4.1 개정</span></li>
+      <li>(v4.1 삭제) 봇 계정은 승인(approve) 동작을 수행하지 않으므로(merge API 호출만 사용) 봇의 approve 자격 관련 프로젝트 설정 확인 항목은 무관해져 삭제됨 <span class="v3-badge">v4.1 개정</span></li>
+      <li>웹훅 유실 대비 poller 보완 여부(감지 대상: 미알림 MR·미반영 push·외부 머지) — <b>미결</b> (§⑥ 장애 모드 참조) <span class="v3-badge">v4 신규</span><span class="v3-badge">v4.1 개정</span></li>
+      <li>승인 클릭 권한 = 해당 세션의 매핑 담당자 집합에 한정(빈 집합 = 거부) — 담당자 매핑이 공집합인 세션은 알림 시점에 즉시 <span class="mono">manual</span> 분기 + 채널 경고로 종료(§① 발신 서술 참조), 개별 클릭은 0단계 권한 검사에서 ephemeral 거부 <span class="v3-badge">v4 신규</span><span class="v3-badge">v4.1 개정</span></li>
+      <li>배포는 <span class="mono">uvicorn --workers 1</span> 고정 (CAS·단일 writer 전제)</li>
+    </ul>
+  </div>
+  <div class="notes">
+    <div class="note warn"><span class="nt">가정</span>round 상한 = 3</div>
+    <div class="note warn"><span class="nt">가정</span>사람 커밋 감지 시 자동 revise 중단 — 가드는 미들웨어가 실행기 기동 직전 수행 <span class="v3-badge">v3 개정</span><span class="v3-badge">v4 개정</span></div>
+    <div class="note warn"><span class="nt">가정</span>AI 체인 세션 벽시계 상한(예: 15분) — 초과 시 <span class="mono">kind=failed</span>로 처리 <span class="v3-badge">v3.2 신규</span></div>
+    <div class="note warn"><span class="nt">가정</span>merge poll = 3초 간격 × 10회, <span class="mono">merging_since</span> 타임아웃 5분 <span class="v3-badge">v4.1 신규</span></div>
+    <div class="note warn"><span class="nt">가정</span>MR 단위 직렬화 큐 대기 상한 = 10분(초과 시 <span class="mono">kind=failed</span>로 <span class="mono">revise_attempts</span> 규칙 합류) <span class="v3-badge">v4.1 신규</span></div>
+    <div class="note warn"><span class="nt">확정</span>세 타이머 순서: 큐 대기 상한(10분) → 세션 벽시계 상한(15분) → <span class="mono">revising_since</span> 스위퍼 임계값(세션 상한 15분 + 여유 5분 = 20분 이상) — 스위퍼 임계값은 항상 세션 벽시계 상한보다 크게 둔다 <span class="v3-badge">v4.1 신규</span></div>
+    <div class="note warn"><span class="nt">요건</span>사람 게이트는 Slack 승인 버튼 하나뿐 — 승인 이후 머지는 미들웨어가 poll 기반으로 수행. 미들웨어의 GitLab 봇 토큰에 보호브랜치 merge 권한 필요 (Maintainer 역할 또는 protected branch allow 설정)</div>
+    <div class="note"><span class="nt">확정</span>revise 트리거 = 이벤트 구동 — 미들웨어가 revise 실행기(claude CLI 서브프로세스)를 직접 기동, 별도 외부 트리거 메커니즘 불필요. 스케줄 기반 수거 방식 폐기 <span class="v3-badge">v4 개정</span></div>
+    <div class="note hold"><span class="nt">보류</span>L3 코드 대조 fact-check</div>
+    <div class="note v2"><span class="nt">v2 옵션</span>HTML → PNG 스크린샷 (Slack 인라인 렌더용)</div>
+    <div class="note v2"><span class="nt">v2 옵션</span>의견 이력 → 생성 프롬프트 환류 (조직 학습): opinion 테이블에 축적된 반복 지적을 주기 배치로 추출해 레포별 스타일 가이드로 다음 review-prep 프롬프트에 주입 <span class="v3-badge">v4.2 개정</span>. 이를 위해 opinion 데이터는 세션 종료 후에도 보존</div>
+  </div>
+</section>
+
+<footer>MR REVIEW PIPELINE · SQLITE v2 · REV 2026-07-27 (v4 개정 반영)</footer>
+</div>
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  const prefersDark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
+  mermaid.initialize({
+    startOnLoad: true,
+    theme: prefersDark ? "dark" : "default",
+    securityLevel: "loose",
+    fontSize: 18,
+    themeVariables: {
+      fontFamily: "Consolas,'Cascadia Mono',ui-monospace,monospace",
+      fontSize: "18px",
+      primaryTextColor: prefersDark ? "#dde5f0" : "#1c2733",
+      lineColor: prefersDark ? "#6f7d90" : "#7d8b99",
+      textColor: prefersDark ? "#dde5f0" : "#1c2733"
+    },
+    state: { useMaxWidth: false },
+    flowchart: { useMaxWidth: false }
+  });
+</script>
+</body>
+</html>

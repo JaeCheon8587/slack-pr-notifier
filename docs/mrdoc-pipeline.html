@@ -1,0 +1,1492 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>*,*::before,*::after{box-sizing:border-box}body{margin:0}img,svg{max-width:100%}</style>
+<title>mrdoc 리뷰 파이프라인</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+KR:wght@300;400;500;600;700&display=swap">
+
+<style>
+:root{
+  --ground:#F5F5F8;
+  --surface:#FFFFFF;
+  --surface-2:#EFEFF4;
+  --ink:#16181F;
+  --ink-2:#3C4050;
+  --mute:#6E7385;
+  --line:#DBDBE4;
+  --line-soft:#E9E9F0;
+  --accent:#8A2D55;
+  --accent-soft:#F5E6EC;
+  --tool:#4B5468;
+  --tool-soft:#E7E9EF;
+  --block:#A81F27;
+  --review:#8F5D0C;
+  --pass:#24664A;
+  --shadow:0 1px 2px rgba(22,24,31,.06),0 8px 24px -16px rgba(22,24,31,.18);
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --ground:#11121A;
+    --surface:#191B24;
+    --surface-2:#212430;
+    --ink:#E9E9EF;
+    --ink-2:#BCBFCC;
+    --mute:#8A8FA2;
+    --line:#2C3040;
+    --line-soft:#242833;
+    --accent:#E48CAD;
+    --accent-soft:#331F29;
+    --tool:#A3ACC1;
+    --tool-soft:#242936;
+    --block:#F08A90;
+    --review:#DCA84A;
+    --pass:#6FC49B;
+    --shadow:0 1px 2px rgba(0,0,0,.4),0 10px 28px -18px rgba(0,0,0,.7);
+  }
+}
+:root[data-theme="dark"]{
+  --ground:#11121A;
+  --surface:#191B24;
+  --surface-2:#212430;
+  --ink:#E9E9EF;
+  --ink-2:#BCBFCC;
+  --mute:#8A8FA2;
+  --line:#2C3040;
+  --line-soft:#242833;
+  --accent:#E48CAD;
+  --accent-soft:#331F29;
+  --tool:#A3ACC1;
+  --tool-soft:#242936;
+  --block:#F08A90;
+  --review:#DCA84A;
+  --pass:#6FC49B;
+  --shadow:0 1px 2px rgba(0,0,0,.4),0 10px 28px -18px rgba(0,0,0,.7);
+}
+
+*{box-sizing:border-box}
+body{
+  margin:0;
+  background:var(--ground);
+  color:var(--ink);
+  font-family:"IBM Plex Sans KR","Malgun Gothic",system-ui,sans-serif;
+  font-weight:400;
+  font-size:15.5px;
+  line-height:1.72;
+  -webkit-font-smoothing:antialiased;
+}
+code,pre,.mono{font-family:"IBM Plex Mono",ui-monospace,Consolas,monospace}
+
+/* ---------- shell ---------- */
+.shell{max-width:1240px;margin:0 auto;padding:0 26px;display:grid;grid-template-columns:216px minmax(0,1fr);gap:52px;align-items:start}
+@media (max-width:940px){.shell{grid-template-columns:1fr;gap:0}}
+
+/* ---------- rail ---------- */
+.rail{position:sticky;top:0;padding:38px 0 60px;max-height:100vh;overflow-y:auto}
+@media (max-width:940px){.rail{position:static;max-height:none;padding:26px 0 0;border-bottom:1px solid var(--line);margin-bottom:26px}}
+.rail-brand{font-family:"IBM Plex Mono",monospace;font-size:13px;font-weight:600;letter-spacing:.02em;color:var(--accent);margin-bottom:4px}
+.rail-sub{font-size:11.5px;color:var(--mute);line-height:1.5;margin-bottom:24px}
+.rail nav{display:flex;flex-direction:column;gap:2px}
+.rail-part{font-family:"IBM Plex Mono",monospace;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--mute);margin:18px 0 6px}
+.rail a{display:block;color:var(--ink-2);text-decoration:none;font-size:12.5px;padding:2.5px 8px 2.5px 10px;border-left:2px solid transparent;border-radius:0 3px 3px 0}
+.rail a:hover{color:var(--ink);background:var(--surface-2)}
+.rail a.on{color:var(--accent);border-left-color:var(--accent);font-weight:500}
+.rail a:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.rail a .mono{font-size:11.5px;color:var(--mute);margin-right:5px}
+.rail a.on .mono{color:var(--accent)}
+
+/* ---------- masthead ---------- */
+main{padding:38px 0 120px;min-width:0}
+.masthead{border-bottom:1px solid var(--line);padding-bottom:30px;margin-bottom:46px}
+.eyebrow{font-family:"IBM Plex Mono",monospace;font-size:10.5px;letter-spacing:.16em;text-transform:uppercase;color:var(--mute)}
+h1{font-size:clamp(30px,4.4vw,44px);line-height:1.14;font-weight:700;letter-spacing:-.022em;margin:12px 0 14px;text-wrap:balance}
+.dek{font-size:16.5px;color:var(--ink-2);max-width:64ch;font-weight:300}
+.dek b{font-weight:600;color:var(--ink)}
+.meta{display:flex;flex-wrap:wrap;gap:8px 22px;margin-top:22px;font-family:"IBM Plex Mono",monospace;font-size:11.5px;color:var(--mute)}
+.meta span b{color:var(--ink-2);font-weight:500}
+
+/* ---------- sections ---------- */
+section{margin-bottom:76px;scroll-margin-top:24px}
+.part-head{display:flex;align-items:baseline;gap:14px;border-top:2px solid var(--ink);padding-top:12px;margin-bottom:8px}
+.part-num{font-family:"IBM Plex Mono",monospace;font-size:12px;font-weight:600;color:var(--accent)}
+h2{font-size:25px;font-weight:700;letter-spacing:-.018em;margin:0;text-wrap:balance}
+.part-note{font-size:14.5px;color:var(--mute);max-width:66ch;margin:0 0 34px}
+h3{font-size:17.5px;font-weight:600;letter-spacing:-.012em;margin:44px 0 12px;text-wrap:balance;scroll-margin-top:20px}
+h4{font-size:13px;font-weight:600;margin:26px 0 8px;letter-spacing:-.005em}
+p{margin:0 0 14px;max-width:70ch}
+.lede{max-width:68ch;color:var(--ink-2)}
+strong{font-weight:600}
+a.inline{color:var(--accent);text-decoration:none;border-bottom:1px solid color-mix(in srgb,var(--accent) 35%,transparent)}
+a.inline:hover{border-bottom-color:var(--accent)}
+
+/* ---------- chips / badges ---------- */
+.kind{font-family:"IBM Plex Mono",monospace;font-size:10px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;padding:2px 6px;border-radius:3px;white-space:nowrap;display:inline-block;line-height:1.5}
+.kind.tool{color:var(--tool);background:var(--tool-soft)}
+.kind.llm{color:var(--accent);background:var(--accent-soft)}
+.req{font-family:"IBM Plex Mono",monospace;font-size:10.5px;color:var(--mute);white-space:nowrap}
+.req.core{color:var(--ink-2);font-weight:600}
+.gate{font-family:"IBM Plex Mono",monospace;font-size:10.5px;font-weight:600;padding:2px 7px;border-radius:3px;letter-spacing:.05em}
+.gate.b{color:var(--block);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--block) 40%,transparent)}
+.gate.r{color:var(--review);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--review) 45%,transparent)}
+.gate.p{color:var(--pass);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--pass) 40%,transparent)}
+
+/* ---------- tables ---------- */
+.tw{overflow-x:auto;margin:0 0 22px;border:1px solid var(--line);border-radius:6px;background:var(--surface)}
+table{border-collapse:collapse;width:100%;font-size:13.5px;min-width:560px}
+th{text-align:left;font-family:"IBM Plex Mono",monospace;font-size:10px;letter-spacing:.11em;text-transform:uppercase;color:var(--mute);font-weight:500;padding:10px 14px;border-bottom:1px solid var(--line);white-space:nowrap;background:var(--surface-2)}
+td{padding:10px 14px;border-bottom:1px solid var(--line-soft);vertical-align:top;color:var(--ink-2)}
+tbody tr:last-child td{border-bottom:none}
+td.num{font-variant-numeric:tabular-nums;font-family:"IBM Plex Mono",monospace;color:var(--ink)}
+td code,p code,li code,.card code,dd code{font-size:.88em;background:var(--surface-2);padding:1px 4.5px;border-radius:3px;color:var(--ink)}
+td strong{color:var(--ink)}
+
+/* ---------- pipeline ---------- */
+.filters{display:flex;flex-wrap:wrap;gap:7px;margin-bottom:16px;align-items:center}
+.filters .lbl{font-family:"IBM Plex Mono",monospace;font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--mute);margin-right:5px}
+.filters button{font-family:"IBM Plex Mono",monospace;font-size:11.5px;color:var(--ink-2);background:var(--surface);border:1px solid var(--line);padding:4px 11px;border-radius:99px;cursor:pointer}
+.filters button:hover{border-color:var(--mute)}
+.filters button[aria-pressed="true"]{background:var(--ink);color:var(--ground);border-color:var(--ink)}
+.filters button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+table.pipe{min-width:720px}
+table.pipe td:first-child{font-family:"IBM Plex Mono",monospace;font-weight:600;color:var(--accent);white-space:nowrap;font-variant-numeric:tabular-nums}
+table.pipe .nm{font-family:"IBM Plex Mono",monospace;font-size:12.5px;color:var(--ink);font-weight:500;white-space:nowrap}
+table.pipe .out{font-family:"IBM Plex Mono",monospace;font-size:11.5px;white-space:nowrap}
+table.pipe .out a{color:var(--ink-2);text-decoration:none;border-bottom:1px dotted var(--mute)}
+table.pipe .out a:hover{color:var(--accent);border-bottom-color:var(--accent)}
+table.pipe tr[data-opt="1"] td:first-child{color:var(--mute)}
+table.pipe tr.hide{display:none}
+
+/* ---------- cards ---------- */
+.card{background:var(--surface);border:1px solid var(--line);border-radius:7px;padding:22px 24px;margin-bottom:20px;box-shadow:var(--shadow)}
+.card.opt{border-style:dashed}
+.card-top{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin-bottom:4px}
+.card-name{font-family:"IBM Plex Mono",monospace;font-size:16px;font-weight:600;letter-spacing:-.01em;color:var(--ink)}
+.card-ref{font-size:12px;color:var(--mute);margin-bottom:16px}
+.card-ref code{background:none;padding:0;color:var(--accent)}
+.fm{display:flex;flex-wrap:wrap;gap:0;border:1px solid var(--line-soft);border-radius:5px;overflow:hidden;margin-bottom:18px;background:var(--surface-2)}
+.fm div{padding:7px 13px;border-right:1px solid var(--line-soft);flex:1 1 auto;min-width:96px}
+.fm div:last-child{border-right:none}
+.fm dt{font-family:"IBM Plex Mono",monospace;font-size:9.5px;letter-spacing:.11em;text-transform:uppercase;color:var(--mute);margin:0 0 2px}
+.fm dd{margin:0;font-family:"IBM Plex Mono",monospace;font-size:12.5px;color:var(--ink);font-variant-numeric:tabular-nums}
+.fm dd.no{color:var(--mute);text-decoration:line-through}
+
+dl.io{margin:0 0 16px;display:grid;grid-template-columns:max-content minmax(0,1fr);gap:5px 16px;align-items:baseline}
+dl.io dt{font-family:"IBM Plex Mono",monospace;font-size:10px;letter-spacing:.11em;text-transform:uppercase;color:var(--mute);padding-top:3px}
+dl.io dd{margin:0;font-size:13.5px;color:var(--ink-2)}
+@media (max-width:600px){dl.io{grid-template-columns:1fr;gap:1px 0}dl.io dd{margin-bottom:9px}}
+
+ol.hl{margin:0;padding-left:1.35em;font-size:13.5px;color:var(--ink-2)}
+ol.hl li{margin-bottom:9px;padding-left:2px}
+ol.hl li::marker{font-family:"IBM Plex Mono",monospace;font-size:11.5px;color:var(--accent)}
+ol.hl b{color:var(--ink);font-weight:600}
+ol.hl .alt{display:block;color:var(--mute);font-size:12.5px}
+ol.hl .alt::before{content:"→ ";color:var(--accent)}
+
+ul.plain{margin:0 0 16px;padding-left:1.15em;font-size:14px;color:var(--ink-2)}
+ul.plain li{margin-bottom:7px}
+ul.plain b{color:var(--ink)}
+
+/* ---------- code ---------- */
+.codewrap{border:1px solid var(--line);border-radius:6px;background:var(--surface);margin:0 0 20px;overflow:hidden}
+.codewrap .bar{display:flex;flex-wrap:wrap;align-items:center;gap:10px;padding:8px 14px;border-bottom:1px solid var(--line);background:var(--surface-2)}
+.codewrap .bar .f{font-family:"IBM Plex Mono",monospace;font-size:12px;font-weight:600;color:var(--ink)}
+.codewrap .bar .flow{font-family:"IBM Plex Mono",monospace;font-size:10.5px;color:var(--mute)}
+pre{margin:0;padding:15px 16px;overflow-x:auto;font-size:12.3px;line-height:1.62;color:var(--ink-2);tab-size:2}
+pre b{color:var(--ink);font-weight:600}
+pre .c{color:var(--mute)}
+pre .k{color:var(--accent)}
+
+.note{border-left:2px solid var(--accent);padding:2px 0 2px 15px;margin:0 0 20px;font-size:13.5px;color:var(--ink-2);max-width:68ch}
+.note b{color:var(--ink)}
+.rule{border:none;border-top:1px solid var(--line);margin:40px 0}
+.fields{margin:0 0 22px;display:grid;grid-template-columns:max-content minmax(0,1fr);gap:6px 18px;font-size:13.5px}
+.fields dt{font-family:"IBM Plex Mono",monospace;font-size:12px;color:var(--accent);padding-top:2px;white-space:nowrap}
+.fields dd{margin:0;color:var(--ink-2)}
+@media (max-width:600px){.fields{grid-template-columns:1fr;gap:2px 0}.fields dd{margin-bottom:10px}}
+
+footer{border-top:1px solid var(--line);padding-top:20px;font-family:"IBM Plex Mono",monospace;font-size:11px;color:var(--mute);display:flex;flex-wrap:wrap;gap:8px 26px}
+@media (prefers-reduced-motion:no-preference){.rail a{transition:color .12s,border-color .12s,background .12s}.filters button{transition:background .14s,color .14s,border-color .14s}}
+</style>
+
+<div class="shell">
+<aside class="rail">
+  <div class="rail-brand">mrdoc</div>
+  <div class="rail-sub">MR 문서 리뷰 → HTML 리포트<br>설계 확정 · 2026-08-23</div>
+  <nav id="nav">
+    <div class="rail-part">Part 1</div>
+    <a href="#agents">에이전트 5개</a>
+    <a href="#conventions">위성 공통 규약</a>
+    <a href="#funnel">읽기량 funnel</a>
+    <div class="rail-part">Part 2</div>
+    <a href="#pipeline">워크 노드 13</a>
+    <a href="#loop">단일 루프</a>
+    <a href="#consume">산출물 소비 관계</a>
+    <a href="#chain">역추적 사슬</a>
+    <div class="rail-part">Part 3</div>
+    <a href="#tpl-common">템플릿 공통 규약</a>
+    <a href="#t00"><span class="mono">00</span>changeset</a>
+    <a href="#t05"><span class="mono">05</span>structure</a>
+    <a href="#t06"><span class="mono">06</span>literals</a>
+    <a href="#t10"><span class="mono">10</span>scope</a>
+    <a href="#t15"><span class="mono">15</span>checklist</a>
+    <a href="#t20"><span class="mono">20</span>analysis</a>
+    <a href="#t25"><span class="mono">25</span>level</a>
+    <a href="#t30"><span class="mono">30</span>coverage</a>
+    <a href="#t32"><span class="mono">32</span>verify</a>
+    <a href="#t35"><span class="mono">35</span>collect</a>
+    <a href="#t40"><span class="mono">40</span>reportdata</a>
+    <a href="#t99"><span class="mono">──</span>report.html</a>
+    <a href="#tdispatch"><span class="mono">──</span>dispatch spec</a>
+  </nav>
+</aside>
+
+<main>
+<header class="masthead">
+  <div class="eyebrow">사내 docs-pipeline · AI 구간 설계</div>
+  <h1>mrdoc 리뷰 파이프라인</h1>
+  <p class="dek">GitLab MR 하나 → <b>report.html 1개 + Slack 요약</b>. 사람이 리포트 상단만 보고 머지 여부를 판단할 수 있어야 한다. 골격은 <b>base↔head 대비</b>이고, 정합성 검사는 그 위에 얹는 부가 경로다 — 부가가 빠지면 「주의할 점」 블록만 빈다.</p>
+  <div class="meta">
+    <span>워크 노드 <b>13</b></span>
+    <span>LLM 에이전트 <b>4</b> + 오케스트레이터 <b>1</b></span>
+    <span>mrdoc 서브커맨드 <b>11</b></span>
+    <span>1차 범위 <b>부가 3개 제외</b></span>
+  </div>
+</header>
+
+<!-- ══════════════════ PART 1 ══════════════════ -->
+<section id="agents">
+  <div class="part-head"><span class="part-num">Part 1</span><h2>에이전트 — 누가 무엇을 판단하나</h2></div>
+  <p class="part-note">LLM 은 4개뿐이고 전부 opus 다. 결정론으로 되는 일은 하나도 맡기지 않는다. 도구 목록이 이 설계의 실질적 집행 수단이다 — 프롬프트로 금지하는 것과 도구를 안 주는 것은 다르다.</p>
+
+  <div class="tw">
+  <table>
+    <thead><tr><th>에이전트</th><th>model</th><th>effort</th><th>maxTurns</th><th>BUDGET</th><th>tools</th><th>차단</th></tr></thead>
+    <tbody>
+      <tr><td><strong>mr-reviewer-orchestrator</strong></td><td class="num">sonnet</td><td class="num">low</td><td class="num">200</td><td class="num">—</td><td><code>Agent</code> <code>Bash</code></td><td>Read Write Edit Grep Glob</td></tr>
+      <tr><td><strong>doc-mapper</strong> <span class="req">[부가]</span></td><td class="num">opus</td><td class="num">medium</td><td class="num">12</td><td class="num">8</td><td><code>Read</code> <code>Write</code></td><td>Edit Grep Glob Bash</td></tr>
+      <tr><td><strong>doc-analyzer</strong></td><td class="num">opus</td><td class="num">high</td><td class="num">20</td><td class="num">16</td><td><code>Read</code> <code>Write</code></td><td>Edit Grep Glob Bash</td></tr>
+      <tr><td><strong>doc-verifier</strong></td><td class="num">opus</td><td class="num">high</td><td class="num">14</td><td class="num">10</td><td><code>Read</code> <code>Write</code></td><td>Edit Grep Glob Bash</td></tr>
+      <tr><td><strong>doc-reporter</strong></td><td class="num">opus</td><td class="num">medium</td><td class="num">8</td><td class="num">4</td><td><code>Read</code> <code>Write</code></td><td>Edit Grep Glob Bash</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <div class="note"><b>BUDGET = maxTurns − 4</b> (wrap-up 3 + RECEIPT 1). <code>maxTurns</code> 를 빼면 비용이 터진다. <b>Grep 을 아무 위성에도 주지 않는다</b> — 검색은 툴이 리터럴로 한다. Grep 이 있으면 LLM 이 검색어를 짓기 시작하고, 검색어 생성은 대조할 대상이 없어 검증이 불가능하다.</div>
+
+  <div class="card">
+    <div class="card-top"><span class="card-name">mr-reviewer-orchestrator</span><span class="kind llm">진입점</span><span class="req core">필수</span></div>
+    <div class="card-ref">레퍼런스 <code>opus-orchestrator</code> 의 기계 부분만 — 판단은 전부 위성에 있다</div>
+    <div class="fm">
+      <div><dt>model</dt><dd>sonnet</dd></div><div><dt>effort</dt><dd>low</dd></div><div><dt>maxTurns</dt><dd>200</dd></div><div><dt>tools</dt><dd>Agent · Bash</dd></div><div><dt>Read</dt><dd class="no">없음</dd></div>
+    </div>
+    <dl class="io">
+      <dt>역할</dt><dd><code>mrdoc dispatch next</code> 를 돌려 나온 위임 스펙 블록을 실행하고 조인한다. 그게 전부다.</dd>
+      <dt>아는 것</dt><dd><code>mrdoc</code> stdout(≤10줄)뿐. 산출물 본문은 트랜스크립트에 단 한 줄도 들어오지 않는다.</dd>
+      <dt>분기</dt><dd>1개 — 블록 타입(<code>SPEC agent</code> / <code>SPEC tool</code>). 스테이지 순서·팬아웃 폭·배치 경계·재호출 판단이 전부 <code>dispatch</code> 안에 있다.</dd>
+    </dl>
+    <h4>왜 Read 까지 빼나</h4>
+    <p style="font-size:13.5px;color:var(--ink-2)">Read 가 있으면 <code>20-analysis/*.md</code> 를 읽고 판단을 형성할 <strong>물리적 경로</strong>가 생긴다. 200턴을 도는 동안 프롬프트는 잊히고 도구는 남는다.</p>
+    <h4>HARD LIMITS</h4>
+    <ol class="hl">
+      <li><b>산출물 본문을 읽지 않는다.</b> 읽으면 finding 을 만들기 시작한다. <span class="alt">상태가 필요하면 <code>mrdoc status</code>. 도구 미부여로 물리적 차단</span></li>
+      <li><b>위성이 준 숫자를 합산하지 않는다.</b> 합산하면 리포트 숫자의 출처가 두 곳이 된다. <span class="alt">합산은 <code>mrdoc collect</code>. ledger 에는 리턴을 원문 그대로</span></li>
+      <li><b>위임 스펙을 직접 작성하지 않는다.</b> <span class="alt"><code>dispatch</code> 출력을 그대로 붙인다. 부실해 보이면 그건 dispatch 버그다</span></li>
+      <li><b>팬아웃 5 초과 금지. 한 wave 를 여러 메시지로 쪼개지 않는다.</b> <span class="alt">쪼개면 조인 지점이 사라진다</span></li>
+      <li><b>위성을 임의로 재호출하지 않는다.</b> 재호출은 비결정성의 유일한 입구다. <span class="alt">리턴 유실은 <code>mrdoc status --receipt</code> 로 회수</span></li>
+      <li><b>exit code 를 무시하지 않는다.</b> <span class="alt"><code>0</code>/<code>4</code>/<code>2</code> 이외는 abort</span></li>
+    </ol>
+  </div>
+
+  <div class="card opt">
+    <div class="card-top"><span class="card-name">doc-mapper</span><span class="kind llm">LLM</span><span class="req">[부가]</span></div>
+    <div class="card-ref">레퍼런스 <code>explorer</code> — 넓고 얕은 comprehension. 위치를 지목하고 판정은 안 한다</div>
+    <div class="fm">
+      <div><dt>model</dt><dd>opus</dd></div><div><dt>effort</dt><dd>medium</dd></div><div><dt>maxTurns</dt><dd>12</dd></div><div><dt>budget</dt><dd>8</dd></div><div><dt>출력</dt><dd>10-scope.md</dd></div>
+    </div>
+    <dl class="io">
+      <dt>입력</dt><dd><code>05-structure</code> 의 <code>## TREE</code> + 파일 도입부 18개 × 20줄 + 변경 절의 <strong>base 와 head 본문</strong> ≈ 630줄</dd>
+      <dt>출력</dt><dd>확인 대상 절 목록(<code>TARGET</code>) + <code>basis: base|head</code> + 근거 한 줄</dd>
+      <dt>Scope gate</dt><dd>첫 Read 전 — <code>05-structure</code> 에 <code>## TREE</code> 가 없거나 <code>## CHANGED</code> 가 비면 <code>BLOCKED</code></dd>
+      <dt>리턴</dt><dd>≤12줄 · <code>STATUS TARGETS BASIS FILES_SCANNED UNCOVERED UNCERTAIN CONFIDENCE REPORT</code></dd>
+    </dl>
+    <h4>정체 — 매 MR 새로 뜨는 일회용 심볼 인덱스</h4>
+    <div class="tw">
+    <table>
+      <thead><tr><th></th><th>코드 심볼 인덱스</th><th>doc-mapper</th></tr></thead>
+      <tbody>
+        <tr><td><strong>심볼</strong></td><td>클래스·메서드 시그니처</td><td><code>heading_path</code> — 문서 h1 부터의 계층 경로</td></tr>
+        <tr><td><strong>설명</strong></td><td>XML doc · docstring</td><td>파일 도입부 20줄</td></tr>
+        <tr><td><strong>본문</strong></td><td>메서드 바디 — <strong>안 읽음</strong></td><td>절 본문 — <strong>안 읽음</strong></td></tr>
+        <tr><td><strong>좌표</strong></td><td>파일:라인</td><td><code>section_id</code> + 라인 범위</td></tr>
+        <tr><td><strong>수명</strong></td><td>저장·재사용</td><td><strong>버린다</strong> — MR 마다 재계산</td></tr>
+      </tbody>
+    </table>
+    </div>
+    <p style="font-size:13.5px;color:var(--ink-2)">선언부만 읽고 바디는 안 본다는 점에서 코드 심볼 인덱스와 같은 모양이다. <strong>다른 건 수명 하나다</strong> — 저장하면 갱신 트리거·스테일 창·브랜치 오염이 따라온다.</p>
+
+    <h4>읽는 양 — 절 210 개 중 본문을 읽는 건 3 개</h4>
+    <div class="codewrap">
+<pre>파일 도입부  18 × 20줄  =  360줄   <span class="c">← 자연어. 판단 근거의 절반</span>
+heading 트리            =  210줄   <span class="c">← 제목만. 본문 0</span>
+변경 절 base/head       =   60줄   <span class="c">← 본문을 읽는 유일한 대상</span>
+                          ─────
+                           630줄</pre>
+    </div>
+    <p style="font-size:13.5px;color:var(--ink-2)">「관련 문서를 다 읽고 지목」이 아니다. <strong>표지만 훑어서 읽을 곳을 찍는다.</strong> 지목된 절을 실제로 읽는 건 <code>doc-analyzer</code> — 역할과 예산(8 / 16)이 갈려 있다. <code>failover.md</code> 도입부가 "장애 복구 절차와 재시도 정책"이고 목차에 <code>7.2 재시도</code> 가 있으면 그걸로 지목이 끝난다.</p>
+
+    <h4>base 본문을 반드시 읽는 이유</h4>
+    <p style="font-size:13.5px;color:var(--ink-2)">head 만 보면 <strong>없어진 주제</strong>를 참조하는 절을 못 찾는다. 링크는 살아있고 내용만 없어진 경우 — 문서 리팩터링 MR 의 주된 실패 유형이다.</p>
+    <h4>HARD LIMITS</h4>
+    <ol class="hl">
+      <li><b>판정하지 않는다.</b> "모순이다" 는 analyzer 의 일. <span class="alt">지목하고 <code>why</code> 에 근거만 쓴다</span></li>
+      <li><b>절 본문을 통독하지 않는다.</b> 18파일 통독하면 죽는다. <span class="alt">도입부 <code>intro_lines</code> 줄 + heading 트리만. 변경 절만 예외</span></li>
+      <li><b>검색어를 만들지 않는다.</b> <code>probe</code>·<code>keyword</code> 류 필드가 스키마에 없다. <span class="alt">위치(<code>section_id</code>)로 지목한다</span></li>
+      <li><b>지도를 만들지 않는다.</b> 재사용 가능한 주제 인덱스를 산출하지 않는다. <span class="alt">이번 MR 의 <code>TARGET</code> 만. 자산화는 측정 후 별도 결정</span></li>
+      <li><b><code>FILES_SCANNED</code> 를 실제 값으로 쓴다.</b> <span class="alt">모자라면 <code>PARTIAL</code> + <code>UNCOVERED</code>. 18/18 거짓 기재는 커버리지 오보</span></li>
+    </ol>
+  </div>
+
+  <div class="card">
+    <div class="card-top"><span class="card-name">doc-analyzer</span><span class="kind llm">LLM</span><span class="req core">필수 · 주역</span></div>
+    <div class="card-ref">레퍼런스 <code>explorer</code> + <code>analyst</code> — 좁고 깊은 comprehension + 판정</div>
+    <div class="fm">
+      <div><dt>model</dt><dd>opus</dd></div><div><dt>effort</dt><dd>high</dd></div><div><dt>maxTurns</dt><dd>20</dd></div><div><dt>budget</dt><dd>16</dd></div><div><dt>출력</dt><dd>20-analysis/&lt;id&gt;.md</dd></div>
+    </div>
+    <dl class="io">
+      <dt>입력</dt><dd><code>base/</code> + <code>snapshot/</code> 의 변경 절(2개 리비전) · 인접 ±1~2절 · <code>06-literals</code> 의 자기 unit · [부가] 자기 배치 CHECK</dd>
+      <dt>출력</dt><dd>unit 마다 <code>level</code> + <code>before</code>/<code>after</code> 두 줄. [부가] CHECK 전수 응답 + <code>FINDING</code></dd>
+      <dt>Scope gate</dt><dd>① 자기 <code>file_id</code> unit 없음 → <code>BLOCKED — no changed unit</code> ② CHECK 가 <code>checks_per_batch</code> 초과 → <code>BLOCKED — batch too large</code></dd>
+      <dt>리턴</dt><dd>≤16줄 · <code>STATUS UNITS LEVELS CHECKS FINDINGS CLEAN UNCOVERED UNCERTAIN CONFIDENCE REPORT</code></dd>
+    </dl>
+    <h4>HARD LIMITS</h4>
+    <ol class="hl">
+      <li><b><code>before</code>/<code>after</code> 를 원문 없이 쓰지 않는다.</b> 기억·추론으로 쓴 서술이 리포트 상단에 그대로 나간다. <span class="alt">두 리비전을 실제로 읽고 쓴다. 못 읽었으면 <code>UNCOVERED</code></span></li>
+      <li><b>사실 목록을 직접 쓰지 않는다.</b> 요약하다 흘리면 리포트에서 사실이 사라진다. <span class="alt"><code>06-literals</code> 를 인용만. 차집합이 틀려 보이면 <code>UNCERTAIN</code></span></li>
+      <li><b>레벨을 근거 없이 내리지 않는다.</b> L2 를 L3 로 내리면 값 변경이 조용히 사라진다. <span class="alt">애매하면 높은 레벨. <code>levelcheck</code> 가 승격은 하지만 강등은 없다</span></li>
+      <li><b>severity 를 부여하지 않는다.</b> <span class="alt"><code>category</code> 만 쓴다. severity 는 <code>collect</code> 의 rule</span></li>
+      <li><b>기술적 타당성을 판정하지 않는다.</b> <span class="alt">A와 B가 다르다는 사실만. 어느 쪽이 옳은지는 안 쓴다</span></li>
+      <li><b>변경 이유를 추측하지 않는다.</b> <span class="alt"><code>before</code>/<code>after</code> 는 "무엇이 어떻게" 까지만</span></li>
+      <li><b>배치 상한 초과분을 받아들이지 않는다.</b> <span class="alt">첫 Read 전 <code>BLOCKED</code>. 분할은 <code>dispatch</code> 가 unit 경계로</span></li>
+      <li><b>300줄 넘는 파일을 통독하지 않는다.</b> <span class="alt">절 라인 범위 ±40줄. 같은 파일 재Read 금지</span></li>
+    </ol>
+  </div>
+
+  <div class="card">
+    <div class="card-top"><span class="card-name">doc-verifier</span><span class="kind llm">LLM</span><span class="req core">필수</span></div>
+    <div class="card-ref">레퍼런스 <code>reviewer</code> — fresh context 로 남의 산출물을 판정한다. <code>Write</code> 는 자기 리포트 1개에만</div>
+    <div class="fm">
+      <div><dt>model</dt><dd>opus</dd></div><div><dt>effort</dt><dd>high</dd></div><div><dt>maxTurns</dt><dd>14</dd></div><div><dt>budget</dt><dd>10</dd></div><div><dt>출력</dt><dd>32-verify.md</dd></div>
+    </div>
+    <dl class="io">
+      <dt>입력</dt><dd><code>20-analysis/&lt;id&gt;.md</code> + <code>base/</code>·<code>snapshot/</code> 의 변경 절 + <code>06-literals.md</code></dd>
+      <dt>보는 것</dt><dd>① <code>before</code>/<code>after</code> 서술의 <strong>충실도</strong> ② 리터럴로 안 잡히는 레벨 오판(순수 서술문 절의 L1↔L2)</dd>
+      <dt>출력</dt><dd><code>32-verify.md</code> — unit 마다 <code>fidelity</code> + <code>level_opinion</code>. <code>REVISE</code> 면 <code>FIX</code> 블록</dd>
+      <dt>순서</dt><dd><code>coverage</code> 통과 <strong>후에</strong> 돈다 — 값싼 게이트 먼저, 통과한 것만 질을 본다</dd>
+      <dt>리턴</dt><dd>≤12줄 · <code>VERDICT CHECKED FIDELITY LEVELS REQUIRED_FIXES UNCOVERED UNCERTAIN CONFIDENCE REPORT</code> — <strong>16 → 12 로 줄었다.</strong> 상세가 파일로 갔다</dd>
+    </dl>
+    <div class="note">①이 이 계층의 존재 이유다. <code>collect</code> 의 quote 대조는 <b>finding 인용만</b> 본다. 사람이 상단 2블록으로 판단하라고 설계했는데 그 2블록이 무검증이었다. <code>clean</code> 판정 진위는 1차에서 뺀다 — 확인하려면 대상 절 본문을 다시 읽어야 해서 읽기 범위가 analyzer 와 같아진다.</div>
+    <h4>툴이 이미 본 것은 다시 보지 않는다</h4>
+    <div class="tw">
+    <table>
+      <thead><tr><th></th><th>검사</th><th>어디서</th></tr></thead>
+      <tbody>
+        <tr><td rowspan="8"><span class="kind tool">툴</span></td><td>CHECK id 별 응답 존재</td><td><code>coverage ①</code></td></tr>
+        <tr><td>frontmatter 자기보고 == 실제 블록 수</td><td><code>coverage ②</code></td></tr>
+        <tr><td><code>UNCOVERED: none</code> 인데 실측 미응답 &gt;0 — 거짓 영수증</td><td><code>coverage ③</code></td></tr>
+        <tr><td><code>FINDING.check_id</code> 실재</td><td><code>coverage ④</code> · <code>collect 2</code></td></tr>
+        <tr><td>evidence 인용이 원문 line ±3 창에 실재</td><td><code>collect 3</code></td></tr>
+        <tr><td>중복 finding 병합 (sha)</td><td><code>collect 4</code></td></tr>
+        <tr><td>severity — 두 quote 에서 리터럴 추출</td><td><code>collect 5</code></td></tr>
+        <tr><td>L3 성립 · L2 강제 승격 (차집합 기반)</td><td><code>levelcheck</code></td></tr>
+        <tr><td rowspan="2"><span class="kind llm">LLM</span></td><td>① <code>before</code>/<code>after</code> 서술의 <strong>충실도</strong></td><td><code>doc-verifier</code></td></tr>
+        <tr><td>② 리터럴로 안 잡히는 레벨 오판 — 순수 서술문 절의 L1↔L2</td><td><code>doc-verifier</code></td></tr>
+      </tbody>
+    </table>
+    </div>
+    <p style="font-size:13.5px;color:var(--ink-2)">경계는 하나다 — <strong>두 문자열의 대조로 환원되면 툴이다.</strong> 존재하나 · 개수 맞나 · 원문에 있나 · 공집합이냐 · 같냐. 이 다섯으로 안 내려가는 건 <b>원문과 서술 사이의 의미 대응</b>뿐이고 그게 ①②다.</p>
+
+    <h4>왜 리턴만으로는 안 되는가</h4>
+    <p style="font-size:13.5px;color:var(--ink-2)">위성 공통 규약 <b>Report-first</b>(첫 2 툴 호출 안에 스켈레톤 생성)와 <b>RECEIPT copy</b>(529 유실 시 회수)는 <strong>산출물 파일이 있어야 성립한다.</strong> 리턴만 두면 verifier 혼자 두 규약의 예외가 되고, 죽으면 판정이 같이 사라져 재호출밖에 답이 없다 — 재호출은 비결정성의 유일한 입구다.</p>
+    <ul class="plain">
+      <li><b><code>collect</code> 가 직접 읽는다.</b> <code>35-collect</code> frontmatter 의 <code>verify: {rounds, verdict, outstanding}</code> 출처가 파일로 확정된다 — 오케스트레이터가 데이터 경로에서 빠진다</li>
+      <li><b><code>dispatch</code> 가 재호출 스펙을 만든다.</b> <code>REQUIRED FIXES</code> 상세를 파일에서 읽어 <code>CONTEXT</code>·<code>CONSTRAINTS</code> 를 결정론적으로 생성한다. 리턴에는 <b>개수만</b> 싣는다</li>
+      <li><b>오케스트레이터가 받는 것은 두 개뿐이다.</b> <code>REPORT</code> 경로 + <code>VERDICT</code>. 본문은 읽지 않는다 — 읽으면 finding 을 만들기 시작한다</li>
+    </ul>
+
+    <h4>HARD LIMITS</h4>
+    <ol class="hl">
+      <li><b>남의 산출물을 수정하지 않는다.</b> 고치면 저자가 되고 fresh context 가 무의미해진다. <code>Write</code> 가 부여됐으므로 이제 <strong>물리적 차단이 아니라 규약</strong>이다. <span class="alt"><code>Write</code> 는 <code>32-verify.md</code> 한 개에만. <code>20-analysis/*.md</code> 는 안 건드리고 <code>REQUIRED FIXES</code> 에 번호 + 대상 id 만</span></li>
+      <li><b>애매하면 APPROVE 하지 않는다.</b> 부당한 APPROVE 가 이 계층을 없앤다. <span class="alt"><code>REVISE</code> + 이유</span></li>
+      <li><b>원문 안 읽고 판정하지 않는다.</b> <span class="alt">읽은 것만 <code>CHECKED</code>. 못 읽은 항목은 판정하지 않고 <code>UNCOVERED</code></span></li>
+      <li><b>문서 내용의 옳고 그름을 판정하지 않는다.</b> 분석의 충실도만. <span class="alt">이상해 보이면 <code>UNCERTAIN</code> 한 줄</span></li>
+      <li><b>verdict(BLOCK/REVIEW/PASS)를 언급하지 않는다.</b> <span class="alt">그건 <code>collect</code> 의 rule. 서술 충실도와 레벨만</span></li>
+    </ol>
+    <p style="font-size:13px;color:var(--mute);margin-bottom:0"><code>CHECKED</code> 의 의미는 <code>reviewer.md</code> 그대로 — <em>"what you actually read, not what you were pointed at."</em> 원문을 안 읽은 APPROVE 는 고무도장이다.</p>
+  </div>
+
+  <div class="card">
+    <div class="card-top"><span class="card-name">doc-reporter</span><span class="kind llm">LLM</span><span class="req core">필수</span></div>
+    <div class="card-ref">레퍼런스 <code>scribe</code> — 문서를 쓴다. 코드처럼 컴파일러가 없다</div>
+    <div class="fm">
+      <div><dt>model</dt><dd>opus</dd></div><div><dt>effort</dt><dd>medium</dd></div><div><dt>maxTurns</dt><dd>8</dd></div><div><dt>budget</dt><dd>4</dd></div><div><dt>출력</dt><dd>40-reportdata.md</dd></div>
+    </div>
+    <dl class="io">
+      <dt>입력</dt><dd><code>35-collect.md</code> frontmatter + <code>must_read</code> 지목분 <strong>만</strong></dd>
+      <dt>출력</dt><dd>문장만. 숫자·verdict·severity 는 복사</dd>
+      <dt>Scope gate</dt><dd><code>35-collect.md</code> 없으면 <code>BLOCKED</code>. 문장을 쓰기 전에 claim→source 표를 만들고, 대응 <code>u-</code>/<code>f-</code> 가 없는 필수 문장이 있으면 <strong>파일을 건드리기 전에</strong> <code>BLOCKED</code></dd>
+      <dt>리턴</dt><dd>≤12줄 · <code>STATUS SENTENCES SOURCES UNSOURCED CONFLICTS UNCOVERED CONFIDENCE REPORT</code></dd>
+    </dl>
+    <h4>HARD LIMITS</h4>
+    <ol class="hl">
+      <li><b>새 주장을 만들지 않는다.</b> 모든 문장이 실재하는 <code>u-</code>/<code>f-</code> 로 역추적되어야 한다. <span class="alt">근거 없으면 그 블록을 생략하고 <code>UNSOURCED</code></span></li>
+      <li><b>verdict·severity·<code>must_read</code> 를 바꾸지 않는다.</b> <span class="alt">부적절해 보이면 <code>CONFLICTS</code> 에 적고 원본대로 복사. <code>render</code> 가 대조해서 잡는다</span></li>
+      <li><b>숫자를 재계산하지 않는다.</b> <span class="alt"><code>35-collect</code> 카운트를 그대로 인용</span></li>
+      <li><b>레벨 이름을 의역하지 않는다.</b> "사소한 변경" 같은 말이 L3 정의를 흐린다. <span class="alt">맥락 변경 / 값 변경 / 표현 변경 세 표현만</span></li>
+      <li><b>파일 원문을 읽지 않는다.</b> <span class="alt">필요해 보이면 <code>UNCERTAIN</code>. <code>35-collect</code> 안에서만 쓴다</span></li>
+    </ol>
+    <p style="font-size:13px;color:var(--mute);margin-bottom:0">리포트가 이 시스템의 <strong>유일한 대외 산출물</strong>이라 <code>UNSOURCED</code>·<code>CONFLICTS</code> 필수 기재가 가장 필요한 자리다. 생략은 "clean" 으로 읽히고, 그건 거짓 영수증이다.</p>
+  </div>
+
+  <h3 id="conventions">위성 공통 규약 — 전 위성 적용</h3>
+  <p class="lede"><code>Claudecode-For-Me</code> 위성 7개에서 실측된 규약. <code>explorer.md</code> 의 기록: <em>"died at 23-26 tool calls (~5k tokens per call) with zero output."</em></p>
+  <div class="tw">
+  <table>
+    <thead><tr><th>규약</th><th>내용</th><th>왜</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Scope gate</strong></td><td>첫 툴 호출 <strong>전에</strong> 입력 검사. 불충분 → <code>BLOCKED</code>, 탐색 시작 안 함</td><td>근거 없이 시작하면 결과가 재현되지 않는다</td></tr>
+      <tr><td><strong>BUDGET wrap-up</strong></td><td>3 남으면 읽기 중단 → flush → <code>PARTIAL</code> + <code>UNCOVERED</code></td><td>산출 없이 죽는 게 최악. <code>PARTIAL</code> 은 계획된 결과지 실패가 아니다</td></tr>
+      <tr><td><strong>Report-first</strong></td><td>첫 2 툴 호출 안에 산출물 스켈레톤 생성, 섹션마다 append</td><td>컨텍스트에만 있는 결과는 죽을 때 같이 죽는다</td></tr>
+      <tr><td><strong>RECEIPT copy</strong></td><td>리턴 조립 전 산출물 말미에 리턴 블록을 <code>## RECEIPT</code> 로 복사</td><td>529 유실 시 <strong>회수한다. 재호출하지 않는다</strong> — 재호출은 비결정성</td></tr>
+      <tr><td><strong>Read discipline</strong></td><td>300줄 초과 통독 금지 → 대상 라인 ±40줄. 재Read 금지</td><td><code>snapshot/</code> 문서는 수백~수천 줄</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <h4>필수 필드 — 빈 값은 <code>none</code>, 생략 금지</h4>
+  <div class="codewrap"><pre>STATUS:     OK | EMPTY | PARTIAL — &lt;잘린 범위&gt; | BLOCKED — &lt;이유&gt; | FAILED — &lt;이유&gt;
+UNCOVERED:  &lt;처리하지 못한 id 목록&gt;  |  none
+UNCERTAIN:  &lt;애매한 점 한 줄&gt;        |  none
+CONFIDENCE: high|medium|low — &lt;직접 확인한 사실만 근거로&gt;</pre></div>
+  <div class="note">이 한 줄이 <b>"조용한 누락 금지"의 유일한 집행 수단</b>이다. optional 필드는 LLM 이 안 쓰고, 그러면 "해당 없음" 과 "안 함" 이 구분되지 않는다. 자기보고와 툴 실측이 이중화된다 — 자기보고 <code>none</code> 인데 실측 미응답 &gt;0 이면 <b>거짓 영수증</b>이고, 재호출 없이 <code>analysis_failed</code> 다. <code>CONFIDENCE</code> 는 severity 계산에 쓰지 않는다 — <code>must_read</code> 정렬과 표시에만.</div>
+
+  <h3 id="funnel">읽기량 funnel — 실측 기준</h3>
+  <p class="lede">넓고 얕은 선행 스윕이 파서(<code>structure</code>)와 파일 단위 LLM(<code>mapper</code>) 두 층이다. <strong>절 단위로 깊게 라벨링하는 층은 없다</strong> — 그게 자산을 요구하는 유일한 층이었다.</p>
+  <div class="tw">
+  <table>
+    <thead><tr><th>단계</th><th>읽는 것</th><th>성격</th><th>BUDGET</th></tr></thead>
+    <tbody>
+      <tr><td><code>mrdoc structure</code></td><td>폴더 전체 heading. <strong>본문 0줄</strong></td><td>넓고 얕다</td><td class="num">— 파서</td></tr>
+      <tr><td><code>doc-mapper</code> <span class="req">[부가]</span></td><td>파일 도입부 18 + heading 트리 210 + 변경 절 base/head ≈ 630줄</td><td>넓고 얕다</td><td class="num">8</td></tr>
+      <tr><td><code>doc-analyzer</code></td><td>변경 절 base+head + 인접 절 + 대상 절</td><td>좁고 깊다</td><td class="num">16</td></tr>
+      <tr><td><code>doc-verifier</code></td><td>변경 절 base+head + 분석 파일 + 리터럴</td><td>좁다</td><td class="num">10</td></tr>
+      <tr><td><code>doc-reporter</code></td><td><code>35-collect</code> frontmatter + <code>must_read</code> 지목분</td><td>좁다</td><td class="num">4</td></tr>
+    </tbody>
+  </table>
+  </div>
+</section>
+
+<!-- ══════════════════ PART 2 ══════════════════ -->
+<section id="pipeline">
+  <div class="part-head"><span class="part-num">Part 2</span><h2>워크플로우 — 고정 DAG 13 노드</h2></div>
+  <p class="part-note">house 는 <em>"Never plan the whole graph upfront"</em> 이라고 쓴다. <strong>우리는 반대로 DAG 를 고정한다</strong> — 매 wave 를 결과로 재분할하는 것이 곧 판단이고, 판단을 오케스트레이터에서 빼는 게 이 설계의 전제다. 적응성을 버리고 재현성을 얻는다. 같은 MR 을 두 번 돌려 다른 결론이 나오면 사람이 리포트를 안 믿는다.</p>
+
+  <div class="filters">
+    <span class="lbl">필터</span>
+    <button data-f="all" aria-pressed="true">전체 13</button>
+    <button data-f="core" aria-pressed="false">필수만 9</button>
+    <button data-f="tool" aria-pressed="false">툴 9</button>
+    <button data-f="llm" aria-pressed="false">LLM 4</button>
+  </div>
+
+  <div class="tw">
+  <table class="pipe" id="pipe">
+    <thead><tr><th>#</th><th>노드</th><th>실행</th><th>산출물</th><th>하는 일</th></tr></thead>
+    <tbody>
+      <tr data-kind="tool" data-opt="0"><td>0</td><td class="nm">mrdoc changeset</td><td><span class="kind tool">툴</span></td><td class="out"><a href="#t00">00-changeset.md</a></td><td>파일 인덱스. status 정규화 · 라인 범위 · rename 판정</td></tr>
+      <tr data-kind="tool" data-opt="0"><td>0a</td><td class="nm">mrdoc structure</td><td><span class="kind tool">툴</span></td><td class="out"><a href="#t05">05-structure.md</a></td><td>폴더 전체 heading 트리 · change unit · 절 짝짓기 · move 확정</td></tr>
+      <tr data-kind="tool" data-opt="0"><td>0b</td><td class="nm">mrdoc literals</td><td><span class="kind tool">툴</span></td><td class="out"><a href="#t06">06-literals.md</a></td><td><strong>리터럴 차집합 3종.</strong> 설계의 축 — 세 군데서 재사용</td></tr>
+      <tr data-kind="llm" data-opt="1"><td>[1]</td><td class="nm">doc-mapper</td><td><span class="kind llm">LLM</span></td><td class="out"><a href="#t10">10-scope.md</a></td><td>확인 대상 절 지목. 검색어가 아니라 위치를 준다</td></tr>
+      <tr data-kind="tool" data-opt="1"><td>[2]</td><td class="nm">mrdoc checklist</td><td><span class="kind tool">툴</span></td><td class="out"><a href="#t15">15-checklist.md</a></td><td>4경로로 CHECK 열거. 전부 결정론</td></tr>
+      <tr data-kind="llm" data-opt="0"><td>3</td><td class="nm">doc-analyzer</td><td><span class="kind llm">LLM</span></td><td class="out"><a href="#t20">20-analysis/&lt;id&gt;.md</a></td><td>이전↔이후 서술 두 줄 + 레벨 판정. [부가] CHECK 전수 응답</td></tr>
+      <tr data-kind="tool" data-opt="0"><td>4</td><td class="nm">mrdoc levelcheck</td><td><span class="kind tool">툴</span></td><td class="out"><a href="#t25">25-level.md</a></td><td>L3 검증 · L2 강제 승격 · 닫힌 CHECK 부활</td></tr>
+      <tr data-kind="tool" data-opt="1"><td>[5]</td><td class="nm">mrdoc coverage</td><td><span class="kind tool">툴</span></td><td class="out"><a href="#t30">30-coverage.md</a></td><td>기계 검사 4개. 미응답 있으면 exit 3</td></tr>
+      <tr data-kind="llm" data-opt="0"><td>5b</td><td class="nm">doc-verifier</td><td><span class="kind llm">LLM</span></td><td class="out"><a href="#t32">32-verify.md</a></td><td>서술 충실도 · 레벨 감사. 툴이 원리적으로 못 보는 것만</td></tr>
+      <tr data-kind="tool" data-opt="0"><td>6</td><td class="nm">REVISE / exit 3</td><td><span class="kind tool">분기</span></td><td class="out">—</td><td>doc-analyzer 재호출 <strong>최대 1회</strong> → 5·5b 재실행. 루프는 이것뿐</td></tr>
+      <tr data-kind="tool" data-opt="0"><td>7</td><td class="nm">mrdoc collect</td><td><span class="kind tool">툴</span></td><td class="out"><a href="#t35">35-collect.md</a></td><td>역추적 · quote 대조 · dedup · severity · verdict · must_read</td></tr>
+      <tr data-kind="llm" data-opt="0"><td>8</td><td class="nm">doc-reporter</td><td><span class="kind llm">LLM</span></td><td class="out"><a href="#t40">40-reportdata.md</a></td><td>문장만. 숫자·verdict 는 복사</td></tr>
+      <tr data-kind="tool" data-opt="0"><td>9</td><td class="nm">mrdoc render</td><td><span class="kind tool">툴</span></td><td class="out"><a href="#t99">report.html · slack-summary.txt</a></td><td>verdict 대조 → refs 대조 → 렌더. Jinja2, 외부 의존 0</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <div class="note"><b>필수 경로만으로 리포트가 완성된다.</b> <code>[부가]</code> 3개(<code>mapper</code> · <code>checklist</code> · <code>coverage</code>)를 빼면 「주의할 점」 블록만 빈다. <b>1차는 부가 없이 만든다</b> — 서브커맨드 8개, 에이전트 4개. 리포트가 성립하는 것을 먼저 확인하고 정합성을 얹는다.</div>
+
+  <h4>노드 순서에서 바뀐 것 — <code>literals</code> 가 <code>checklist</code> 앞으로</h4>
+  <p class="lede">차집합이 CHECK 생성의 <strong>입력</strong>이다. 이전 판은 <code>levelcheck</code> 를 analyzer 뒤에 뒀는데, 그러면 <code>removed</code> 리터럴로 base 쪽을 검색하는 경로를 만들 수 없다 — 재작성으로 없어진 사실을 참조하는 문서를 아무도 못 잡는다.</p>
+
+  <h4>선행 3 노드는 전부 base·head 양쪽을 본다 — 단위만 다르다</h4>
+  <div class="tw">
+  <table>
+    <thead><tr><th>노드</th><th>단위</th><th>양쪽에서 읽는 것</th></tr></thead>
+    <tbody>
+      <tr><td><code>0 changeset</code></td><td>파일</td><td>메타데이터만 — <code>base_sha</code>/<code>head_sha</code> · <code>old_path</code> · <code>old_lines</code>/<code>new_lines</code>. <strong>본문 0</strong></td></tr>
+      <tr><td><code>0a structure</code></td><td>절 경계</td><td>양쪽 heading 구조. 짝짓기·rename·move 가 전부 양쪽 파싱을 요구한다</td></tr>
+      <tr><td><code>0b literals</code></td><td>절 안의 값</td><td>양쪽 <strong>본문</strong>을 절 단위로 잘라 차집합. <code>removed = base − head</code></td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p class="lede">같은 old↔new 대조를 <strong>파일 → 절 경계 → 절 안의 값</strong> 으로 좁혀 내려가는 3 층이다. 물리적으로도 두 트리가 깔린다 — <code>base/</code> 와 <code>snapshot/</code>. 뒤쪽 노드는 <code>rev: base|head</code> 로 어느 트리를 읽을지 지정한다.</p>
+
+  <h3 id="loop">단일 루프 — 오케스트레이터는 스테이지 지식조차 없다</h3>
+  <div class="codewrap">
+    <div class="bar"><span class="f">오케스트레이터 루프 전문</span><span class="flow">분기 1개 = 블록 타입</span></div>
+<pre>loop:
+  out = mrdoc dispatch next --work &lt;abs&gt;
+
+  <b>exit 0</b>  → out 의 블록 실행
+              SPEC agent &lt;name&gt; …  →  Agent 호출 (<b>한 메시지에 전부 = wave</b>)
+              SPEC tool            →  Bash 로 RUN 줄 실행
+            전부 조인되면 → mrdoc ledger append --wave &lt;id&gt; --returns &lt;리턴 원문&gt;
+            → loop
+  <b>exit 4</b>  → 파이프라인 완료. 종료
+  <b>exit 2</b>  → abort. ledger 에 이유가 있다. 종료
+  그 외    → abort</pre>
+  </div>
+  <div class="tw">
+  <table>
+    <thead><tr><th>장치</th><th>내용</th></tr></thead>
+    <tbody>
+      <tr><td><strong>루프 1개</strong></td><td>analyzer 재호출, 최대 1회. 종료조건을 <strong>CHECK 미응답 하나</strong>로 유지해서 반드시 끝나게 한다. 역추적·quote 실패 finding 은 재인용을 요청하지 않고 <strong>버린다</strong></td></tr>
+      <tr><td><strong>팬아웃 3–5 하드캡</strong></td><td><code>max_files: 40</code> 은 처리 상한이지 동시 실행 폭이 아니다. 파일 40개면 wave 8~13회 순차</td></tr>
+      <tr><td><strong>절대경로 강제</strong></td><td>SlackBot 이 스크립트로 <code>claude -p</code> 를 호출하므로 cwd 가 보장되지 않는다. 상대경로 쓰기는 <strong>다른 루트에 성공한다</strong> → coverage 미응답 → 재호출 → 또 같은 곳 → <strong>조용한 무한 실패.</strong> <code>dispatch</code> 가 전 경로를 절대경로로 출력하는 것이 유일한 방어</td></tr>
+      <tr><td><strong>ledger</strong></td><td>append-only. <code>mrdoc status</code> 는 산출물 존재로 상태를 도출하므로 ledger 와 <strong>독립된 두 번째 소스</strong>다. 불일치 = 유실 감지. 한쪽만 두면 그게 틀렸을 때 아무도 모른다</td></tr>
+      <tr><td><strong>stdout ≤10줄</strong></td><td>상세는 산출물 파일에. 툴 결과가 오케스트레이터 컨텍스트에 쌓이는 것 자체가 사망 원인</td></tr>
+      <tr><td><strong>워크스페이스 키</strong></td><td><code>.work/&lt;mr_iid&gt;-&lt;head_sha8&gt;/</code> — 커밋 5번 푸시되면 트리거도 5번 온다. 키에 head 가 없으면 5개 프로세스가 같은 워크스페이스를 덮어쓴다</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <h3 id="consume">산출물 소비 관계 — 템플릿을 소비자에서 역산한다</h3>
+  <p class="lede">템플릿은 다음 에이전트를 위한 인터페이스다. 누가 무엇을 필요로 하는지에서 필드를 역산한다.</p>
+  <div class="tw">
+  <table>
+    <thead><tr><th>산출물</th><th>생산</th><th>소비자</th><th>소비자가 쓰는 것</th></tr></thead>
+    <tbody>
+      <tr><td class="nm"><code>00-changeset</code></td><td>mrdoc</td><td>structure · literals · render</td><td>파일 목록 · 라인 범위 · MR 메타</td></tr>
+      <tr><td class="nm"><code>05-structure</code></td><td>mrdoc</td><td>mapper · literals · analyzer · collect</td><td><code>TREE</code>(폴더 전체) · <code>CHANGED</code> unit · <code>MOVED</code></td></tr>
+      <tr><td class="nm"><code>06-literals</code></td><td>mrdoc</td><td><strong>analyzer · levelcheck · checklist · render</strong></td><td>차집합 3종 — 인용 / 반증 근거 / grep 씨앗 / 리포트 사실 목록</td></tr>
+      <tr><td class="nm"><code>10-scope</code></td><td>mapper</td><td>checklist</td><td><code>TARGET</code> + <code>basis</code></td></tr>
+      <tr><td class="nm"><code>15-checklist</code></td><td>mrdoc</td><td>analyzer · coverage</td><td>자기 배치 CHECK / 전수 응답 대조 기준선</td></tr>
+      <tr><td class="nm"><code>20-analysis</code></td><td>analyzer</td><td>levelcheck · coverage · verifier · collect</td><td>claimed level / 응답 블록 / 서술 / finding</td></tr>
+      <tr><td class="nm"><code>25-level</code></td><td>mrdoc</td><td>collect · render</td><td><strong>verified</strong> level (claimed 아님)</td></tr>
+      <tr><td class="nm"><code>32-verify</code></td><td>verifier</td><td>collect · dispatch</td><td><code>verdict</code>·<code>round</code>·<code>outstanding</code> / <code>FIX</code> 상세 — 재호출 스펙의 입력</td></tr>
+      <tr><td class="nm"><code>35-collect</code></td><td>mrdoc</td><td>reporter · render</td><td>frontmatter + <code>must_read</code> 지목분 / 본문 전체</td></tr>
+      <tr><td class="nm"><code>40-reportdata</code></td><td>reporter</td><td>render</td><td>문장 + <code>refs</code></td></tr>
+    </tbody>
+  </table>
+  </div>
+  <div class="note"><code>must_read</code> 를 <code>35-collect</code> frontmatter 에 올려두면 reporter 가 전체를 읽지 않아도 된다. <b>reporter context 를 작게 유지하는 유일한 장치.</b></div>
+
+  <h3 id="chain">역추적 사슬 — 지목 대상이 없는 산출물은 버린다</h3>
+  <div class="codewrap">
+<pre>[15-checklist   <b>CHECK k-…</b>]
+      ↓
+ 20-analysis    FINDING.check_id                → 실재하는 <b>k-</b>
+      ↓
+ 40-reportdata  SENTENCE.{finding_id|unit_id}   → 실재하는 <b>f-</b> 또는 <b>u-</b></pre>
+  </div>
+  <p class="lede">각 계층은 앞 계층의 id 를 지목해야 유효하다. 지목 대상이 없는 산출물은 그 계층이 <strong>발명</strong>한 것이고, 발명은 전부 버린다 — 틀렸다고 증명할 필요가 없다. <code>reviewer-lite</code> 규칙 1 이식: <em>"A hunk that traces to nothing is unrequested scope."</em></p>
+  <h4>id 규칙</h4>
+  <div class="codewrap">
+<pre>section_id = sha8(path + heading_path)                 <span class="c">절의 신원. 본문 바뀌어도 유지</span>
+unit_id    = sha8(path + heading_path + 변경 라인 범위)  <span class="c">이번 변경의 신원</span>
+check_id   = sha8(a + b + source + via)
+
+<b>순번(CHG-003) 금지</b> — 재실행 시 흔들려 재현성 검증이 깨진다
+접두어 고정  s-(section)  u-(unit)  t-(target)  k-(check)  f-(finding)</pre>
+  </div>
+</section>
+
+<!-- ══════════════════ PART 3 ══════════════════ -->
+<section id="templates">
+  <div class="part-head"><span class="part-num">Part 3</span><h2>노드별 출력물 템플릿</h2></div>
+  <p class="part-note">예시는 전부 <strong>MR !482</strong> 하나로 통일했다 — <code>auth.md §4.2 Retry 정책</code> 전면 재작성(L1) · <code>§5 토큰 정책</code> 만료 60→30분(L2) · <code>§3 개요</code> 문장만 다듬음(L3) · <code>overview.md</code> 신규 · <code>legacy.md</code> 삭제 · 배포 절차 섹션 이동. 안 바뀐 문서 두 개가 <code>Retry Count: 3</code> 을 그대로 들고 있다.</p>
+
+  <h3 id="tpl-common">템플릿 공통 규약</h3>
+  <div class="codewrap">
+    <div class="bar"><span class="f">모든 산출물 .md 의 공통 형태</span></div>
+<pre>---
+YAML frontmatter — 기계 필수 필드 + 대문자 고정 필드
+---
+
+## &lt;TYPE&gt; &lt;id&gt;
+```yaml
+기계 필드
+```
+**&lt;라벨&gt;** 서술 한두 줄
+
+…
+
+## RECEIPT
+```
+리턴 블록 그대로 복사
+```</pre>
+  </div>
+  <dl class="fields">
+    <dt>파서 범위</dt><dd><code>^## (TYPE) (id)$</code> 정규식 + 그 아래 <strong>첫 yaml fence.</strong> 그 이상 안 본다</dd>
+    <dt>섹션 추가</dt><dd><strong>템플릿에 없는 섹션 추가 금지.</strong> 생기면 warn — 프롬프트 드리프트 조기 감지</dd>
+    <dt>서술 라벨</dt><dd>정해진 것만 — <code>before</code> <code>after</code> <code>why</code> <code>claim</code> <code>recommendation</code> <code>why_matters</code></dd>
+    <dt>필드 형태</dt><dd><strong>스칼라는 고정 필드, 중첩은 yaml 블록.</strong> <code>evidence</code> 같은 리스트-객체는 평문으로 못 담는다</dd>
+    <dt>RECEIPT</dt><dd>리턴 유실(529) 시 <code>mrdoc status --receipt</code> 가 회수한다. <strong>재호출하지 않는다</strong></dd>
+  </dl>
+
+  <hr class="rule">
+
+  <h3 id="t00">00-changeset.md</h3>
+  <div class="codewrap">
+    <div class="bar"><span class="f">00-changeset.md</span><span class="flow">mrdoc changeset → structure · literals · render</span><span class="kind tool">툴</span></div>
+<pre>---
+mr_iid: 482
+project_id: 137
+project: product-common
+web_url: https://gitlab.company.example/docs/product-common/-/merge_requests/482
+source_branch: docs/auto-20260822-product-a
+target_branch: main
+diff_refs: {base_sha: 9c1e77a…, head_sha: 3f2a1cd…, start_sha: 9c1e77a…}
+author: docs-pipeline-bot
+created_at: "2026-08-22T09:14:02Z"
+product_dirs: [docs/product-a]
+<b>stated_reason: null</b>
+<b>generation_context: "docs-repo @ 3f2a1cd 기준 자동 생성"</b>
+counts: {md_added: 1, md_deleted: 1, md_modified: 3, md_renamed: 0, non_md: 1, skipped: 0}
+---
+
+## FILES
+| file_id | path | status | old_path | new_lines | old_lines |
+|---|---|---|---|---|---|
+| auth-md-a3c19d     | docs/product-a/auth.md     | modified | | 135-160,168-171,40-52 | 135-158,168-171,40-50 |
+| overview-md-b71f04 | docs/product-a/overview.md | added    | | 1-88 | |
+| legacy-md-c92e11   | docs/product-a/legacy.md   | deleted  | | | 1-142 |
+
+## NON_MD
+| path | status |
+|---|---|
+| docusaurus.config.js | modified |
+
+## SKIPPED
+| path | reason |
+|---|---|</pre>
+  </div>
+  <dl class="fields">
+    <dt>file_id</dt><dd><code>&lt;basename&gt;-&lt;sha8(path)&gt;</code> — 예 <code>auth-md-a3c19d</code>. 파일명만 쓰면 폴더가 다른 동명 파일이 충돌한다</dd>
+    <dt>stated_reason</dt><dd>MR description·커밋에 <strong>사람이 쓴</strong> 이유가 있을 때만. 자동 생성 MR 이므로 대부분 <code>null</code> 이 정상</dd>
+    <dt>generation_context</dt><dd>파이프라인이 기입한 소스 커밋 정보. <strong>이유가 아니라 출처다.</strong> 섞으면 리포트가 추측을 사실처럼 쓴다</dd>
+    <dt>diff_refs</dt><dd><code>base_sha</code> 를 쓴다 — <code>target_branch</code> HEAD 아님. 타겟이 그사이 움직이면 diff 와 본문이 안 맞는다</dd>
+    <dt>SKIPPED</dt><dd>빈 표라도 <strong>둔다.</strong> 이 표의 목적은 조용한 누락 금지 하나 — abort 하거나 SKIPPED 로 기록하거나 둘 중 하나</dd>
+  </dl>
+  <div class="note"><b>diff 본문을 여기 인라인하지 말 것.</b> md 20개 MR 이면 이 파일 하나가 opus 호출마다 context 를 다 먹는다.</div>
+
+  <hr class="rule">
+
+  <h3 id="t05">05-structure.md</h3>
+  <div class="codewrap">
+    <div class="bar"><span class="f">05-structure.md</span><span class="flow">mrdoc structure → mapper · literals · analyzer · collect</span><span class="kind tool">툴</span></div>
+<pre>---
+mr_iid: 482
+project: product-common
+product_dir: docs/product-a
+files: {added: 1, deleted: 1, modified: 3, moved_sections: 1}
+sections: 210
+units: 3
+---
+
+## TREE                                  <span class="c">← 폴더 전체. 본문 없이 표만이라 210행도 가볍다</span>
+| section_id | file          | heading_path                        | lines   |
+|---|---|---|---|
+| s-4a91     | auth.md       | 인증 &gt; 4. 인증 정책 &gt; 4.2 Retry 정책 | 135-160 |
+| s-2c81     | auth.md       | 인증 &gt; 5. 토큰 정책                  | 168-190 |
+| s-3f11     | auth.md       | 인증 &gt; 3. 개요                       | 40-52   |
+| s-8c02     | failover.md   | 장애 처리 &gt; 7.2 재시도               | 80-95   |
+| s-1f55     | deployment.md | 배포 &gt; 3. 환경 설정                  | 70-92   |
+  … 210행
+
+## CHANGED
+| unit_id  | section_id | file_id        | old_lines | new_lines |
+|---|---|---|---|---|
+| u-7f21bc | s-4a91     | auth-md-a3c19d | 135-158   | 135-160   |
+| u-2c81de | s-2c81     | auth-md-a3c19d | 168-171   | 168-171   |
+| u-9a03ff | s-3f11     | auth-md-a3c19d | 40-50     | 40-52     |
+
+## MOVED
+| section | from | to |
+|---|---|---|
+| 배포 절차 | architecture.md | deployment.md |</pre>
+  </div>
+  <h4>heading 경로가 왜 필요한가</h4>
+  <p class="lede">diff 는 라인 번호만 준다. <code>142행 변경</code> 만으로는 리뷰 단위도 리포트 문구도 못 만든다.</p>
+  <ul class="plain">
+    <li>리포트가 <code>auth.md 142행</code> 대신 <b>auth.md § 4.2 Retry 정책</b> 으로 나온다 — 사람이 읽는 단위</li>
+    <li><b>change unit 의 경계.</b> 같은 절의 hunk 3개 = 리뷰 1건. hunk 단위로 쪼개면 같은 얘기를 3번 리뷰한다</li>
+    <li><b>리터럴 차집합의 경계.</b> 절 단위로 base/head 를 잘라야 차집합이 의미를 갖는다. 파일 전체로 잡으면 다른 절 변경이 섞인다</li>
+    <li>finding evidence 의 anchor. 라인 번호는 다음 커밋에 밀리지만 절 경로는 안 밀린다</li>
+  </ul>
+  <p style="font-size:13.5px;color:var(--ink-2)">파싱 주의: ATX(<code>#</code>) + setext(<code>===</code> 밑줄) 둘 다. <strong>fenced code block 안의 <code>#</code> 은 heading 아님</strong> — 흔한 버그 지점.</p>
+
+  <h4>절 짝짓기 — heading 개명 처리</h4>
+  <div class="codewrap">
+<pre>base:  ### 4.2 Retry 정책            →  s-4a91
+head:  ### 4.2 Circuit Breaker 정책  →  s-9f22      <span class="c">id 가 바뀐다</span>
+
+규칙 없으면
+  s-4a91 이 head 에 없다  →  절 삭제  →  removed = 그 절 리터럴 전부
+  s-9f22 가 base 에 없다  →  절 신규  →  added   = 그 절 리터럴 전부
+
+<b>짝짓기 규칙</b>
+1  heading 경로가 같으면                 →  짝. 끝
+2  다르면 라인 범위 겹침으로 후보를 찾는다   base 135-158 ∩ head 135-160
+3  후보 본문의 정규화 유사도가 임계 이상    →  짝 (<b>renamed</b> 로 표시)
+   임계 미만                            →  삭제 + 신규로 둔다</pre>
+  </div>
+  <p class="lede">결과가 완전히 틀리지는 않는다 — <code>removed</code>+<code>added</code> 동시 존재라 L1 으로 잡히고 <code>removed_literal</code> grep 도 작동한다. <strong>틀리는 건 리포트다.</strong> 한 건이 「절 삭제 / 절 신규」 두 건으로 쪼개진다. 절 제목을 다듬은 MR 이면 노이즈가 배로 뛴다. <code>renamed</code> 로 짝지어지면 리포트에 <code>§ 4.2 Retry 정책 → Circuit Breaker 정책</code> 한 줄로 나온다.</p>
+
+  <h4>짝짓기와 <code>doc-mapper</code> 는 다른 맵핑이다</h4>
+  <div class="tw">
+  <table>
+    <thead><tr><th></th><th>절 짝짓기 <span class="kind tool">툴</span></th><th>doc-mapper <span class="kind llm">LLM</span></th></tr></thead>
+    <tbody>
+      <tr><td><strong>묻는 것</strong></td><td><strong>동일성</strong> — 이게 저것의 같은 절이냐</td><td><strong>관련성</strong> — 이 변경이 저 절에 영향을 주냐</td></tr>
+      <tr><td><strong>축</strong></td><td>리비전 간 · base ↔ head</td><td>문서 간 · 변경 절 → 제3의 절</td></tr>
+      <tr><td><strong>후보</strong></td><td>같은 파일 인접 라인 1~3 개</td><td>폴더 전체 210 개 절</td></tr>
+      <tr><td><strong>텍스트 겹침</strong></td><td>보통 90% 이상 — 문자로 갈린다</td><td><strong>0%</strong> — 의미로만 이어진다</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p class="lede">짝짓기에는 <strong>물리적 연속성</strong>이 있다. git 이 "같은 자리"를 이미 알려주고, 제목이 바뀌어도 본문 80줄 중 60줄이 그대로면 문자만으로 결론난다. 맥락을 이해해서 아는 게 아니라 <strong>후보가 좁아서</strong> 아는 것이다. 절을 통째로 재작성하면서 제목까지 바꾼 경우만 의미 판정을 요구하는데, 거기서는 <strong>판정을 포기하고</strong> 삭제+신규로 떨어뜨린다 — 대가는 리포트 노이즈뿐이고 탐지 누락이 아니다. 반대로 여기에 LLM 을 넣으면 <code>section_id</code> 가 비결정적이 되고, 그 id 를 기준점으로 쓰는 ledger·quote 대조·<code>must_read</code> refs 가 전부 재현 불가능해진다.</p>
+
+  <h4>move 확정</h4>
+  <div class="codewrap">
+<pre>before:  architecture.md  ## 배포 절차  (80줄)
+after:   deployment.md    ## 배포 절차  (80줄, 내용 동일)
+git diff: architecture.md -80 / deployment.md +80
+
+norm(text) = 공백·개행 collapse
+삭제 블록 전부 해시 ∩ 추가 블록 전부 해시  →  <b>moved 확정, 리뷰 대상 제외</b></pre>
+  </div>
+  <p class="lede">그대로 올리면 리뷰할 게 0건인데 항목 2건이 뜬다. 섹션 20개 옮긴 정리 MR 이면 노이즈 40건. 해시 불일치 = 이동하면서 내용도 고침 = <strong>진짜 리뷰 대상.</strong> 1차는 완전 일치만 이동으로 본다.</p>
+
+  <h4>구현 주의 — 결정론은 되지만 조여야 하는 곳</h4>
+  <ol class="hl">
+    <li><b>짝짓기 후보를 라인 범위 교집합으로 찾으면 밀림에 무너진다.</b> 파일 상단에 50줄이 삽입되면 아래 모든 절의 교집합이 0 이 된다. <span class="alt">git diff 의 hunk 로 base 라인 → head 라인 대응을 만들어 후보를 찾는다</span></li>
+    <li><b><code>heading_path</code> 가 같아도 유일하지 않을 수 있다.</b> 반복되는 <code>### 예시</code> 처럼 동일 경로가 한 파일에 여러 번 나온다. <span class="alt">규칙 1 에 등장 순서(ordinal)를 더해 disambiguate</span></li>
+    <li><b><code>## TREE</code> 의 <code>section_id</code> 를 base 기준·head 기준 중 하나로 고정해야 한다.</b> 위 예시는 섞여 있다 — <code>s-4a91</code> 의 제목은 base 쪽(<code>4.2 Retry 정책</code>)인데 라인 범위 <code>135-160</code> 은 head 값이다. <span class="alt">renamed 로 짝지어진 절의 canonical id 를 한쪽으로 고정</span></li>
+    <li><b>「본문 0줄」 은 산출물 얘기다.</b> move 확정은 삭제·추가 블록의 <code>norm(text)</code> 해시를 요구한다. <span class="alt">파서는 읽고 해시만 남긴다. 문자 그대로 받으면 move 판정이 빠진다</span></li>
+    <li><b>markdown 파싱이 이 노드의 실질 작업량이다.</b> <code>---</code> 는 frontmatter 구분자 · setext h2 밑줄 · thematic break 셋 다다. <code>~~~</code> 펜스, 4-space indented block, Docusaurus MDX <code>:::note</code> 도 온다. <span class="alt">틀리면 <b>틀린 트리가 결정론적으로</b> 나온다 — 뒤쪽 LLM 4 개가 잘못된 좌표계 위에서 돈다</span></li>
+  </ol>
+
+  <hr class="rule">
+
+  <h3 id="t06">06-literals.md <span class="req core">설계의 축</span></h3>
+  <div class="codewrap">
+    <div class="bar"><span class="f">06-literals.md</span><span class="flow">mrdoc literals → analyzer · levelcheck · checklist · render</span><span class="kind tool">툴</span></div>
+<pre>---
+mr_iid: 482
+units: 3
+totals: {removed: 2, added: 2, changed: 1}
+---
+
+## UNIT u-7f21bc
+```yaml
+section_id: s-4a91
+removed: ["Retry Count: 3", "Retry Interval: 2s"]
+added:   ["Failure Threshold: 5", "Open Duration: 30s"]
+changed: []
+```
+
+## UNIT u-2c81de
+```yaml
+section_id: s-2c81
+removed: []
+added:   []
+changed: [{key: "Access Token 만료", from: "60분", to: "30분"}]
+```
+
+## UNIT u-9a03ff
+```yaml
+section_id: s-3f11
+removed: []
+added:   []
+changed: []                    <span class="c">← 차집합 전부 공집합. L3 후보</span>
+```</pre>
+  </div>
+  <div class="codewrap">
+    <div class="bar"><span class="f">추출 규칙</span><span class="flow">정규식 5종 + 정규화</span></div>
+<pre>키: 값 패턴      ^\s*[-*]?\s*(?&lt;key&gt;[^:\n]{1,40}):\s*(?&lt;val&gt;.+)$
+숫자+단위        \d+(\.\d+)?\s*(초|분|시간|일|ms|s|m|h|KB|MB|GB|%|회|개)
+불리언           true|false|enabled|disabled|on|off
+backtick 스팬    `[^`]{1,60}`
+링크 타깃        \]\(([^)]+)\)
+
+정규화 = 앞뒤 trim + 연속 공백 1개
+<b>markdown 기호는 제거하지 않는다</b> — 원문 그대로여야 quote 대조가 성립한다
+
+removed = base − head       없어진 사실
+added   = head − base       생긴 사실
+changed = 같은 키, 다른 값   바뀐 사실 (removed/added 에서 제외)</pre>
+  </div>
+  <div class="tw">
+  <table>
+    <thead><tr><th>소비자</th><th>쓰는 것</th></tr></thead>
+    <tbody>
+      <tr><td><strong>리포트 본문</strong></td><td>「없어진 사실 / 생긴 사실 / 바뀐 사실」을 <strong>툴이 채운다.</strong> LLM 이 요약하며 흘리는 걸 막는다</td></tr>
+      <tr><td><code>levelcheck</code></td><td>레벨 판정의 <strong>반증</strong> 근거</td></tr>
+      <tr><td><code>checklist</code> <span class="req">[부가]</span></td><td><code>removed_literal</code> CHECK 씨앗 — 없어진 사실을 참조하는 곳 찾기</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <div class="note"><b><code>changed</code> 를 따로 뽑는 이유.</b> <code>Retry Count: 3 → 5</code> 를 <code>removed</code>+<code>added</code> 로 표현하면 리포트가 「없어진 사실 / 생긴 사실」로 <b>나뉘어 보인다.</b> 같은 키의 값 변경은 하나의 사실이므로 묶어야 사람이 읽을 수 있고, severity 계산(같은 키 다른 값 → BLOCKER)도 여기서 나온다.</div>
+
+  <hr class="rule">
+
+  <h3 id="t10">10-scope.md <span class="req">[부가]</span></h3>
+  <div class="codewrap">
+    <div class="bar"><span class="f">10-scope.md</span><span class="flow">doc-mapper → checklist</span><span class="kind llm">LLM</span></div>
+<pre>---
+mr_iid: 482
+targets: 2
+<b>STATUS: OK
+UNCOVERED: none
+UNCERTAIN: "deployment.md 는 도입부가 배포·환경 설정이라 관련 여부 불명"
+CONFIDENCE: medium — 도입부만 읽고 판단</b>
+---
+
+## TARGET t-01
+```yaml
+section_id: s-8c02
+file: docs/product-a/failover.md
+heading_path: "장애 처리 &gt; 7.2 재시도"
+basis: base            <span class="c"># base | head</span>
+unit_id: u-7f21bc
+```
+**why** 도입부가 "장애 복구 절차와 재시도 정책" 이고 절 제목이 재시도다.
+없어진 Retry 정책을 서술할 가능성
+
+## TARGET t-02
+```yaml
+section_id: s-b310
+file: docs/product-a/overview.md
+heading_path: "1. 개요"
+basis: head
+unit_id: u-7f21bc
+```
+**why** 인증 절을 링크로 참조한다</pre>
+  </div>
+  <div class="codewrap">
+    <div class="bar"><span class="f">basis 가 검사 방향을 가른다</span></div>
+<pre>basis: base   →  06-literals 의 <b>removed</b> 로 대조   →  stale_reference
+                 "4.2가 Circuit Breaker 로 갔는데 7.2는 Retry 를 서술"
+
+basis: head   →  <b>added / changed</b> 로 대조         →  contradiction
+                 "4.2가 Threshold 5인데 3절은 3으로 서술"</pre>
+  </div>
+  <div class="note"><b><code>basis</code> 는 맵핑 상대가 아니다.</b> old↔head 같은 절 대응은 <code>structure</code> 가 이미 끝냈다. <code>basis</code> 는 지목한 <b>대상 절을 어느 리비전에서 읽고 어느 차집합과 대조할지</b> 지시하는 태그다. mapper 입력에 base 본문이 들어가는 것도 맵핑 상대가 old 라서가 아니라, 4.2 에서 Retry 가 사라진 사실을 모르면 7.2 가 Retry 를 서술하고 있어도 그게 문제인지 알 수 없기 때문이다.</div>
+
+  <p class="lede"><strong>mapper 는 지도를 만들지 않는다.</strong> <code>TARGET</code> 은 이번 MR 의 확인 대상이고 저장·재사용하지 않는다. 스윕 단위를 절(210) → 파일(18)로 바꾸니 매 MR 재계산이 630줄이라 캐시할 동기가 사라진다 — <strong>저장에서 재계산으로 바꾼다.</strong> 자산·갱신 트리거·스테일 창·브랜치 오염 문제가 전부 소멸한다.</p>
+  <div class="note"><b>약점을 명시해 둔다.</b> 파일 도입부·heading 에 안 드러나는 절은 지목에서 빠진다. 절 단위 자산은 이 구멍이 없었다. 리터럴 grep 하한이 일부 받는다 — 두 경로가 서로의 맹점을 덮는 구조다.</div>
+  <div class="tw">
+  <table>
+    <thead><tr><th></th><th>잡는 것</th><th>놓치는 것</th></tr></thead>
+    <tbody>
+      <tr><td><strong>mapper 지목</strong> <span class="kind llm">LLM</span></td><td><code>Retry Count</code> ↔ <code>재시도 횟수</code> 패러프레이즈. <code>failover.md §7.2 재시도</code></td><td>heading·도입부에 안 드러나는 절</td></tr>
+      <tr><td><strong>리터럴 grep</strong> <span class="kind tool">툴</span></td><td><code>deployment.md §3 환경 설정</code> 에 묻힌 <code>Retry Count: 3</code></td><td>표기가 다르면 0건</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <hr class="rule">
+
+  <h3 id="t15">15-checklist.md <span class="req">[부가]</span></h3>
+  <div class="codewrap">
+    <div class="bar"><span class="f">15-checklist.md</span><span class="flow">mrdoc checklist → analyzer · coverage</span><span class="kind tool">툴</span></div>
+<pre>---
+mr_iid: 482
+items: 3
+by_source: {mapper: 2, removed_literal: 1, head_literal: 0, dangling: 0}
+---
+
+## CHECK k-01
+```yaml
+unit_id: u-7f21bc
+a: s-4a91                  <span class="c"># 변경 절</span>
+b: s-8c02                  <span class="c"># 대상 절</span>
+source: mapper
+basis: base
+via: "t-01"
+```
+**why** 없어진 Retry 정책을 여전히 서술하는지 확인
+
+## CHECK k-02
+```yaml
+unit_id: u-7f21bc
+a: s-4a91
+b: s-8c02
+source: removed_literal
+basis: base
+via: "Retry Count"
+```
+**why** removed 리터럴이 이 절에 존재
+
+## CHECK k-03
+```yaml
+unit_id: u-7f21bc
+a: s-4a91
+b: s-1f55
+source: removed_literal
+basis: base
+via: "Retry Count"
+```
+**why** removed 리터럴이 이 절에 존재. <b>mapper 는 지목하지 않았다</b></pre>
+  </div>
+  <div class="codewrap">
+    <div class="bar"><span class="f">4경로 — 전부 결정론</span></div>
+<pre>1  mapper 지목         10-scope 의 TARGET            → source: mapper
+2  head 리터럴 grep    added·changed 로 scope 안 grep → source: head_literal
+3  removed 리터럴 grep removed 로 scope 안 grep       → source: removed_literal
+4  dangling            사라진 heading·삭제 파일 링크   → source: dangling
+5  L3 확정 절에 걸린 항목은 closed_by_level 로 제외</pre>
+  </div>
+  <ul class="plain">
+    <li><b>k-01 과 k-02 는 같은 절 쌍이다</b> — <code>collect</code> 가 finding 단계에서 dedup 한다. 두 경로가 독립이므로 중복은 정상이고, <b>한쪽만 잡은 경우가 그 경로의 값</b>이다</li>
+    <li><b>k-03 이 리터럴 하한이 단독으로 잡은 것.</b> mapper 가 놓친 칸</li>
+    <li><code>check_id = sha8(a + b + source + via)</code>. 순번 금지</li>
+  </ul>
+  <div class="codewrap">
+    <div class="bar"><span class="f">deleted_ref 가 removed_literal 로 흡수된다</span></div>
+<pre>절 삭제      →  그 절 리터럴 전부가 removed
+파일 삭제    →  그 파일 리터럴 전부가 removed
+<b>절 재작성    →  일부만 removed          ← 이전 판이 통째로 못 보던 칸</b></pre>
+  </div>
+  <p class="lede">삭제는 눈에 띄어서 규칙이 있었는데 <strong>재작성은 삭제처럼 안 보여서</strong> 장치가 없었다. 링크는 살아있고 내용만 없어진 경우가 여기서 잡힌다.</p>
+
+  <hr class="rule">
+
+  <h3 id="t20">20-analysis/&lt;file_id&gt;.md <span class="req core">주역</span></h3>
+  <div class="codewrap">
+    <div class="bar"><span class="f">20-analysis/auth-md-a3c19d.md</span><span class="flow">doc-analyzer → levelcheck · coverage · verifier · collect</span><span class="kind llm">LLM</span></div>
+<pre>---
+file_id: auth-md-a3c19d
+path: docs/product-a/auth.md
+units: 3
+levels: {L1: 1, L2: 1, L3: 1}
+checks_in: 3
+findings: 1
+clean: 0
+STATUS: OK
+UNCOVERED: none
+UNCERTAIN: none
+CONFIDENCE: high — base/head 양쪽 본문 직접 대조
+---
+
+## UNIT u-7f21bc
+```yaml
+section_id: s-4a91
+level: L1
+```
+**before** 재시도 횟수와 간격으로 일시적 실패를 처리한다고 정의했다
+**after** 재시도 대신 Circuit Breaker 로 차단·복구를 정의한다
+
+## UNIT u-2c81de
+```yaml
+section_id: s-2c81
+level: L2
+```
+**before** Access Token 만료를 60분으로 정의
+**after** 30분으로 단축
+
+## UNIT u-9a03ff
+```yaml
+section_id: s-3f11
+level: L3
+```
+**before** 인증 흐름 개요
+**after** 같은 내용, 문장 정리
+
+## FINDING f-01
+```yaml
+check_id: k-01
+unit_id: u-7f21bc
+category: stale_reference   <span class="c"># contradiction|stale_reference|terminology|completeness</span>
+evidence:
+  - role: changed
+    <b>rev: head</b>
+    file: docs/product-a/auth.md
+    line: 142
+    quote: "Failure Threshold: 5"
+  - role: conflicting
+    rev: head
+    file: docs/product-a/failover.md
+    line: 88
+    quote: "Retry Count: 3"
+```
+**claim** 4.2절이 Circuit Breaker 로 전환됐는데 7.2절은 Retry Count 를 서술한다
+**recommendation** failover.md 88행을 Circuit Breaker 서술로 갱신하거나 4.2 참조를 제거
+
+## CHECK k-02
+```yaml
+status: merged_into
+target: f-01
+```
+
+## CHECK k-03
+```yaml
+status: finding
+target: f-02
+```</pre>
+  </div>
+  <dl class="fields">
+    <dt>before / after</dt><dd><strong>LLM 이 쓰는 두 줄이 전부다.</strong> 없어진·생긴·바뀐 사실 목록은 안 쓴다 — <code>06-literals</code> 가 채운다</dd>
+    <dt>level</dt><dd>claimed 값. <code>levelcheck</code> 가 반증하면 승격된다. <strong>강등은 없다</strong></dd>
+    <dt>SUMMARY</dt><dd>ADDED/DELETED 파일은 <code>UNIT</code> 대신 <code>SUMMARY</code> (purpose + 3~6줄)</dd>
+    <dt>CHECK 응답</dt><dd>[부가] <strong>전수 응답.</strong> <code>finding</code> / <code>clean</code>(봤고 문제 없음) / <code>merged_into</code>. <strong><code>clean</code> 이 정상 종료다</strong> — 답 없는 항목만 누락</dd>
+    <dt>rev</dt><dd>quote 대조 소스가 <code>head</code>(→<code>snapshot/</code>)인지 <code>base</code>(→<code>base/</code>)인지. 삭제된 문서를 근거로 든 finding 은 <code>snapshot/</code> 에서 절대 찾을 수 없다</dd>
+    <dt>severity</dt><dd><strong>없다.</strong> <code>category</code> 만 쓴다 — severity 는 <code>collect</code> 의 rule</dd>
+  </dl>
+
+  <hr class="rule">
+
+  <h3 id="t25">25-level.md</h3>
+  <div class="codewrap">
+    <div class="bar"><span class="f">25-level.md</span><span class="flow">mrdoc levelcheck → collect · render</span><span class="kind tool">툴</span></div>
+<pre>---
+mr_iid: 482
+levels: {L1: 1, L2: 1, L3: 1}
+promoted: 0
+closed_by_level: 0
+---
+
+## UNIT u-7f21bc
+```yaml
+claimed: L1
+verified: L1
+basis: "removed 2 + added 2 → 사실 교체. L1 타당"
+```
+
+## UNIT u-9a03ff
+```yaml
+claimed: L3
+verified: L3
+basis: "차집합 3종 전부 공집합"
+```
+
+<span class="c">승격이 발생하면</span>
+```yaml
+claimed: L3
+<b>verified: L2
+promoted: true</b>
+basis: "changed 1건 존재 (Access Token 만료 60분→30분). L3 불성립"
+```</pre>
+  </div>
+  <div class="codewrap">
+    <div class="bar"><span class="f">레벨 3단계와 검증 규칙</span></div>
+<pre>L1  맥락 변경   이 절이 주장하는 바가 달라졌다
+L2  값 변경     주장은 같고 값·조건·수치가 달라졌다
+L3  표현 변경   주장·값 동일. 문장·어순만 다듬음
+
+차집합 3종 전부 공집합             →  L3 성립
+changed 있음 또는 removed/added 있음 →  L3 불성립. <b>L2 로 강제 승격</b>
+removed + added 동시 존재           →  L1 근거 있음 (사실이 교체됐다)
+L1 주장인데 차집합 전부 공집합       →  근거 없음. <b>경고만</b> (순수 서술문일 수 있다)
+
+승격이 발생하면 그 절의 closed_by_level CHECK 를 <b>되살린다</b></pre>
+  </div>
+  <p class="lede"><strong>왜 필요한가.</strong> 제품 레포를 claude 가 매번 재생성하는 파이프라인이면 <strong>표현만 바뀐 절이 다수</strong>다. 레벨이 없으면 그것들이 값 변경과 같은 무게로 리포트에 올라와 사람이 리포트를 안 본다. <code>moved</code> 감지와 같은 자리의 노이즈 제어 장치다. <strong>L3 확정 절은 리뷰 제외</strong>, 걸린 CHECK 는 <code>closed_by_level</code> 자동 종결.</p>
+  <div class="note"><b>강등이 없는 이유.</b> L2 를 L3 로 잘못 내리면 값 변경이 조용히 사라진다 — 게이트에서 가장 위험한 오류라 LLM 단독 판정을 안 준다. 반대로 L1 주장에 리터럴 근거가 없으면 L1 을 <b>유지하고</b> 경고만 남긴다 — 순수 서술문 절의 맥락 변경은 리터럴로 표현되지 않는다. <code>doc-verifier</code> 가 그 경우를 감사한다. <b>승격 후 CHECK 부활</b>이 중요하다 — L3 라고 믿고 닫은 CHECK 가 승격 후에도 닫혀 있으면 검사가 빠진다.</div>
+
+  <hr class="rule">
+
+  <h3 id="t30">30-coverage.md <span class="req">[부가]</span></h3>
+  <div class="codewrap">
+    <div class="bar"><span class="f">30-coverage.md</span><span class="flow">mrdoc coverage → dispatch (exit 3)</span><span class="kind tool">툴</span></div>
+<pre><b>형태</b>  검사 4개 결과 + 미응답 CHECK id 목록. 판단 0 — 전부 문자열·카운트
+
+① 응답 존재       15-checklist 의 CHECK id 마다 20-analysis 에 응답 블록이 있나
+                  미응답 &gt;0  →  <b>exit 3</b> + 목록 (dispatch 가 재호출 wave 를 만든다)
+
+② 자기보고 대조   frontmatter 의 checks_in/findings/clean == 실제 블록 수
+                  불일치  →  그 파일 <b>analysis_failed</b>
+
+③ UNCOVERED 대조  자기보고 "none" 인데 실측 미응답 &gt;0
+                  →  <b>거짓 영수증.</b> 재호출 없이 analysis_failed
+
+④ 역참조 정합     FINDING.check_id 가 실재하나  →  없으면 그 finding 무효</pre>
+  </div>
+  <p class="lede">id 로 물었고 id 로 답했으니 <strong>센다.</strong> ③에서 재호출하지 않는 이유 — 같은 에이전트가 같은 입력으로 정직해질 이유가 없고, 재호출하면 비결정성만 들어온다.</p>
+  <div class="note"><code>doc-verifier</code> 는 이 노드를 <b>통과한 뒤에</b> 돈다. 값싼 게이트 먼저, 통과한 것만 질을 본다 — 미응답이 있는 산출물에 LLM 을 붙이면 부실한 걸 정성껏 검증하는 낭비다.</div>
+
+  <hr class="rule">
+
+  <h3 id="t32">32-verify.md</h3>
+  <div class="codewrap">
+    <div class="bar"><span class="f">32-verify.md</span><span class="flow">doc-verifier → collect · dispatch</span><span class="kind llm">LLM</span></div>
+<pre>---
+mr_iid: 482
+round: 1
+<b>verdict: REVISE</b>                 <span class="c"># APPROVE | REVISE</span>
+checked: 3                       <span class="c"># 원문을 실제로 읽고 판정한 unit 수</span>
+fidelity: {ok: 2, distorted: 1, omitted: 0}
+levels: {agree: 3, dispute: 0}
+required_fixes: 1
+uncovered: none
+uncertain: none
+confidence: high — 3개 절의 base/head 원문을 직접 읽음
+---
+
+## UNIT u-7f21bc
+```yaml
+fidelity: ok
+level_claimed: L1
+level_opinion: agree
+```
+
+## UNIT u-2c81de
+```yaml
+<b>fidelity: distorted</b>
+level_claimed: L2
+level_opinion: agree
+```
+**why** after 가 "만료 시간이 단축됐다" 인데 원문은 Access Token 만 단축이고
+Refresh Token 은 그대로다. 서술이 범위를 넓혔다
+
+## FIX r-01
+```yaml
+target: u-2c81de
+field: after
+reason: fidelity_distorted
+```
+
+## RECEIPT
+&lt;리턴 블록 복사&gt;                 <span class="c">← 529 유실 시 mrdoc status --receipt 로 회수</span></pre>
+  </div>
+  <dl class="fields">
+    <dt>round</dt><dd>노드 6 루프가 재실행하면 <code>2</code>. 파일은 <strong>덮어쓴다</strong> — 이전 라운드는 append-only <code>ledger.md</code> 에 남으므로 두 소스가 유지된다. <code>collect</code> 의 <code>verify.rounds</code> 가 이 값을 쓴다</dd>
+    <dt>checked</dt><dd><code>reviewer.md</code> 그대로 — <em>"what you actually read, not what you were pointed at."</em> 지목받은 수가 아니라 <strong>읽은 수</strong>다. 못 읽은 건 판정하지 않고 <code>uncovered</code></dd>
+    <dt>fidelity</dt><dd><code>ok</code> · <code>distorted</code>(왜곡) · <code>omitted</code>(누락). 두 실패가 다른 실패다 — 왜곡은 틀린 서술이 리포트 상단에 나가고, 누락은 변경이 조용히 사라진다</dd>
+    <dt>level_opinion</dt><dd><code>dispute</code> 여도 <strong>레벨은 바뀌지 않는다.</strong> <code>levelcheck</code> 는 강등을 하지 않고, 이 의견은 <code>collect</code> 의 <code>verify.outstanding</code> 으로 간다 — 검증 실패는 verdict 를 움직이지 않는다</dd>
+    <dt>required_fixes</dt><dd>리턴에는 <strong>개수만</strong> 싣는다. <code>FIX</code> 블록 상세는 <code>dispatch</code> 가 이 파일에서 직접 읽어 재호출 스펙의 <code>CONTEXT</code>·<code>CONSTRAINTS</code> 를 만든다</dd>
+  </dl>
+  <div class="codewrap">
+    <div class="bar"><span class="f">리턴 — 오케스트레이터가 보는 전부</span><span class="flow">9줄 · 상한 12</span></div>
+<pre>VERDICT:        REVISE
+CHECKED:        3/3 unit
+FIDELITY:       ok 2 / distorted 1 / omitted 0
+LEVELS:         agree 3 / dispute 0
+REQUIRED_FIXES: 1
+UNCOVERED:      none
+UNCERTAIN:      none
+CONFIDENCE:     high — 3개 절 원문 직접 확인
+<b>REPORT:         &lt;abs&gt;/32-verify.md</b></pre>
+  </div>
+  <div class="note"><b>오케스트레이터는 이 9줄 외에 아무것도 안 본다.</b> <code>REPORT</code> 경로와 <code>VERDICT</code> 두 개로 다음 분기가 결정되고, 파일 본문은 <code>collect</code> 와 <code>dispatch</code> 만 읽는다. 본문을 읽히면 오케스트레이터가 finding 을 만들기 시작한다 — HARD LIMIT 1 이 막는 것이 정확히 그것이다.</div>
+  <div class="note"><b><code>35-collect</code> 의 <code>verify:</code> 출처가 이 파일로 확정된다.</b> 리턴만 있던 판에서는 그 세 값(<code>rounds</code>·<code>verdict</code>·<code>outstanding</code>)이 오케스트레이터를 거쳐야 했다 — 위성 리턴을 오케스트레이터가 옮겨 적는 경로이고, 「위성이 준 숫자를 합산하지 않는다」 와 충돌한다. 파일이 되면 <code>collect</code> 가 <strong>파서로</strong> 읽는다.</div>
+
+  <hr class="rule">
+
+  <h3 id="t35">35-collect.md</h3>
+  <div class="codewrap">
+    <div class="bar"><span class="f">35-collect.md</span><span class="flow">mrdoc collect → reporter · render</span><span class="kind tool">툴</span></div>
+<pre>---
+<b>verdict: REVIEW</b>
+reason: "맥락이 바뀐 절 1건 + 다른 문서와 어긋남 1건"
+levels: {L1: 1, L2: 1, L3: 1, promoted: 0}
+files: {added: 1, deleted: 1, moved_sections: 1}
+counts: {blocker: 0, major: 1, minor: 0}
+gate:
+  files_parsed: 1
+  findings_in: 2
+  dropped_bad_check_ref: 0
+  dropped_quote_mismatch: 0
+  merged_dup: 1
+  findings_out: 1
+verify:
+  rounds: 1
+  verdict: APPROVE
+  outstanding: 0
+coverage:
+  checks: 3
+  answered: 3
+  missing: []
+confidence_dist: {high: 1, medium: 0, low: 0}
+uncertain: ["mapper: deployment.md 관련 여부 불명"]
+failed_files: []
+<b>must_read: [u-7f21bc, f-01, u-2c81de]</b>
+---
+
+## UNIT u-7f21bc
+```yaml
+level: L1
+section: "auth.md § 4.2 Retry 정책"
+removed: ["Retry Count: 3", "Retry Interval: 2s"]
+added:   ["Failure Threshold: 5", "Open Duration: 30s"]
+changed: []
+```
+**before** …
+**after** …
+
+## FINDING f-01
+```yaml
+severity: MAJOR
+category: stale_reference
+unit_id: u-7f21bc
+evidence: [...]
+```
+**claim** …
+**recommendation** …
+
+## DROPPED f-02
+```yaml
+reason: merged_dup
+detail: "f-01 과 같은 절 쌍·같은 리터럴"
+```</pre>
+  </div>
+  <div class="codewrap">
+    <div class="bar"><span class="f">collect 9단계</span></div>
+<pre>1  파싱          20-analysis/*.md 전수. 스키마 위반 → failed_files
+2  역추적 검사   FINDING.check_id 실재 확인 → 아니면 버림 (dropped_bad_check_ref)
+3  quote 대조    각 evidence 를 <b>rev 가 지정한 소스</b>(head→snapshot/, base→base/)의
+                 line ±3 창에서 정규화 비교. 불일치 → dropped_quote_mismatch
+4  dedup         sha(category + sorted(normalize(quotes))) 일치 시 병합
+5  severity      두 quote 에서 리터럴 추출 (literals 와 <b>같은 코드</b>)
+6  레벨 집계     25-level.md 의 <b>verified</b> level 을 쓴다 (claimed 아님)
+7  verdict 계산
+8  must_read 정렬
+9  35-collect.md 출력</pre>
+  </div>
+  <div class="tw">
+  <table>
+    <thead><tr><th>rule</th><th>정의</th><th>왜 rule 인가</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><strong>severity</strong></td>
+        <td><span class="gate b">BLOCKER</span> contradiction 이고 두 quote 가 <strong>같은 키에 다른 리터럴 값</strong><br><span class="gate r">MAJOR</span> stale_reference / dangling_link / 값 diff 미검출 contradiction<br><span class="gate p">MINOR</span> terminology / completeness</td>
+        <td>LLM 에 맡기면 MR 마다 흔들려서 사람이 리포트를 안 믿는다. 게이트면 여기가 신뢰의 축</td>
+      </tr>
+      <tr>
+        <td><strong>verdict</strong></td>
+        <td><span class="gate b">BLOCK</span> BLOCKER &gt; 0<br><span class="gate r">REVIEW</span> MAJOR &gt; 0 <strong>또는 L1 &gt; 0</strong><br><span class="gate p">PASS</span> 나머지 (L2·L3 만 있고 finding 없음)</td>
+        <td><code>L1 &gt; 0</code> 이 이 개정의 핵심. 맥락이 바뀐 절이 있으면 모순이 없어도 사람이 읽어야 한다 — 문서의 주장이 달라진 것이다. 이전 판은 L1 3건 + finding 0 에 <code>PASS</code> 를 줬다</td>
+      </tr>
+      <tr>
+        <td><strong>must_read</strong></td>
+        <td>1 BLOCKER finding → 2 <strong>L1 절</strong> → 3 MAJOR finding → 4 finding 걸린 L2 절<br>동순위는 confidence desc → 경로 사전순. <strong>상위 5</strong></td>
+        <td><code>must_check</code> → <code>must_read</code> 개명. finding 만이 아니라 L1 절도 상단에 올린다</td>
+      </tr>
+    </tbody>
+  </table>
+  </div>
+  <ul class="plain">
+    <li><b>L3 만 있는 MR 은 <code>PASS</code></b> — 이게 노이즈 제어의 실질이다</li>
+    <li><b>gate 실패는 버린다.</b> 역추적·quote 실패 finding 은 drop 카운트만 남긴다. 재인용을 요청하지 않는다 — <b>종료조건을 CHECK 미응답 하나로 유지</b>해서 루프가 반드시 끝나게 한다</li>
+    <li><b>검증 실패는 verdict 를 움직이지 않는다.</b> verifier 가 2회 REVISE 여도 verdict 는 안 바뀐다. verdict 는 <b>문서</b>에 대한 판정이고 검증 실패는 <b>우리 분석</b>의 문제다. 섞으면 "우리 분석이 부실해서 BLOCK" 이 되어 잘못된 신호를 준다 → <code>verify.outstanding</code> 에 기록</li>
+  </ul>
+
+  <hr class="rule">
+
+  <h3 id="t40">40-reportdata.md</h3>
+  <div class="codewrap">
+    <div class="bar"><span class="f">40-reportdata.md</span><span class="flow">doc-reporter → mrdoc render</span><span class="kind llm">LLM</span></div>
+<pre>---
+verdict: REVIEW          <span class="c"># 35-collect 에서 복사. 변경 금지 (render 가 대조)</span>
+sentences: 6
+STATUS: OK
+SOURCES: 6/6 대응
+<b>UNSOURCED: none
+CONFLICTS: none</b>
+UNCOVERED: none
+CONFIDENCE: high
+---
+
+## HEADLINE
+```yaml
+refs: []                 <span class="c"># 전체 요약만 빈 배열 허용</span>
+```
+인증 문서의 재시도 정책이 Circuit Breaker 로 전환됐고, 장애 처리 문서가
+옛 정책을 그대로 서술하고 있다.
+
+## VERDICT_REASON
+```yaml
+refs: [u-7f21bc, f-01]
+```
+정책의 전제가 바뀌었고 관련 문서 1곳이 동기화되지 않아 머지 전 확인이 필요하다.
+
+## MUST_READ u-7f21bc
+```yaml
+refs: [u-7f21bc]
+```
+**why_matters** 재시도에서 차단으로 바뀌면 장애 시 동작이 근본적으로 달라져,
+운영 문서 전체의 전제가 이동한다.
+
+## FILE_DIGEST auth-md-a3c19d
+```yaml
+refs: [u-7f21bc, u-2c81de, u-9a03ff]
+```
+Retry 정책이 Circuit Breaker 로 교체, 토큰 만료 60→30분, 개요 문장 정리.</pre>
+  </div>
+  <p class="lede"><code>refs</code> 가 <strong>역추적 사슬의 마지막 칸</strong>이다. <code>35-collect</code> 에 없는 <code>u-</code>/<code>f-</code> 를 지목한 블록은 <code>mrdoc render</code> 가 버린다. <code>UNSOURCED</code> 와 <code>CONFLICTS</code> 는 필수 필드 — 생략은 "clean" 으로 읽히고, 주장하지 않은 clean 은 <strong>거짓 영수증</strong>이다.</p>
+
+  <hr class="rule">
+
+  <h3 id="t99">report.html · slack-summary.txt</h3>
+  <div class="codewrap">
+    <div class="bar"><span class="f">mrdoc render 4단계</span><span class="kind tool">툴</span></div>
+<pre>1  40-reportdata 의 verdict 가 35-collect 와 일치하나. 불일치 → <b>exit 2</b>
+2  모든 블록의 refs 가 35-collect 에 실재하나. 아니면 그 블록 버림
+3  본문은 <b>35-collect 에서 가져온다</b> (reportdata 에는 문장만 있다)
+4  report.html + slack-summary.txt 출력       Jinja2 · 단일 파일 · 인라인 CSS · 외부 의존 0</pre>
+  </div>
+  <div class="codewrap">
+    <div class="bar"><span class="f">report.html 골격</span><span class="flow">위→아래 = 무엇이 바뀌었나 → 주의할 점 → 기록</span></div>
+<pre>[배너]  REVIEW — 맥락이 바뀐 절 1건 + 다른 문서와 어긋남 1건
+
+<b>[이번 MR 이 바꾼 것]</b>                                          <span class="k">← 주역. 상단</span>
+  맥락 변경 (L1) 1건                                          펼침
+    auth.md § 4.2 Retry 정책
+      이전  재시도 횟수와 간격으로 일시적 실패를 처리          <span class="c">LLM</span>
+      이후  재시도 대신 Circuit Breaker 로 차단·복구           <span class="c">LLM</span>
+      없어진 사실  Retry Count: 3 · Retry Interval: 2s        <span class="c">툴 값</span>
+      생긴 사실    Failure Threshold: 5 · Open Duration: 30s  <span class="c">툴 값</span>
+      [MR diff 딥링크]
+
+  값 변경 (L2) 1건                                            표
+    auth.md § 5. 토큰 정책    Access Token 만료  60분 → 30분
+
+  표현 변경 (L3) 1건                                          접힘. 건수만
+  이동 1건   배포 절차: architecture.md → deployment.md        회색 별행
+  신규 1  overview.md — 인증 구조와 토큰 정책 정의
+  삭제 1  legacy.md
+
+<b>[주의할 점] 1건</b>                                               <span class="k">← 부가. 비어도 성립</span>
+  failover.md § 7.2 가 없어진 Retry 정책을 여전히 서술
+    근거  auth.md:142 "Failure Threshold: 5" · failover.md:88 "Retry Count: 3"
+    권고  7.2절을 Circuit Breaker 서술로 갱신하거나 4.2 참조를 제거
+
+<b>[분석 신뢰도]</b>
+  확인 항목 3 (지목 2 / 리터럴 1) · 응답 3 · 미응답 0
+  quote 검증 탈락 0 · 중복 병합 1 · 레벨 승격 0
+  검증 1회 APPROVE · 지적 잔존 0 · 분석 실패 파일 0
+  CONFIDENCE high 1 / medium 0 / low 0
+  UNCERTAIN  mapper: deployment.md 관련 여부 불명</pre>
+  </div>
+  <h4>이전 판과 다른 세 가지</h4>
+  <ol class="hl">
+    <li><b>「이번 MR 이 바꾼 것」이 상단이다.</b> 이전 판은 <code>Must check</code>(finding)가 상단이라 <b>finding 0건 MR 은 상단이 비었다.</b> 그러면 사람은 md diff 를 다시 열고 시스템의 존재 이유가 사라진다</li>
+    <li><b>없어진·생긴 사실이 툴 값이다.</b> LLM 이 쓴 두 줄 아래에 기계 추출 사실이 붙는다. 요약하다 사실이 사라지는 경로를 막는다</li>
+    <li><b>레벨이 조직 원리다.</b> L1 펼침 / L2 표 / L3 건수만. 자동 생성 파이프라인에서 L3 가 다수인데, 그걸 값 변경과 같은 무게로 올리면 리포트를 안 본다</li>
+  </ol>
+  <div class="codewrap">
+    <div class="bar"><span class="f">slack-summary.txt</span></div>
+<pre>[REVIEW] MR !482 docs/product-a
+맥락 변경 1 · 값 변경 1 · 표현 변경 1 · 이동 1 · 신규 1 · 삭제 1
+주의 1건: failover.md §7.2 가 없어진 Retry 정책을 서술
+https://…/report.html</pre>
+  </div>
+  <div class="note"><b><code>[분석 신뢰도]</code> 블록은 빼지 말 것.</b> 부분 실패가 조용히 사라지는 게 이 시스템의 최악 실패 모드다. Slack 메시지에는 <code>mr_iid</code> 만 싣는다 — <b>문서 본문을 Slack 에 흘리지 않는다.</b> DISMISSED·<code>clean</code> 은 개수만 노출하고 개별 항목은 안 올린다.</div>
+
+  <hr class="rule">
+
+  <h3 id="tdispatch">dispatch 위임 스펙 · ledger</h3>
+  <div class="codewrap">
+    <div class="bar"><span class="f">mrdoc dispatch next 출력 — agent 블록</span><span class="kind tool">툴</span></div>
+<pre>WAVE: w3
+=== SPEC agent doc-analyzer ===
+TASK: 변경 절 3개의 이전↔이후를 서술하고 레벨을 판정한다
+CONTEXT: &lt;abs&gt;/06-literals.md — UNIT u-7f21bc u-2c81de u-9a03ff
+         &lt;abs&gt;/15-checklist.md — CHECK k-01 k-02 k-03
+TARGET FILES: &lt;abs&gt;/20-analysis/auth-md-a3c19d.md
+<b>READ: &lt;abs&gt;/base/docs/product-a/auth.md 135-160,168-171,40-52
+      &lt;abs&gt;/snapshot/docs/product-a/auth.md 135-160,168-171,40-52
+      &lt;abs&gt;/snapshot/docs/product-a/failover.md 80-95</b>
+CONSTRAINTS: 사실 목록 직접 작성 금지 · severity 금지 · 레벨은 애매하면 높은 쪽
+BUDGET: 16 tool calls
+LEDGER: &lt;abs&gt;/ledger.md
+REPORT: &lt;abs&gt;/20-analysis/auth-md-a3c19d.md
+RETURN: STATUS / UNITS / LEVELS / CHECKS / FINDINGS / CLEAN /
+        UNCOVERED / UNCERTAIN / CONFIDENCE / REPORT   (≤16줄)
+=== END WAVE (1 spec) ===</pre>
+  </div>
+  <div class="codewrap">
+    <div class="bar"><span class="f">tool 블록 — 같은 형식</span></div>
+<pre>WAVE: w4
+=== SPEC tool ===
+RUN: mrdoc levelcheck --work &lt;abs&gt;
+=== END WAVE (1 spec) ===</pre>
+  </div>
+  <dl class="fields">
+    <dt>READ</dt><dd><strong><code>Grep</code> 을 대체한다.</strong> 위성이 볼 위치를 스펙이 절대경로+라인으로 주므로 검색 도구가 필요 없다</dd>
+    <dt>VERIFY</dt><dd><strong>없다.</strong> 실행 가능한 검증 명령이 없고, 그 자리를 <code>collect</code> 의 quote 대조와 <code>doc-verifier</code> 가 맡는다</dd>
+    <dt>작성자</dt><dd>오케스트레이터가 <strong>쓰지 않는다.</strong> 스펙 문장을 쓰는 행위가 곧 판단이고(무엇을 <code>CONTEXT</code> 에 넣을지, <code>CONSTRAINTS</code> 를 어떻게 좁힐지가 결과를 바꾼다), 매번 달라지면 같은 MR 이 다른 결론을 낸다. <code>dispatch</code> 가 결정론적으로 생성하므로 <strong>같은 MR 은 같은 프롬프트를 받는다</strong></dd>
+  </dl>
+  <div class="codewrap">
+    <div class="bar"><span class="f">ledger.md</span><span class="flow">append-only · 컴팩션 보험</span></div>
+<pre>482  w1  tool      mrdoc literals → units=3 removed=2 added=2 changed=1
+482  w2  analyzer  OK auth-md-a3c19d units=3 levels=L1:1,L2:1,L3:1 findings=2
+482  w2  join      1/1 파일 analysis 완료
+482  w3  verifier  APPROVE fidelity=3/3 → 32-verify.md</pre>
+  </div>
+  <p class="lede">오케스트레이터는 <code>claude -p</code> <strong>단일 프로세스</strong>로 10단계 × N파일을 돈다. 파일 40개면 위성 호출이 수십 회다 — <strong>컴팩션은 발생한다.</strong> ledger write 조차 툴에 넘겨 오케스트레이터에서 Write 를 완전히 제거한다.</p>
+</section>
+
+<footer>
+  <span>mr-review-agent-design.md · 1627줄</span>
+  <span>설계 확정 2026-08-23</span>
+  <span>1차 착수 전 선행 측정: 리터럴 밀도 — 절당 3개 이상이면 설계 그대로, 1개 미만이면 레벨 판정 근거 재설계</span>
+</footer>
+</main>
+</div>
+
+<script>
+(function(){
+  // pipeline filter
+  var pipe = document.getElementById('pipe');
+  var btns = Array.prototype.slice.call(document.querySelectorAll('.filters button'));
+  var rows = pipe ? Array.prototype.slice.call(pipe.querySelectorAll('tbody tr')) : [];
+  function apply(f){
+    rows.forEach(function(r){
+      var show = f === 'all'
+        || (f === 'core' && r.dataset.opt === '0')
+        || (f === 'tool' && r.dataset.kind === 'tool')
+        || (f === 'llm'  && r.dataset.kind === 'llm');
+      r.classList.toggle('hide', !show);
+    });
+  }
+  btns.forEach(function(b){
+    b.addEventListener('click', function(){
+      btns.forEach(function(o){ o.setAttribute('aria-pressed', String(o === b)); });
+      apply(b.dataset.f);
+    });
+  });
+
+  // scroll spy
+  var links = Array.prototype.slice.call(document.querySelectorAll('#nav a'));
+  var targets = links.map(function(a){ return document.getElementById(a.getAttribute('href').slice(1)); });
+  function spy(){
+    var best = -1, bestTop = -Infinity;
+    for (var i = 0; i < targets.length; i++){
+      var t = targets[i];
+      if (!t) continue;
+      var top = t.getBoundingClientRect().top - 90;
+      if (top <= 0 && top > bestTop){ bestTop = top; best = i; }
+    }
+    links.forEach(function(a, i){ a.classList.toggle('on', i === best); });
+  }
+  var queued = false;
+  window.addEventListener('scroll', function(){
+    if (queued) return;
+    queued = true;
+    requestAnimationFrame(function(){ queued = false; spy(); });
+  }, {passive:true});
+  spy();
+})();
+</script>
+</html>

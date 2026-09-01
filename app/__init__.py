@@ -1,1 +1,1 @@
-"""Slack PR Notifier middleware package."""
+"""Slack MR Notifier middleware package."""

@@ -1,0 +1,471 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>개발 보고서 · Slack MR Review Pipeline</title>
+<style>
+:root{
+  --bg:#f4f3ef; --surface:#fbfaf7; --panel:#ffffff;
+  --ink:#1c1e26; --ink-2:#4b5163; --ink-3:#8b91a3;
+  --line:#e7e3da; --line-2:#dcd7cb; --line-strong:#cabfa9;
+  --primary:#3530a8; --primary-2:#4f46e5; --primary-soft:#ecebfb;
+  --work:#b8431a; --work-soft:#fbece3;
+  --ok:#1a7a45; --ok-soft:#e7f2ea;
+  --warn:#a4660a; --warn-soft:#fbf0d8;
+  --info:#1f5f8b; --info-soft:#e4eff6;
+  --gitlab:#c2410c; --slack:#5b2a86; --ai:#3530a8; --mid:#0f6e6e;
+  --mono:"SFMono-Regular",Consolas,"Cascadia Mono",ui-monospace,monospace;
+  --sans:-apple-system,"Segoe UI","Malgun Gothic","Apple SD Gothic Neo",system-ui,sans-serif;
+  --shadow:0 1px 2px rgba(28,30,38,.04), 0 6px 18px rgba(28,30,38,.05);
+  --radius:14px;
+}
+@media (prefers-color-scheme: dark){
+  :root{
+    --bg:#101218; --surface:#171a22; --panel:#1d212c;
+    --ink:#e8eaf1; --ink-2:#aeb4c4; --ink-3:#7a8194;
+    --line:#2b3140; --line-2:#353c4d; --line-strong:#424b5f;
+    --primary:#8b86f5; --primary-2:#9d99f7; --primary-soft:#24233f;
+    --work:#e8865a; --work-soft:#3a2118;
+    --ok:#5fd08a; --ok-soft:#15291f;
+    --warn:#e0a93f; --warn-soft:#332713;
+    --info:#6cb4e0; --info-soft:#13202c;
+    --gitlab:#e8865a; --slack:#b894e0; --ai:#8b86f5; --mid:#48b3b3;
+    --shadow:0 1px 2px rgba(0,0,0,.3), 0 8px 24px rgba(0,0,0,.32);
+  }
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{
+  margin:0; padding:40px 20px 80px;
+  color:var(--ink); background:var(--bg);
+  font:15px/1.65 var(--sans);
+  -webkit-font-smoothing:antialiased;
+}
+.wrap{max-width:980px;margin:0 auto}
+.mono{font-family:var(--mono);font-size:.92em}
+.report-head{margin-bottom:36px}
+.kicker{
+  font-family:var(--mono);font-size:11px;letter-spacing:.22em;text-transform:uppercase;
+  color:var(--primary);display:flex;align-items:center;gap:12px;margin-bottom:14px;
+}
+.kicker::before{content:"";width:28px;height:2px;background:var(--primary)}
+.report-head h1{
+  margin:0 0 10px; font-size:clamp(24px,4.4vw,34px); line-height:1.18;
+  font-weight:800; letter-spacing:-.02em;
+}
+.report-head .sub{color:var(--ink-2);font-size:16px;margin:0 0 22px;max-width:62ch}
+.meta-row{display:flex;flex-wrap:wrap;gap:10px}
+.meta-row .m{
+  font-family:var(--mono);font-size:11.5px;color:var(--ink-2);
+  background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:6px 12px;
+}
+.meta-row .m b{color:var(--ink);font-weight:700}
+.meta-row .m.ok b{color:var(--ok)} .meta-row .m.work b{color:var(--work)}
+.toc{
+  display:flex;flex-wrap:wrap;gap:8px;margin:26px 0 4px;padding:14px 16px;
+  background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);
+}
+.toc a{
+  font-size:13px;color:var(--ink-2);text-decoration:none;
+  padding:5px 11px;border-radius:7px;border:1px solid transparent;transition:.12s;
+}
+.toc a:hover{color:var(--primary);background:var(--primary-soft);border-color:var(--primary-soft)}
+.toc a .n{font-family:var(--mono);color:var(--ink-3);margin-right:6px}
+section.report{margin-top:46px;scroll-margin-top:24px}
+.sec-title{display:flex;align-items:baseline;gap:14px;margin-bottom:8px}
+.sec-title .num{
+  font-family:var(--mono);font-weight:700;font-size:13px;color:#fff;background:var(--primary);
+  border-radius:7px;padding:3px 10px;letter-spacing:.04em;
+}
+.sec-title h2{margin:0;font-size:23px;font-weight:800;letter-spacing:-.015em}
+.sec-lead{color:var(--ink-2);font-size:15px;margin:0 0 22px;max-width:68ch}
+.card{
+  background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);
+  box-shadow:var(--shadow);padding:22px 24px;margin-bottom:16px;
+}
+.card.tight{padding:18px 20px}
+.card h3{margin:0 0 12px;font-size:16px;font-weight:700;letter-spacing:-.01em}
+.card h4{margin:18px 0 8px;font-size:13.5px;font-weight:700;color:var(--ink-2);
+  font-family:var(--mono);text-transform:uppercase;letter-spacing:.05em}
+.card p{margin:8px 0}
+.card ul,.card ol{margin:10px 0;padding-left:20px}
+.card li{margin:6px 0}
+.card li::marker{color:var(--ink-3)}
+.lead-note{
+  font-size:13px;color:var(--ink-2);background:var(--surface);
+  border:1px solid var(--line);border-left:3px solid var(--primary);
+  border-radius:8px;padding:10px 14px;margin:12px 0;
+}
+.legend{display:flex;flex-wrap:wrap;gap:14px;margin-bottom:18px}
+.legend .lg{display:inline-flex;align-items:center;gap:7px;font-size:12px;color:var(--ink-2);font-family:var(--mono)}
+.legend .dot{width:11px;height:11px;border-radius:3px}
+.flow{position:relative;margin:6px 0}
+.fnode{position:relative;display:flex;align-items:stretch;gap:0;margin-bottom:0}
+.fnode .rail{width:5px;border-radius:5px;flex:0 0 5px}
+.fnode.gitlab .rail{background:var(--gitlab)}
+.fnode.slack .rail{background:var(--slack)}
+.fnode.ai .rail{background:var(--ai)}
+.fnode.mid .rail{background:var(--mid)}
+.fnode .body{
+  flex:1;background:var(--surface);border:1px solid var(--line);border-radius:0 11px 11px 0;
+  padding:13px 16px;
+}
+.fnode .top{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.fnode .actor{
+  font-family:var(--mono);font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;
+  padding:2px 8px;border-radius:999px;
+}
+.fnode.gitlab .actor{color:var(--gitlab);background:color-mix(in srgb,var(--gitlab) 14%,transparent)}
+.fnode.slack .actor{color:var(--slack);background:color-mix(in srgb,var(--slack) 14%,transparent)}
+.fnode.ai .actor{color:var(--ai);background:color-mix(in srgb,var(--ai) 14%,transparent)}
+.fnode.mid .actor{color:var(--mid);background:color-mix(in srgb,var(--mid) 14%,transparent)}
+.fnode .tt{font-weight:700;font-size:14.5px;letter-spacing:-.01em}
+.fnode .ss{font-size:13px;color:var(--ink-2);margin-top:3px}
+.fnode .ss code{font-family:var(--mono);font-size:11.5px;background:var(--panel);border:1px solid var(--line);
+  border-radius:4px;padding:0 5px;color:var(--ink)}
+.fconn{display:flex;justify-content:center;margin:0 0 0 5px;height:18px;color:var(--ink-3)}
+.fconn svg{display:block}
+.branch{display:flex;gap:12px;margin:14px 0 0;flex-wrap:wrap}
+.branch .lane{flex:1 1 280px;min-width:260px;border:1px dashed var(--line-strong);border-radius:11px;padding:12px 14px;background:var(--panel)}
+.branch .lane .lab{font-family:var(--mono);font-size:11px;font-weight:700;letter-spacing:.05em;margin-bottom:8px}
+.branch .lane.app{border-color:color-mix(in srgb,var(--ok) 45%,var(--line))}
+.branch .lane.app .lab{color:var(--ok)}
+.branch .lane.opi{border-color:color-mix(in srgb,var(--work) 45%,var(--line))}
+.branch .lane.opi .lab{color:var(--work)}
+.branch .lane ul{margin:6px 0 0;padding-left:18px;font-size:13px;color:var(--ink-2)}
+.branch .lane li{margin:4px 0}
+.sm{display:grid;grid-template-columns:repeat(2,1fr);gap:12px;margin-top:6px}
+.state{border:1.5px solid var(--line-strong);border-radius:12px;padding:14px 16px;background:var(--panel)}
+.state .sn{font-family:var(--mono);font-weight:700;font-size:14px;margin-bottom:6px;display:flex;align-items:center;gap:8px}
+.state .sw{width:11px;height:11px;border-radius:3px}
+.state .sd{font-size:12.5px;color:var(--ink-2);margin:4px 0 8px}
+.state .edges{font-size:12px;color:var(--ink-3)}
+.state .edges .e{display:block;margin:3px 0;line-height:1.4}
+.state .edges code{font-family:var(--mono);font-size:11px;color:var(--ink-2)}
+.state.reviewing{border-color:var(--ai)} .state.reviewing .sn{color:var(--ai)} .state.reviewing .sw{background:var(--ai)}
+.state.merging{border-color:var(--warn)} .state.merging .sn{color:var(--warn)} .state.merging .sw{background:var(--warn)}
+.state.revising{border-color:var(--work)} .state.revising .sn{color:var(--work)} .state.revising .sw{background:var(--work)}
+.state.manual{border-color:var(--slack)} .state.manual .sn{color:var(--slack)} .state.manual .sw{background:var(--slack)}
+.state.merged{border-color:var(--ok)} .state.merged .sn{color:var(--ok)} .state.merged .sw{background:var(--ok)}
+.tbl-wrap{overflow-x:auto;border:1px solid var(--line);border-radius:var(--radius)}
+table.r{width:100%;border-collapse:collapse;font-size:13.5px;background:var(--panel)}
+table.r th{
+  font-family:var(--mono);font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--ink-3);
+  text-align:left;padding:11px 14px;border-bottom:1px solid var(--line-strong);background:var(--surface);white-space:nowrap;
+}
+table.r td{padding:13px 14px;border-bottom:1px solid var(--line);vertical-align:top;line-height:1.5}
+table.r tr:last-child td{border-bottom:none}
+table.r td.k{font-weight:700;white-space:nowrap;color:var(--ink);min-width:90px}
+table.r td .pill{display:inline-block;font-family:var(--mono);font-size:10.5px;padding:1px 8px;border-radius:999px;margin-right:6px;white-space:nowrap}
+table.r td .pill.orig{background:var(--warn-soft);color:var(--warn);border:1px solid color-mix(in srgb,var(--warn) 30%,transparent)}
+table.r td .pill.now{background:var(--ok-soft);color:var(--ok);border:1px solid color-mix(in srgb,var(--ok) 30%,transparent)}
+.work-grid{display:grid;grid-template-columns:1fr;gap:14px}
+.wcard{
+  border:1px solid var(--line);border-left:4px solid var(--work);border-radius:12px;
+  background:var(--panel);padding:18px 20px;box-shadow:var(--shadow);
+}
+.wcard h3{display:flex;align-items:center;gap:10px;margin:0 0 6px;font-size:16px}
+.wcard .tag{font-family:var(--mono);font-size:10px;font-weight:700;letter-spacing:.05em;
+  color:var(--work);background:var(--work-soft);border:1px solid color-mix(in srgb,var(--work) 25%,transparent);
+  padding:2px 8px;border-radius:6px}
+.wcard .where{font-family:var(--mono);font-size:11.5px;color:var(--ink-3);margin-bottom:10px}
+.wcard .now{color:var(--ink-2);font-size:13.5px;margin:8px 0}
+.wcard .now b{color:var(--ink)}
+.wcard ul{margin:6px 0;padding-left:20px}
+.wcard li{margin:5px 0;color:var(--ink-2);font-size:13.5px}
+.todo{list-style:none;padding:0;margin:0}
+.todo li{display:flex;gap:12px;padding:14px 4px;border-bottom:1px dashed var(--line)}
+.todo li:last-child{border-bottom:none}
+.todo .box{flex:0 0 22px;width:22px;height:22px;border:1.8px solid var(--line-strong);border-radius:6px;margin-top:1px}
+.todo .tx{flex:1}
+.todo .tx .h{font-weight:700;font-size:14.5px;margin-bottom:3px}
+.todo .tx .d{font-size:13px;color:var(--ink-2);line-height:1.55}
+.todo .tx .d code{font-family:var(--mono);font-size:11.5px;background:var(--surface);border:1px solid var(--line);border-radius:4px;padding:0 5px}
+.report-foot{margin-top:48px;padding-top:20px;border-top:1px solid var(--line);
+  font-family:var(--mono);font-size:11px;color:var(--ink-3);letter-spacing:.04em;
+  display:flex;justify-content:space-between;flex-wrap:wrap;gap:10px}
+@media (max-width:720px){
+  .sm{grid-template-columns:1fr}
+  .sec-title h2{font-size:20px}
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header class="report-head">
+  <div class="kicker">Engineering Report · Internal</div>
+  <h1>Slack MR Review Pipeline — 개발 보고서</h1>
+  <p class="sub">GitLab MR을 Slack에서 리뷰하고, 의견을 AI 재생성 루프의 입력으로 사용하는 승인 게이트 미들웨어. 인프라 중심으로 구축했으며, AI 영역은 후속 고도화를 남겨둔 상태다.</p>
+  <div class="meta-row">
+   <span class="m">스택 <b>FastAPI · SQLite · claude CLI</b></span>
+   <span class="m">배포 <b>uvicorn --workers 1</b></span>
+    <span class="m">수집 <b>GitLab 폴링(옵트인) · 웹훅 병행</b></span>
+   <span class="m ok">테스트 <b>201 passed</b></span>
+    <span class="m work">AI 영역 <b>고도화 필요</b></span>
+  </div>
+  <nav class="toc">
+    <a href="#wf"><span class="n">1</span>워크플로우</a>
+    <a href="#ch"><span class="n">2</span>변경된 부분</a>
+    <a href="#adv"><span class="n">3</span>고도화 필요</a>
+  </nav>
+</header>
+<section class="report" id="wf">
+  <div class="sec-title"><span class="num">01</span><h2>워크플로우</h2></div>
+  <p class="sec-lead">미들웨어(FastAPI + SQLite)가 GitLab과 Slack 사이에서 상태·승인·머지·AI 재생성을 모두 전담한다. GitLab은 호스트 인바운드가 방화벽으로 막혀 <b>폴링(아웃바운드)</b>으로 수집하고, Slack 액션만 인바운드로 받는다. 두 수집 레일은 코드에 모두 있고 동일한 <code>app/ingest.py</code> 핸들러를 공유한다 — 웹훅 라우트(<code>/webhooks/gitlab/mr</code>)는 항상 등록되고, 폴러는 <code>POLL_ENABLED</code> + <code>POLL_PROJECT_IDS</code>가 설정된 배포에서만 기동하는 옵트인 경로다(코드 기본값은 off).</p>
+  <div class="card">
+    <div class="legend">
+      <span class="lg"><span class="dot" style="background:var(--gitlab)"></span>GitLab</span>
+      <span class="lg"><span class="dot" style="background:var(--slack)"></span>Slack</span>
+      <span class="lg"><span class="dot" style="background:var(--ai)"></span>claude (AI)</span>
+      <span class="lg"><span class="dot" style="background:var(--mid)"></span>미들웨어</span>
+    </div>
+    <h4>주 파이프라인 — MR open → 리뷰 알림 → 승인/의견 분기</h4>
+    <div class="flow">
+      <div class="fnode mid"><div class="rail"></div><div class="body">
+        <div class="top"><span class="actor">미들웨어</span><span class="tt">GitLab MR 폴링 수집 — opened MR 감지</span></div>
+        <div class="ss">GitLab API를 주기 폴링해 <code>state=opened</code> MR 조회 · 세션이 없는 신규 MR 감지 → <code>handle_mr_open</code> · push·외부 머지/닫힘도 같은 폴러가 감지(방화벽 차단 환경이라 인바운드 웹훅 레일은 켜지 않음)</div>
+      </div></div>
+      <div class="fconn"><svg width="14" height="18" viewBox="0 0 14 18"><path d="M7 0v14M2 10l5 6 5-6" stroke="currentColor" stroke-width="1.6" fill="none"/></svg></div>
+      <div class="fnode mid"><div class="rail"></div><div class="body">
+        <div class="top"><span class="actor">미들웨어</span><span class="tt">세션 생성 (create-or-reuse)</span></div>
+        <div class="ss"><code>review_session</code> 행 생성 · 담당자 매핑 공집합이면 즉시 <code>manual</code> 분기 + 채널 경고</div>
+      </div></div>
+      <div class="fconn"><svg width="14" height="18" viewBox="0 0 14 18"><path d="M7 0v14M2 10l5 6 5-6" stroke="currentColor" stroke-width="1.6" fill="none"/></svg></div>
+      <div class="fnode ai"><div class="rail"></div><div class="body">
+        <div class="top"><span class="actor">claude</span><span class="tt">[A] review-prep — 읽기 전용 리뷰</span></div>
+        <div class="ss">claude CLI 서브프로세스로 MR diff·파일 분석 → <code>{summary, key_changes, points_to_watch}</code> 구조화 요약</div>
+      </div></div>
+      <div class="fconn"><svg width="14" height="18" viewBox="0 0 14 18"><path d="M7 0v14M2 10l5 6 5-6" stroke="currentColor" stroke-width="1.6" fill="none"/></svg></div>
+      <div class="fnode slack"><div class="rail"></div><div class="body">
+        <div class="top"><span class="actor">Slack</span><span class="tt">리뷰 알림 발송</span></div>
+        <div class="ss">담당자 멘션 + AI 요약 + <code>[승인]</code>/<code>[의견]</code> 버튼 (HMAC 서명 토큰: <code>project_id·iid·sha</code> + MR 메타 바인딩, TTL 24h — 세션은 <code>project_id+iid</code>로 역조회)</div>
+      </div></div>
+    </div>
+    <h4>분기 — 버튼 클릭 후</h4>
+    <div class="branch">
+      <div class="lane app">
+        <div class="lab">✅ [승인] → 머지</div>
+        <ul>
+          <li>0단계 권한 검사 (매핑 담당자 집합)</li>
+          <li>GitLab API로 현재 head SHA 재조회 → 토큰 SHA 비교</li>
+          <li>CAS 잠금 <code>reviewing → merging</code></li>
+          <li>merge API 호출 (SHA 바인딩) → 3초 × 10회 poll</li>
+          <li>성공 <code>merged</code> / 실패·차단 <code>manual</code></li>
+        </ul>
+      </div>
+      <div class="lane opi">
+        <div class="lab">✏️ [의견] → revise 루프</div>
+        <ul>
+          <li>모달 → opinion INSERT + GitLab 노트 미러</li>
+          <li>가드 (a) <code>round≥3</code> (b) 사람 커밋 → <code>manual</code></li>
+          <li>CAS 잠금 <code>reviewing → revising</code></li>
+          <li>revise 실행기 기동 (직렬화 큐)</li>
+          <li>완료 후 재알림 → <code>reviewing</code> 복귀</li>
+        </ul>
+      </div>
+    </div>
+    <h4>revise 루프 (미들웨어 내부 실행기)</h4>
+    <div class="flow">
+      <div class="fnode mid"><div class="rail"></div><div class="body">
+        <div class="top"><span class="actor">미들웨어</span><span class="tt">직렬화 큐 → 실행 시작</span></div>
+        <div class="ss">프로세스 전역 단일 큐 + 워커 스레드 1개(동시성 1) · 큐 대기 상한 600s · 실행 시작 시점에 <code>revising_since</code> 재설정</div>
+      </div></div>
+      <div class="fconn"><svg width="14" height="18" viewBox="0 0 14 18"><path d="M7 0v14M2 10l5 6 5-6" stroke="currentColor" stroke-width="1.6" fill="none"/></svg></div>
+      <div class="fnode mid"><div class="rail"></div><div class="body">
+        <div class="top"><span class="actor">미들웨어</span><span class="tt">git 워크스페이스 + 미반영 의견 로드</span></div>
+        <div class="ss">fetch/checkout · <code>applied_round IS NULL AND created_at ≤ 잠금 시각</code></div>
+      </div></div>
+      <div class="fconn"><svg width="14" height="18" viewBox="0 0 14 18"><path d="M7 0v14M2 10l5 6 5-6" stroke="currentColor" stroke-width="1.6" fill="none"/></svg></div>
+      <div class="fnode ai"><div class="rail"></div><div class="body">
+        <div class="top"><span class="actor">claude</span><span class="tt">[B] revise 러너 — 문서 재생성</span></div>
+        <div class="ss">단일 claude CLI 호출 → <code>{applied, unapplied, summary}</code> · 벽시계 상한 900s</div>
+      </div></div>
+      <div class="fconn"><svg width="14" height="18" viewBox="0 0 14 18"><path d="M7 0v14M2 10l5 6 5-6" stroke="currentColor" stroke-width="1.6" fill="none"/></svg></div>
+      <div class="fnode mid"><div class="rail"></div><div class="body">
+        <div class="top"><span class="actor">미들웨어</span><span class="tt">commit/push → reviewing 복귀 → 재알림</span></div>
+        <div class="ss">CAS <code>revising → reviewing</code>가 <b>선행 조건</b> — 거부되면 라운드·의견 기록을 일절 건드리지 않고 종료 · 수용 시에만 반영 의견 <code>applied_round</code> 기록 · <code>round+1</code> · 새 메시지 발송</div>
+      </div></div>
+    </div>
+  </div>
+  <div class="card">
+    <h3>상태 기계 — 5상태 CAS</h3>
+    <p style="margin-top:0">모든 전이는 단일 원자적 CAS 문 <code>UPDATE review_session SET status=? WHERE id=? AND status=?</code>로 수행된다. <code>rowcount=0</code>이면 전이 거부(check-then-act 아님).</p>
+    <div class="sm">
+      <div class="state reviewing"><div class="sn"><span class="sw"></span>reviewing</div>
+        <div class="sd">리뷰 진행 중 · [승인]/[의견] 버튼 활성</div>
+        <div class="edges">
+          <span class="e">→ <code>merging</code> 승인 클릭</span>
+          <span class="e">→ <code>revising</code> 의견 제출</span>
+          <span class="e">→ <code>merged</code> 외부 머지</span>
+          <span class="e">→ <code>manual</code> 가드 거부 / 외부 닫힘</span>
+        </div>
+      </div>
+      <div class="state merging"><div class="sn"><span class="sw"></span>merging</div>
+        <div class="sd">승인 접수 · 머지 poll 진행 중 (<code>merging_since</code> 타임아웃 300s)</div>
+        <div class="edges">
+          <span class="e">→ <code>merged</code> poll 성공 / 외부 머지</span>
+          <span class="e">→ <code>manual</code> poll 실패 · 사람 push · 외부 닫힘</span>
+        </div>
+      </div>
+      <div class="state revising"><div class="sn"><span class="sw"></span>revising</div>
+        <div class="sd">완전 동결 · revise 실행기 진행 중 (<code>revising_since</code> 타임아웃 1200s)</div>
+        <div class="edges">
+          <span class="e">→ <code>reviewing</code> revise 성공 (round+1, attempts 리셋)</span>
+          <span class="e">→ <code>manual</code> 사람 push · 타임아웃 · attempts≥2 · 외부 닫힘</span>
+          <span class="e">→ <code>merged</code> 외부 머지</span>
+        </div>
+      </div>
+      <div class="state manual"><div class="sn"><span class="sw"></span>manual</div>
+        <div class="sd">사람 개입 대기 · 자동 동작 정지</div>
+        <div class="edges">
+          <span class="e">→ <code>merged</code> 사람 직접 머지</span>
+          <span class="e">→ <code>reviewing</code> 외부 닫힘 후 재오픈 (폴러 <code>mr_reopened</code>)</span>
+          <span class="e">→ <code>reviewing</code> <code>operator_resume</code> — 엣지 정의만 있고 호출부 없음</span>
+        </div>
+      </div>
+      <div class="state merged" style="grid-column:1/-1"><div class="sn"><span class="sw"></span>merged</div>
+        <div class="sd">종단 상태 — 유출 엣지 없음</div>
+      </div>
+    </div>
+  </div>
+  <div class="card tight">
+    <h3>인프라/회복 계층</h3>
+    <div class="lead-note">앱 기동(<code>lifespan</code>)에서 <code>start_*</code> 4개를 무조건 호출하지만, 실제로 항상 뜨는 데몬 스레드는 <b>스위퍼·notify 큐 2개</b>다. 폴러와 Socket Mode는 각자의 설정 게이트가 꺼져 있으면 <code>start_*</code>가 그대로 no-op으로 반환한다.</div>
+    <ul>
+      <li><b>타임아웃 스위퍼</b> — <code>merging</code>/<code>revising</code> 세션이 <code>*_since</code> 임계 초과 시 <code>manual</code>로 CAS 수렴 (60s 주기, 상시 기동)</li>
+      <li><b>notify 재시도 큐</b> — 선형 백오프(<code>30s × attempts</code>, 최대 5회)로 재시도하고 <code>event_log.send_state</code>(pending/sent/failed)로 추적 · 프로세스 재시작 시 <code>pending</code> 행을 다시 적재 (상시 기동). 단 <b>현재 사용처는 스위퍼의 manual 전환 통지 한 곳뿐</b>이며, 나머지 Slack 발송(최초 알림·버튼 회수·라운드 재알림)은 이 큐를 거치지 않고 직접 호출한다</li>
+      <li><b>GitLab 폴러</b> — 방화벽 차단 환경을 위한 <b>주 수집경로</b>로 구현된 옵트인 워커(<code>POLL_ENABLED</code>와 <code>POLL_PROJECT_IDS</code>가 모두 있어야 기동, 주기 기본 60s). opened MR 신규 감지·사람 push·외부 머지/닫힘·외부 닫힘 후 재오픈(<code>mr_reopened</code>)까지 모두 폴링으로 감지하고 동일한 ingest 핸들러로 분기</li>
+      <li><b>Slack Socket Mode</b> — 인바운드 HTTP가 막힌 환경의 아웃바운드 전용 WebSocket 폴백. <code>SLACK_SOCKET_MODE</code> + <code>SLACK_APP_TOKEN</code>이 있어야 연결하며, 스레드는 자체 루프가 아니라 <code>slack_sdk</code> 클라이언트가 관리한다 (HTTP 라우트와 동일한 <code>dispatch_interaction</code> 재사용)</li>
+    </ul>
+  </div>
+</section>
+<section class="report" id="ch">
+  <div class="sec-title"><span class="num">02</span><h2>변경된 부분</h2></div>
+  <p class="sec-lead">원래 설계 문서(<code>docs/mr-review-pipeline.html</code>)와 비교해, 구현 과정에서 의도적으로 바꾼 지점들이다. 대부분은 "외부 의존성·권한을 줄이고 인프라를 먼저 확정하자"는 방향의 결정이다.</p>
+  <div class="tbl-wrap">
+  <table class="r">
+    <thead><tr><th>항목</th><th>설계 원안</th><th>실제 구현</th><th>변경 배경</th></tr></thead>
+    <tbody>
+      <tr>
+        <td class="k">MR 수집 경로</td>
+        <td><span class="pill orig">설계</span>GitLab 웹훅 수신(<code>/webhooks/gitlab/mr</code>) — open/update/merge/close·push 이벤트</td>
+        <td><span class="pill now">구현</span>GitLab <b>폴링</b>(아웃바운드, API 주기 조회)을 주 경로로 추가. 웹훅 라우트는 그대로 등록돼 있고, 폴러는 <code>POLL_ENABLED</code> 게이트로 켜는 옵트인(코드 기본값 off)</td>
+        <td>호스트 인바운드가 방화벽으로 차단돼 웹훅 수신 불가 → 폴러로 전환. 두 레일은 같은 ingest 핸들러 공유</td>
+      </tr>
+      <tr>
+        <td class="k">리뷰 산출물</td>
+        <td><span class="pill orig">설계</span>claude가 <code>report.html</code> 생성 → Slack 스레드에 파일 다운로드 링크</td>
+        <td><span class="pill now">구현</span>AI 요약을 인라인 Slack 블록으로 직접 렌더</td>
+        <td>별도 파일 생성·Slack 파일 업로드 의존성 제거. 메시지 자체로 충분</td>
+      </tr>
+      <tr>
+        <td class="k">GitLab 라벨</td>
+        <td><span class="pill orig">설계</span>5-상태 라벨(<code>docs-review/revise/merging/approved/manual</code>) + <code>docs-revise-N</code> round 라벨 미러링</td>
+        <td><span class="pill now">구현</span>GitLab 노트로 결정·의견만 미러 (라벨 API 미사용)</td>
+        <td>봇의 라벨 권한·티어 의존성 제거. DB가 단일 원본</td>
+      </tr>
+      <tr>
+        <td class="k">Slack permalink</td>
+        <td><span class="pill orig">설계</span>Slack permalink를 MR 코멘트로 미러링</td>
+        <td><span class="pill now">구현</span>미구현 (결정 노트 미러로 대체)</td>
+        <td>추가 호출 대비 효용 낮아 보류</td>
+      </tr>
+      <tr>
+        <td class="k">AI 리뷰 성격</td>
+        <td><span class="pill orig">설계</span>문서 특화 등급(🔴주장변경/🟡보강/🟢표현만) + 확인질문 리스트</td>
+        <td><span class="pill now">구현</span>범용 코드 리뷰(<code>summary/key_changes/points_to_watch</code>)</td>
+        <td>인프라 우선. 문서 특화 분석은 고도화 영역으로 이월(§3)</td>
+      </tr>
+      <tr>
+        <td class="k">의견 모달</td>
+        <td><span class="pill orig">설계</span>확인질문 체크박스 + 자유 텍스트</td>
+        <td><span class="pill now">구현</span>자유 텍스트만 (<code>question_refs</code> 컬럼은 유지하되 항상 NULL)</td>
+        <td>확인질문 생성 기능 미구현. 컬럼은 복원 대비 보존</td>
+      </tr>
+      <tr>
+        <td class="k">재알림 방식</td>
+        <td><span class="pill orig">설계</span>기존 스레드 메시지 갱신</td>
+        <td><span class="pill now">구현</span>라운드마다 새 메시지(<code>chat.postMessage</code>) 발송 후 <code>slack_ts</code> 이동</td>
+        <td>리뷰어가 각 라운드를 별도로 추적·비교하기 쉽도록</td>
+      </tr>
+      <tr>
+        <td class="k">재알림 내용</td>
+        <td><span class="pill orig">설계</span>라운드 번호·SHA·미반영 의견</td>
+        <td><span class="pill now">구현</span>+ 변경 파일 통계 · AI 요약 · GitLab compare 링크 (추가)</td>
+        <td>승인 판단을 메시지만으로 가능하게 (실환경 검증 완료)</td>
+      </tr>
+      <tr>
+        <td class="k">manual→reviewing</td>
+        <td><span class="pill orig">설계</span>"미구현 백로그"로 표기</td>
+        <td><span class="pill now">구현</span>폴러가 외부 닫힘 후 재오픈 자동 복귀(<code>mr_reopened</code>) 구현</td>
+        <td>무한 재알림 방지 가드와 함께 안전하게 구현 가능했음</td>
+      </tr>
+    </tbody>
+  </table>
+  </div>
+  <div class="lead-note" style="margin-top:14px">이 표의 "변경 배경"은 어느 쪽이 맞다는 뜻이 아니라, 인프라 구축 단계에서 내린 취사선택이다. 문서 특화 영역(등급·확인질문·report.html)은 §3 고도화 항목에서 다시 다룬다.</div>
+</section>
+<section class="report" id="adv">
+  <div class="sec-title"><span class="num">03</span><h2>고도화 필요 부분</h2></div>
+  <p class="sec-lead">인프라(상태기계·CAS·머지·직렬화·회복 계층)를 먼저 확정하느라 AI 영역은 최소 동작으로 넘겼다. 아래는 실서비스 전에 다뤄야 할 항목이다.</p>
+  <div class="work-grid">
+    <div class="wcard">
+      <h3>AI 리뷰어 — 문서 특화 분석 <span class="tag">AI</span></h3>
+      <div class="where">app/ai_reviewer.py · review-prep [A]</div>
+      <p class="now">현재 <b>범용 코드 리뷰</b>(summary / key_changes / points_to_watch — "버그·부작용·테스트 누락" 관점)만 한다. 문서 MR 관점의 분석이 빠져 있다.</p>
+      <ul>
+        <li>문서별 변경 등급 판정 (주장 변경 / 보강 / 표현만) — 리뷰어가 어디를 깊이 볼지 가이드</li>
+        <li>확인질문 자동 생성 — 현재 모달 체크박스와 연결된 <code>question_refs</code>가 항상 NULL</li>
+        <li>변경 동인·서술 이동·독자 영향 분석 (설계가 묘사하던 리뷰 자료의 본질)</li>
+      </ul>
+    </div>
+    <div class="wcard">
+      <h3>AI 러너 — revise 체인 고도화 <span class="tag">AI</span></h3>
+      <div class="where">app/ai_runner.py · revise 러너 [B]</div>
+      <p class="now">현재 기본값이 <b>StubRunner</b>(파일 변경 0, 모든 의견 "AI 체인(P5) 미구현"으로 미반영). <code>AI_RUNNER=claude</code> 설정 시 <code>ClaudeCliRunner</code>(단일 CLI 호출)가 동작하지만, 설계가 묘사한 다단 체인은 아니다.</p>
+      <ul>
+        <li><b>기본 러너 전환</b> — 프로덕션에선 claude 러너가 기본이 되어야 revise가 실제로 일어남</li>
+        <li><b>3단 오케스트레이터 체인</b> — 메타프롬프팅(3a) → 재생성(3b) → 대조검증(3c) 서브에이전트 분리 미구현. 현재는 단일 호출 1회</li>
+        <li><b>자기 채점 방지</b> — 3c 검증을 fresh-context 서브에이전트로 분리(현재 없음)</li>
+        <li><b>원인 분류 재시도 라우팅</b> — 미반영 시 구현 누락→3b / 스펙 모호→3a 재투입 (라운드당 2회 한정). 현재 없음</li>
+        <li><b>cross-doc 정합성 워커</b> — 문서 경계를 넘는 의견 처리 분기 미구현</li>
+      </ul>
+    </div>
+    <div class="wcard" style="border-left-color:var(--mid)">
+      <h3>리뷰 산출물 — report.html + 스레드 파일 링크 <span class="tag" style="color:var(--mid);background:color-mix(in srgb,var(--mid) 12%,transparent);border-color:color-mix(in srgb,var(--mid) 25%,transparent)">설계 미구현</span></h3>
+      <div class="where">app/ai_reviewer.py · app/slack_client.py (ai_review_blocks · _revise_result_payload)</div>
+      <p class="now">설계 원안은 <b>claude가 <code>report.html</code>을 생성하고 Slack 스레드에 파일 다운로드 링크를 붙이는 것</b>이었다. 현재는 AI 요약을 <b>Slack 인라인 블록으로만</b> 렌더하며, 파일 업로드 API(<code>files.*</code>)도 스레드 회신(<code>thread_ts</code>)도 코드 어디에서도 호출하지 않는다 — 양쪽 다 미구현이다.</p>
+      <ul>
+        <li><b>길이 상한에 걸린다</b> — AI 요약 블록은 2900자에서 절단되고(Slack section 3000자 제한), 라운드 재알림은 요약 700자·diff stat 12줄/900자로 잘린다. MR이 클수록 근거가 사라진 요약만 남는다</li>
+        <li><b>산출물 생성 경로 부재</b> — review-prep [A]는 구조화 JSON(<code>summary/key_changes/points_to_watch</code>)만 반환한다. HTML 문서를 만드는 단계 자체가 없다</li>
+        <li><b>Slack 업로드 배선</b> — <code>files.getUploadURLExternal</code> → <code>files.completeUploadExternal</code> 2단계 호출과 <code>thread_ts</code> 스레드 회신을 새로 붙여야 한다. 봇에 <code>files:write</code> 스코프 추가 필요</li>
+        <li><b>보관·노출 정책</b> — 생성한 report.html을 어디에 얼마나 보관할지, 채널 밖으로 새지 않게 할지 결정 필요 (compare 링크에 적용한 자격증명 살균과 같은 급의 검토)</li>
+      </ul>
+    </div>
+    <div class="wcard" style="border-left-color:var(--warn)">
+      <h3>재발급 승인 버튼 — 실동작 결함 <span class="tag" style="color:var(--warn);background:var(--warn-soft);border-color:color-mix(in srgb,var(--warn) 25%,transparent)">BUG</span></h3>
+      <div class="where">app/ingest.py · _reissue_approve_button</div>
+      <p class="now">사람 push 후 <code>reviewing</code> 세션은 [승인] 버튼만 재발급하지만, 토큰에 <code>title/url/head_ref/...</code> 빈 문자열이 들어간다. 이 토큰은 <code>app/slack_dispatch.py</code>의 <code>_decode_mr</code>가 요구하는 "모든 필드 truthy" 검사에서 <b>거부돼 클릭해도 작동하지 않는다</b>. 코드 주석(RISKS)에도 "따라가야 할 단계"로 표기돼 있다 — 다만 그 주석이 가리키는 경로는 <code>app.slack_actions._decode_mr</code>로, dispatch 분리 이후 갱신되지 않았다.</p>
+      <ul>
+        <li>metadata 소스 확보 — GitLab API fetch로 title/url/branch 채우기, 또는 스키마 확장(head_ref 등 컬럼 추가)</li>
+      </ul>
+    </div>
+    <div class="wcard" style="border-left-color:var(--info)">
+      <h3>운영 튜닝·표현 보강 <span class="tag" style="color:var(--info);background:var(--info-soft);border-color:color-mix(in srgb,var(--info) 25%,transparent)">기타</span></h3>
+      <p class="now">동작에는 문제가 없으나, 실운영에서 마주칠 수 있는 후속 항목이다.</p>
+      <ul>
+        <li><b>하드코딩 상수의 config 노출</b> — <code>app/slack_dispatch.py</code>의 <code>ROUND_CAP=3</code>·<code>POLL_INTERVAL_SECONDS=3</code>·<code>POLL_MAX_ATTEMPTS=10</code>(머지 poll)이 config에 없이 코드에 고정. <code>app/config.py</code>로 이관하되, 폴러의 <code>POLL_INTERVAL</code>(60s)과 이름이 겹치므로 구분할 것</li>
+        <li><b>GitLab 라벨 미러링 복귀</b> — GitLab UI에서 상태·라운드를 보려면 라벨이 유용. 필요 시 라벨 권한 확보 후 재도입</li>
+        <li><b>HTML→PNG 스크린샷</b> — Slack 인라인 렌더용 (설계 v2 옵션)</li>
+      </ul>
+    </div>
+  </div>
+</section>
+<footer class="report-foot">
+  <span>SLACK MR REVIEW PIPELINE · DEV REPORT</span>
+  <span>REV 2026-08-13 · CODE-VERIFIED · INFRA STABLE / AI PENDING</span>
+</footer>
+</div>
+</body>
+</html>

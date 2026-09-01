@@ -3,15 +3,18 @@ import hmac
 import time
 
 
-def verify_github_signature(body: bytes, signature: str | None, secret: str) -> bool:
-    """Verify a GitHub webhook HMAC-SHA256 signature."""
+def verify_gitlab_token(token: str | None, secret: str) -> bool:
+    """Verify the secret token sent in GitLab's X-Gitlab-Token header.
 
-    if signature is None:
+    Fail-closed: an empty/missing secret never matches, even against an empty
+    token (``hmac.compare_digest("", "")`` is otherwise ``True``). Comparison
+    is done on bytes so a non-ASCII header cannot raise ``TypeError`` (which
+    ``hmac.compare_digest`` would otherwise do for non-ASCII ``str`` inputs).
+    """
+
+    if not secret or token is None:
         return False
-
-    digest = hmac.new(secret.encode("utf-8"), body, hashlib.sha256).hexdigest()
-    expected = f"sha256={digest}"
-    return hmac.compare_digest(expected, signature)
+    return hmac.compare_digest(token.encode("utf-8"), secret.encode("utf-8"))
 
 
 def verify_slack_signature(
@@ -22,9 +25,14 @@ def verify_slack_signature(
     *,
     now: int | None = None,
 ) -> bool:
-    """Verify a Slack request signature and reject replayed requests."""
+    """Verify a Slack request signature and reject replayed requests.
 
-    if timestamp is None or signature is None:
+    Fail-closed on an empty/missing secret (see ``verify_gitlab_token``), and
+    compares the signature as bytes to avoid the same non-ASCII ``TypeError``
+    surface.
+    """
+
+    if not secret or timestamp is None or signature is None:
         return False
 
     try:
@@ -38,4 +46,5 @@ def verify_slack_signature(
 
     base = b"v0:" + timestamp.encode("utf-8") + b":" + body
     digest = hmac.new(secret.encode("utf-8"), base, hashlib.sha256).hexdigest()
-    return hmac.compare_digest(f"v0={digest}", signature)
+    expected = f"v0={digest}"
+    return hmac.compare_digest(expected.encode("utf-8"), signature.encode("utf-8"))
