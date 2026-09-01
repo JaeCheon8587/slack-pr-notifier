@@ -113,6 +113,16 @@ class Settings(BaseSettings):
     # for the executable path — no separate setting needed.
     ai_runner: str = "stub"
 
+    # mrdoc pipeline (app/mrdoc/ — deterministic doc-MR review, Phase 1):
+    # disabled until the satellite agents land; doc_ratio routes an MR into
+    # the mrdoc pipeline when >=80% of changed files are md/mdx.
+    mrdoc_enabled: bool = False
+    mrdoc_doc_ratio_threshold: float = 0.8
+    mrdoc_satellite_model: str = "claude-sonnet-4-5"
+    mrdoc_satellite_budget_usd: float = 1.0
+    mrdoc_max_files: int = 40
+    mrdoc_fanout: int = 5
+
     # Review report delivery (app/report_html.py, app/ingest.py): render the
     # AI review + MR diffs into a standalone HTML file, archive it under
     # report_html_dir, and upload it to the Slack notification's thread via
