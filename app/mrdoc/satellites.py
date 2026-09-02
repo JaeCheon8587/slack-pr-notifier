@@ -1,12 +1,13 @@
-"""LLM satellites — headless claude CLI missions for the three agent nodes.
+"""LLM satellites — headless Codex CLI missions for the three agent nodes.
 
 Delegation contract borrowed from opus-orchestrator: the orchestrator
 judges, satellites only read and write. Each mission is a self-contained
 spec — a role system prompt with HARD LIMITS, absolute READ paths, a BUDGET
 line, and exactly one RETURN artifact — executed as a single headless
-'claude -p' call with only the Read/Write tools. The executor never trusts
-a satellite's word: success means the declared artifact exists on disk
-afterwards; anything else is a False back to the wave loop's abort contract.
+'codex exec' call under the workspace-write sandbox. The executor never
+trusts a satellite's word: success means the declared artifact exists on
+disk afterwards; anything else is a False back to the wave loop's abort
+contract.
 """
 
 from __future__ import annotations
@@ -337,9 +338,9 @@ def satellite_executor(
         if builder is None:
             logger.warning("mrdoc satellite: unknown agent %r", mission.agent)
             return False
-        claude_bin = settings.claude_bin or shutil.which("claude")
-        if not claude_bin:
-            logger.warning("mrdoc satellite: claude CLI not found on PATH")
+        codex_bin = settings.codex_bin or shutil.which("codex")
+        if not codex_bin:
+            logger.warning("mrdoc satellite: codex CLI not found on PATH")
             return False
         try:
             system_prompt, prompt, expected = builder(mission, work_dir)
@@ -351,25 +352,21 @@ def satellite_executor(
             )
             return False
         cmd = [
-            claude_bin,
-            "-p",
-            "--model",
-            settings.mrdoc_satellite_model,
-            "--effort",
-            _EFFORT[mission.agent],
-            "--max-budget-usd",
-            str(mission.budget_usd),
-            "--tools",
-            "Read,Write",
-            "--permission-mode",
-            "acceptEdits",
-            "--disable-slash-commands",
-            "--no-session-persistence",
-            "--output-format",
-            "json",
-            "--system-prompt",
-            system_prompt,
+            codex_bin,
+            "exec",
+            "--skip-git-repo-check",
+            "--ephemeral",
+            "--sandbox",
+            "workspace-write",
+            "--cd",
+            str(work_dir),
+            "-c",
+            'model_reasoning_effort="' + _EFFORT[mission.agent] + '"',
         ]
+        if settings.mrdoc_satellite_model:
+            cmd += ["--model", settings.mrdoc_satellite_model]
+        cmd += ["-"]
+        prompt_text = system_prompt + "\n\n---\n\n" + prompt
         env = {
             key: value
             for key, value in _process_env().items()
@@ -379,7 +376,7 @@ def satellite_executor(
         try:
             proc = subprocess.run(
                 cmd,
-                input=prompt,
+                input=prompt_text,
                 capture_output=True,
                 text=True,
                 encoding="utf-8",
@@ -402,7 +399,7 @@ def satellite_executor(
         if proc.returncode != 0:
             detail = (proc.stderr or proc.stdout or "no error output")[:500]
             logger.warning(
-                "mrdoc satellite(%s): claude exited %s: %s",
+                "mrdoc satellite(%s): codex exited %s: %s",
                 mission.agent,
                 proc.returncode,
                 detail,

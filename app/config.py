@@ -105,6 +105,7 @@ class Settings(BaseSettings):
     ai_timeout_seconds: int = 180
     ai_max_budget_usd: float = 1.0
     claude_bin: str | None = None  # override the `claude` executable path; None → PATH lookup
+    codex_bin: str | None = None  # override the `codex` executable path; None → PATH lookup
 
     # P5 revise runner selection (app/ai_runner.py, app/revise_executor.py):
     # "stub" (default — no file changes, every opinion deferred) or "claude"
@@ -118,7 +119,7 @@ class Settings(BaseSettings):
     # the mrdoc pipeline when >=80% of changed files are md/mdx.
     mrdoc_enabled: bool = False
     mrdoc_doc_ratio_threshold: float = 0.8
-    mrdoc_satellite_model: str = "claude-sonnet-4-5"
+    mrdoc_satellite_model: str = ""  # empty → the Codex CLI default model
     mrdoc_satellite_budget_usd: float = 1.0
     mrdoc_satellite_enabled: bool = False
     mrdoc_satellite_timeout_seconds: int = 600

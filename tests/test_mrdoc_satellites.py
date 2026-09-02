@@ -50,7 +50,7 @@ def _proc(returncode: int = 0) -> SimpleNamespace:
 
 
 def _fake_run_writer(monkeypatch, env_capture: dict | None = None):
-    """Fake claude run that writes every '[산출 위치]' target and file_id."""
+    """Fake codex run that writes every '[산출 위치]' target and file_id."""
 
     def fake_run(cmd, **kwargs):
         if env_capture is not None:
@@ -75,7 +75,7 @@ def _fake_run_writer(monkeypatch, env_capture: dict | None = None):
 
 def _settings(monkeypatch, work: Path):
     settings = get_settings()
-    monkeypatch.setattr(settings, "claude_bin", "claude")
+    monkeypatch.setattr(settings, "codex_bin", "codex")
     monkeypatch.setattr(
         satellites, "_process_env", lambda: {"PATH": "p", "ANTHROPIC_API_KEY": "k"}
     )
@@ -107,9 +107,10 @@ def test_executor_verifier_success(tmp_path, monkeypatch) -> None:
     assert executor(_spec("verifier", tmp_path / "40-verifier.md")) is True
     assert (tmp_path / "40-verifier.md").read_text(encoding="utf-8") == "written by fake"
     cmd = captured["cmd"]
-    assert cmd[0] == "claude"
-    assert "Read,Write" in cmd
-    assert "--no-session-persistence" in cmd
+    assert cmd[0] == "codex"
+    assert cmd[1] == "exec"
+    assert "workspace-write" in cmd
+    assert "--ephemeral" in cmd
 
 
 def test_executor_analyzer_writes_batch_files(tmp_path, monkeypatch) -> None:
