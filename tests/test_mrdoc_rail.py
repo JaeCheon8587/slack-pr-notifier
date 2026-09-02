@@ -91,3 +91,21 @@ def test_summarize_extracts_frontmatter_counts(tmp_path: Path) -> None:
     assert "MR !17" in summary
     assert "exit=4" in summary
     assert "counts: files=2, md=1, non_md=1, skipped=False" in summary
+
+
+def test_uploadable_report_rejects_stub_output(tmp_path: Path) -> None:
+    (tmp_path / "report.html").write_text(
+        "<html>RAIL-STUB placeholder</html>", encoding="utf-8"
+    )
+    assert rail._uploadable_report(tmp_path) is None
+
+
+def test_uploadable_report_returns_real_content(tmp_path: Path) -> None:
+    (tmp_path / "report.html").write_text(
+        "<html>real review content</html>", encoding="utf-8"
+    )
+    assert rail._uploadable_report(tmp_path) == "<html>real review content</html>"
+
+
+def test_uploadable_report_missing_file(tmp_path: Path) -> None:
+    assert rail._uploadable_report(tmp_path) is None

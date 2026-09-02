@@ -240,19 +240,32 @@ async def _post_summary(
     except Exception:
         logger.exception("mrdoc rail: summary post failed for !%s", mr_iid)
         return
-    report = artifact_paths(directory)["render"]
-    if not report.exists():
+    html = _uploadable_report(directory)
+    if html is None:
         return
     try:
         await client.upload_report_file(
             str(channel),
             str(thread_ts),
             "mrdoc-report.html",
-            report.read_text(encoding="utf-8"),
+            html,
             initial_comment="📄 mrdoc 리포트 (report.html)",
         )
     except Exception:
         logger.exception("mrdoc rail: report upload failed for !%s", mr_iid)
+
+
+def _uploadable_report(directory: Path) -> str | None:
+    """report.html content when worth uploading -- None when missing or stub."""
+
+    report = artifact_paths(directory)["render"]
+    if not report.exists():
+        return None
+    html = report.read_text(encoding="utf-8")
+    if "RAIL-STUB placeholder" in html:
+        logger.info("mrdoc rail: report is stub output -- upload skipped")
+        return None
+    return html
 
 
 async def _fetch_md_tree(
