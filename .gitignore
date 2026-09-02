@@ -16,5 +16,7 @@ htmlcov/
 pytest_out*.txt
 workspaces/
 reports/
+.mrdoc-ws/
+.pytest-tmp/
 .orchestration/
 _e2e_reset.py

@@ -47,6 +47,7 @@ from app.action_token import create_action_token
 from app.ai_reviewer import MRReview, review_merge_request
 from app.config import Settings, secret_value
 from app.gitlab_client import GitLabClient
+from app.mrdoc import rail as mrdoc_rail
 from app.report_html import render_review_report
 from app.slack_client import SlackClient
 from app.state_machine import (
@@ -239,6 +240,10 @@ async def handle_mr_open(
         # itself is already final here.
         if review is not None:
             await _deliver_review_report(settings, mr, review, context, posted, session_id)
+        # mrdoc rail (Phase 1): md-dominant MRs get the deterministic doc
+        # pipeline in a background thread -- gated and fire-and-forget inside
+        # start_mrdoc_review, so this can never slow the event handler down.
+        mrdoc_rail.start_mrdoc_review(settings, mr, posted, context=context)
     return result
 
 
@@ -268,13 +273,17 @@ async def _notify_empty_reviewer_mapping(
         return
     try:
         client = SlackClient(secret_value(settings.slack_bot_token))
-        text = _EMPTY_REVIEWER_MAPPING_WARNING.format(iid=mr.get("iid"), repo=repo_slug or mr.get("project_id"))
+        text = _EMPTY_REVIEWER_MAPPING_WARNING.format(
+            iid=mr.get("iid"), repo=repo_slug or mr.get("project_id")
+        )
         await client.call("chat.postMessage", {"channel": settings.slack_channel_id, "text": text})
     except Exception:
         logger.exception("Empty reviewer-mapping channel warning failed (session=%s)", session_id)
 
 
-def _save_slack_coordinates(conn: sqlite3.Connection, session_id: int, result: dict[str, Any]) -> None:
+def _save_slack_coordinates(
+    conn: sqlite3.Connection, session_id: int, result: dict[str, Any]
+) -> None:
     channel = result.get("channel") if isinstance(result, dict) else None
     message_ts = result.get("ts") if isinstance(result, dict) else None
     if not channel or not message_ts:
@@ -417,7 +426,9 @@ async def handle_human_push(
         return {"action": "reviewing_sha_updated"}
 
     if current_status == REVISING:
-        accepted = cas_transition(conn, session["id"], REVISING, MANUAL, reason="human_push", detail=source)
+        accepted = cas_transition(
+            conn, session["id"], REVISING, MANUAL, reason="human_push", detail=source
+        )
         if accepted:
             await _withdraw_slack_buttons_for_session(
                 settings, session, "사람 push 감지 — 자동 revise 중단(수동 확인 필요)"
@@ -437,7 +448,9 @@ async def handle_human_push(
     return {"ignored": True, "reason": f"status={current_status}"}
 
 
-async def _reissue_approve_button(settings: Settings, session: sqlite3.Row, sha: str | None) -> None:
+async def _reissue_approve_button(
+    settings: Settings, session: sqlite3.Row, sha: str | None
+) -> None:
     """Reissue the message with the [승인] button only, keyed to the new SHA.
 
     NOTE (RISKS): a push webhook carries no MR title/url/branches/author, and
@@ -458,7 +471,9 @@ async def _reissue_approve_button(settings: Settings, session: sqlite3.Row, sha:
     channel = session["slack_channel"]
     message_ts = session["slack_ts"]
     if not channel or not message_ts:
-        logger.warning("Slack button reissue skipped: session %s has no Slack message", session["id"])
+        logger.warning(
+            "Slack button reissue skipped: session %s has no Slack message", session["id"]
+        )
         return
     try:
         mr = _mr_from_session(session, sha)
@@ -504,7 +519,10 @@ async def _withdraw_slack_buttons_for_session(
     channel = session["slack_channel"]
     message_ts = session["slack_ts"]
     if not channel or not message_ts:
-        logger.warning("Slack button withdrawal skipped: session %s has no Slack message", session["id"])
+        logger.warning(
+            "Slack button withdrawal skipped: session %s has no Slack message",
+            session["id"],
+        )
         return
     try:
         summary = f"!{session['mr_iid']} ({session['repo_slug'] or session['project_id']})"
@@ -563,7 +581,8 @@ async def handle_external_close(
         # Already resolved (e.g. raced with an approve click, or terminal state) —
         # per §③ 651, whichever transition landed first wins; this is a no-op.
         logger.info(
-            "External transition skipped (invalid/already resolved): session=%s %s->%s reason=%s source=%s",
+            "External transition skipped (invalid/already resolved): "
+            "session=%s %s->%s reason=%s source=%s",
             session["id"],
             from_status,
             to_status,
@@ -572,7 +591,9 @@ async def handle_external_close(
         )
         return {"transitioned": False}
 
-    accepted = cas_transition(conn, session["id"], from_status, to_status, reason=reason, detail=source)
+    accepted = cas_transition(
+        conn, session["id"], from_status, to_status, reason=reason, detail=source
+    )
     if accepted:
         await _withdraw_slack_buttons(settings, session, mr_iid, title, header_text)
     return {"transitioned": accepted}
@@ -586,7 +607,10 @@ async def _withdraw_slack_buttons(
     channel = session["slack_channel"]
     message_ts = session["slack_ts"]
     if not channel or not message_ts:
-        logger.warning("Slack button withdrawal skipped: session %s has no Slack message", session["id"])
+        logger.warning(
+            "Slack button withdrawal skipped: session %s has no Slack message",
+            session["id"],
+        )
         return
     try:
         summary = f"!{mr_iid} {title or ''}".strip()
