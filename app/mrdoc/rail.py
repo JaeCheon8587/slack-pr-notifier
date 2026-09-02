@@ -1,12 +1,15 @@
-"""mrdoc rail -- MR-open event wired to the Phase 1 doc pipeline.
+"""mrdoc rail -- MR-open event wired to the doc-review pipeline.
 
 app/ingest.handle_mr_open's non-blocking follow-up: once the normal Slack
 notification is posted, an MR whose changes are md-dominant
-(mrdoc_doc_ratio_threshold, default 0.8) gets the deterministic Phase 1
-pipeline run against it in a daemon thread. Trees are fetched through the
-GitLab API -- this host has no clone of the company GitLab -- artifacts land
-under .mrdoc-ws/.work/<iid>-<sha8>, and a summary plus report.html are
-replied into the original notification's thread.
+(mrdoc_doc_ratio_threshold, default 0.8) gets the full pipeline run against
+it in a daemon thread: the deterministic tool chain in-process plus the
+three LLM satellites (analyzer/verifier/reporter) as headless claude calls.
+Trees are fetched through the GitLab API -- this host has no clone of the
+company GitLab -- materialized to base/ and snapshot/ so satellites can
+Read the sources, artifacts land under .mrdoc-ws/.work/<iid>-<sha8>, and a
+summary plus report.html are replied into the original notification's
+thread.
 
 Everything here is fire-and-forget: the thread must never block the event
 handler (tree fetches alone can take minutes), and every failure is logged
@@ -28,6 +31,7 @@ from app.config import Settings, secret_value
 from app.gitlab_client import GitLabClient
 from app.slack_client import SlackClient
 
+from . import satellites
 from .frontmatter import parse_frontmatter
 from .orchestrator import PipelineInputs, run_to_completion
 from .workspace import artifact_paths, work_dir
@@ -76,6 +80,12 @@ def start_mrdoc_review(
     """
 
     if not settings.mrdoc_enabled:
+        return None
+    if not settings.mrdoc_satellite_enabled:
+        logger.info(
+            "mrdoc rail: !%s skipped -- mrdoc_satellite_enabled is false",
+            mr.get("iid"),
+        )
         return None
     if context is not None and not passes_gate(settings, context.get("files")):
         logger.info(
@@ -157,6 +167,7 @@ async def _run_review(
     )
 
     directory = work_dir(_WORKSPACE_ROOT, mr_iid, head_sha)
+    _materialize_trees(directory, base_tree, head_tree)
     inputs = PipelineInputs(
         mr_iid=mr_iid,
         project_id=project_id,
@@ -166,6 +177,7 @@ async def _run_review(
         raw_files=files,
         base_tree=base_tree,
         head_tree=head_tree,
+        diff_url=str(detail.get("web_url") or ""),
         skipped=(
             bool(context.get("files_truncated"))
             if isinstance(context, dict)
@@ -175,7 +187,7 @@ async def _run_review(
     code = run_to_completion(
         inputs,
         directory,
-        _stub_agent,
+        satellites.satellite_executor(settings, directory),
         fanout=settings.mrdoc_fanout,
         budget_usd=settings.mrdoc_satellite_budget_usd,
     )
@@ -214,6 +226,25 @@ def _summarize(directory: Path, exit_code: int, mr_iid: Any) -> str:
             lines.append(key + ": " + rendered)
     lines.append("산출물: " + str(directory))
     return "\n".join(lines)
+
+
+def _materialize_trees(
+    directory: Path, base_tree: dict[str, str], head_tree: dict[str, str]
+) -> None:
+    """Write base/ and snapshot/ so the satellites can Read source files.
+
+    Idempotent per push directory — the fetch already paid for the blobs,
+    and a satellite re-run (same head sha) must not rewrite them mid-read.
+    """
+
+    for name, tree in (("base", base_tree), ("snapshot", head_tree)):
+        root = directory / name
+        if root.exists():
+            continue
+        for rel, text in tree.items():
+            target = root / rel
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(text, encoding="utf-8")
 
 
 async def _post_summary(
@@ -320,28 +351,3 @@ async def _fetch_md_tree(
             response.raise_for_status()
             contents[path] = response.text
     return contents
-
-
-def _stub_agent(spec: str) -> bool:
-    """Phase 1 placeholder executor -- real satellites land in Phase 2.
-
-    Parses the SPEC block minimally (agent name, RETURN path, SCOPE files)
-    and writes a placeholder artifact at the declared return path so the
-    wave loop runs end-to-end on real MR data.
-    """
-
-    lines = spec.splitlines()
-    agent = lines[1].split()[1]
-    target = Path(lines[4].split(" ", 1)[1])
-    if agent == "analyzer":
-        target.mkdir(parents=True, exist_ok=True)
-        scope = next(line for line in lines if line.startswith("SCOPE "))
-        start_text, end_text = scope.split()[2].split("..")
-        for index in range(int(start_text), int(end_text) + 1):
-            (target / (str(index) + ".md")).write_text(
-                "RAIL-STUB placeholder\n", encoding="utf-8"
-            )
-    else:
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text("RAIL-STUB placeholder\n", encoding="utf-8")
-    return True

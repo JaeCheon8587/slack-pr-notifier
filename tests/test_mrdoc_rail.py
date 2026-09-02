@@ -44,6 +44,7 @@ def test_passes_gate_disabled_setting(monkeypatch) -> None:
 def test_start_returns_none_when_gate_fails(monkeypatch) -> None:
     settings = get_settings()
     monkeypatch.setattr(settings, "mrdoc_enabled", True)
+    monkeypatch.setattr(settings, "mrdoc_satellite_enabled", True)
     monkeypatch.setattr(settings, "mrdoc_doc_ratio_threshold", 0.8)
     context = {"files": _files("a.md", "b.py")}
     result = rail.start_mrdoc_review(
@@ -55,6 +56,7 @@ def test_start_returns_none_when_gate_fails(monkeypatch) -> None:
 def test_start_launches_thread_when_gate_passes(monkeypatch) -> None:
     settings = get_settings()
     monkeypatch.setattr(settings, "mrdoc_enabled", True)
+    monkeypatch.setattr(settings, "mrdoc_satellite_enabled", True)
     launched: list[Any] = []
     monkeypatch.setattr(rail, "_run_thread", lambda *args: launched.append(args))
     context = {"files": _files("a.md")}
@@ -69,6 +71,7 @@ def test_start_launches_thread_when_gate_passes(monkeypatch) -> None:
 def test_start_without_context_defers_gate_to_thread(monkeypatch) -> None:
     settings = get_settings()
     monkeypatch.setattr(settings, "mrdoc_enabled", True)
+    monkeypatch.setattr(settings, "mrdoc_satellite_enabled", True)
     launched: list[Any] = []
     monkeypatch.setattr(rail, "_run_thread", lambda *args: launched.append(args))
     thread = rail.start_mrdoc_review(
@@ -77,6 +80,20 @@ def test_start_without_context_defers_gate_to_thread(monkeypatch) -> None:
     assert thread is not None
     thread.join(timeout=5)
     assert len(launched) == 1
+
+
+def test_start_returns_none_when_satellites_disabled(monkeypatch) -> None:
+    settings = get_settings()
+    monkeypatch.setattr(settings, "mrdoc_enabled", True)
+    monkeypatch.setattr(settings, "mrdoc_satellite_enabled", False)
+    launched: list[Any] = []
+    monkeypatch.setattr(rail, "_run_thread", lambda *args: launched.append(args))
+    thread = rail.start_mrdoc_review(
+        settings, {"iid": 1, "project_id": 10}, {"channel": "C", "ts": "1"},
+        context={"files": _files("a.md")},
+    )
+    assert thread is None
+    assert launched == []
 
 
 def test_summarize_extracts_frontmatter_counts(tmp_path: Path) -> None:

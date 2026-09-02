@@ -120,6 +120,8 @@ class Settings(BaseSettings):
     mrdoc_doc_ratio_threshold: float = 0.8
     mrdoc_satellite_model: str = "claude-sonnet-4-5"
     mrdoc_satellite_budget_usd: float = 1.0
+    mrdoc_satellite_enabled: bool = False
+    mrdoc_satellite_timeout_seconds: int = 600
     mrdoc_max_files: int = 40
     mrdoc_fanout: int = 5
 

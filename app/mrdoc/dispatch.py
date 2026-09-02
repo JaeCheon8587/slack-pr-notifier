@@ -125,7 +125,10 @@ def next_specs(
     Tool specs (structure/literals) mirror the design's SPEC tool block:
     contract text the orchestrator satisfies in-process before any satellite
     runs. The changeset is exempt — it materializes from the caller's
-    PipelineInputs, not from the work directory.
+    PipelineInputs, not from the work directory. levelcheck/collect/render
+    are deterministic tool nodes too — they never get a spec, the
+    orchestrator runs them in-process at the end of the wave their
+    dependencies completed in.
     """
 
     paths = artifact_paths(work_dir)
@@ -166,17 +169,28 @@ def next_specs(
                         scope=f"files {start}..{min(start + fanout, expected) - 1}",
                     )
                 )
-        else:
+        elif node == "verifier":
             specs.append(
                 SpecBlock(
                     wave=wave,
-                    agent=node,
+                    agent="verifier",
                     read=(
+                        paths["levelcheck"],
                         paths["changeset"],
                         paths["structure"],
                         paths["literals"],
                         paths["analysis_dir"],
                     ),
+                    budget_usd=budget_usd,
+                    return_path=paths[node],
+                )
+            )
+        elif node == "reporter":
+            specs.append(
+                SpecBlock(
+                    wave=wave,
+                    agent="reporter",
+                    read=(paths["collect"], paths["levelcheck"], paths["analysis_dir"]),
                     budget_usd=budget_usd,
                     return_path=paths[node],
                 )

@@ -17,8 +17,12 @@ from pathlib import Path
 from typing import Any
 
 from . import dispatch
+from .analysis import load_analyses_split
 from .changeset import build_changeset, parse_changeset, render_changeset
-from .literals import build_literals, render_literals
+from .collect import build_collect, parse_collect, render_collect
+from .levelcheck import build_levelcheck, parse_levelcheck, render_levelcheck
+from .literals import build_literals, parse_literals, render_literals
+from .report_render import render_report_html
 from .structure import build_structure, parse_structure, render_structure
 from .workspace import artifact_paths
 
@@ -37,6 +41,7 @@ class PipelineInputs:
     raw_files: list[dict[str, Any]]
     base_tree: dict[str, str]
     head_tree: dict[str, str]
+    diff_url: str = ""
     skipped: bool = False
 
 
@@ -47,14 +52,12 @@ def _append_ledger(work_dir: Path, lines: list[str]) -> None:
             handle.write(line + "\n")
 
 
-def _run_tool_nodes(inputs: PipelineInputs, work_dir: Path) -> list[str]:
-    """Execute pending deterministic nodes; return ledger lines."""
+def _run_tool_node(
+    node: str, inputs: PipelineInputs, work_dir: Path, paths: dict[str, Path]
+) -> None:
+    """Execute one deterministic node — assumes its deps are all done."""
 
-    paths = artifact_paths(work_dir)
-    state = dispatch.derive_state(work_dir)
-    done: list[str] = []
-
-    if state["changeset"] == "pending":
+    if node == "changeset":
         changeset = build_changeset(
             mr_iid=inputs.mr_iid,
             project_id=inputs.project_id,
@@ -68,25 +71,81 @@ def _run_tool_nodes(inputs: PipelineInputs, work_dir: Path) -> list[str]:
         (work_dir / ".analysis-expected").write_text(
             str(len(changeset.files)), encoding="utf-8"
         )
-        done.append("changeset done")
-        state = dispatch.derive_state(work_dir)
-
-    if state["structure"] == "pending":
+    elif node == "structure":
         changeset = parse_changeset(paths["changeset"].read_text(encoding="utf-8"))
         structure = build_structure(inputs.base_tree, inputs.head_tree, changeset)
         paths["structure"].write_text(render_structure(structure), encoding="utf-8")
-        done.append("structure done")
-        state = dispatch.derive_state(work_dir)
-
-    if state["literals"] == "pending":
+    elif node == "literals":
         changeset = parse_changeset(paths["changeset"].read_text(encoding="utf-8"))
         structure = parse_structure(paths["structure"].read_text(encoding="utf-8"))
         literals = build_literals(
             structure, changeset, inputs.base_tree, inputs.head_tree
         )
         paths["literals"].write_text(render_literals(literals), encoding="utf-8")
-        done.append("literals done")
-    return done
+    elif node == "levelcheck":
+        analyses, _failed = load_analyses_split(paths["analysis_dir"])
+        literals = parse_literals(paths["literals"].read_text(encoding="utf-8"))
+        levelcheck = build_levelcheck(inputs.mr_iid, literals, analyses)
+        paths["levelcheck"].write_text(render_levelcheck(levelcheck), encoding="utf-8")
+    elif node == "collect":
+        analyses, failed = load_analyses_split(paths["analysis_dir"])
+        literals = parse_literals(paths["literals"].read_text(encoding="utf-8"))
+        levelcheck = parse_levelcheck(paths["levelcheck"].read_text(encoding="utf-8"))
+        structure = parse_structure(paths["structure"].read_text(encoding="utf-8"))
+        changeset = parse_changeset(paths["changeset"].read_text(encoding="utf-8"))
+        collect = build_collect(
+            mr_iid=inputs.mr_iid,
+            analyses=analyses,
+            failed_files=failed,
+            levelcheck=levelcheck,
+            literals=literals,
+            structure=structure,
+            changeset=changeset,
+            verifier_text=paths["verifier"].read_text(encoding="utf-8"),
+            base_tree=inputs.base_tree,
+            head_tree=inputs.head_tree,
+        )
+        paths["collect"].write_text(render_collect(collect), encoding="utf-8")
+    elif node == "render":
+        collect = parse_collect(paths["collect"].read_text(encoding="utf-8"))
+        page = render_report_html(
+            collect,
+            paths["reporter"].read_text(encoding="utf-8"),
+            mr_iid=inputs.mr_iid,
+            diff_url=inputs.diff_url,
+        )
+        paths["render"].write_text(page, encoding="utf-8")
+    else:  # pragma: no cover — _TOOL_NODES is closed
+        raise ValueError(f"unknown tool node: {node}")
+
+
+_TOOL_NODES = ("changeset", "structure", "literals", "levelcheck", "collect", "render")
+
+
+def _run_tool_nodes(inputs: PipelineInputs, work_dir: Path) -> list[str]:
+    """Execute pending deterministic nodes; return ledger lines.
+
+    Runs at both ends of every wave: the changeset chain first (so agents
+    always execute with structure/literals materialized), then — after the
+    satellite specs for the wave ran — the levelcheck/collect/render nodes
+    whose dependencies the satellites just produced. Nodes only run when
+    dispatch's DAG says their deps are done, so a lying agent that claims
+    success without writing anything leaves the wave with no progress —
+    the loop's no-progress abort, not a crash on a missing artifact.
+    """
+
+    paths = artifact_paths(work_dir)
+    done: list[str] = []
+    while True:
+        state = dispatch.derive_state(work_dir)
+        runnable = [
+            node for node in dispatch.runnable_nodes(state) if node in _TOOL_NODES
+        ]
+        if not runnable:
+            return done
+        node = runnable[0]
+        _run_tool_node(node, inputs, work_dir, paths)
+        done.append(node + " done")
 
 
 def run_wave(
@@ -113,6 +172,7 @@ def run_wave(
             if not agent_executor(spec.render()):
                 raise RuntimeError(f"agent failed: {spec.agent}")
             ledger.append(f"{spec.agent} done ({spec.return_path.name})")
+        ledger.extend(_run_tool_nodes(inputs, work_dir))
     except Exception as error:  # noqa: BLE001 — abort contract covers all
         ledger.append(f"abort: {error}")
         _append_ledger(work_dir, ledger)
