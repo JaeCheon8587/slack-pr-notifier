@@ -184,6 +184,9 @@ _ANALYZER_WRITING = (
     "들어갔는지, 기존 내용과 어떤 관계인지(보충·대체·신규 주제)를 쓴다.\n"
     "- REMOVED 유닛은 삭제된 내용이 무엇을 다루었는지를 쓰고, "
     "대체하는 추가 유닛이 있으면 연결해 쓰며 없으면 순삭제라고 적는다.\n"
+    "- 발췌에는 보이지만 06-literals.md 에 대응 원자가 없는 변경도 서술에서 "
+    "빠뜨리지 않고 리턴 UNCERTAIN 에 한 줄 밝힌다 — 인벤토리와 어긋나는 "
+    "흔적을 남겨야 verifier 가 잡는다.\n"
     "- 바뀐 줄을 빠뜨리면 doc-verifier 가 omitted 로 잡는다.\n"
     "- 원문을 설명에 통째로 옮기지 않는다 — 원문은 07-excerpts.md 가 든다."
 )
@@ -224,7 +227,9 @@ _VERIFIER_SYSTEM = (
     "집계와 모순되면 COUNTS 블록에 mismatch 로 남기고 "
     "FIX(field: FILE_SUMMARY, reason: counts_mismatch) 를 쓴다. "
     "존재 모순만 mismatch 다 — 'n곳' 과 'n항목' 은 단위가 다를 뿐이므로 "
-    "숫자 차이만으로 불일치로 삼지 않는다."
+    "숫자 차이만으로 불일치로 삼지 않는다. 설명이나 FILE_SUMMARY 가 명시적으로 "
+    "서술한 변경에 대응하는 원자가 인벤토리에 없으면 그것도 존재 모순이다 — "
+    "COUNTS 에 mismatch 로 남긴다."
 )
 
 #: Same rule as the analyzer: the template is rendered by the parser's own

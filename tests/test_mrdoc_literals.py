@@ -88,6 +88,53 @@ def test_rewritten_words_with_identical_literals_are_textual() -> None:
     )
 
 
+def test_mixed_run_keeps_textual_atom_next_to_value_change() -> None:
+    """값 변경과 표현 변경이 한 run 에 묶여도 표현 원자는 소실되지 않는다.
+
+    빈 줄 삭제로 두 변경이 인접해 하나의 replace run 이 되면, 런 전체의
+    리터럴 집합은 다르다 — 예전엔 run 을 통째로 건너뛰어 '신뢰도 → 신뢰성'
+    이 사라졌다. 값은 런 단위 diff 가, 표현은 같은 집합의 줄짝이 가져간다.
+    """
+
+    literals = _pipeline(
+        "# 설치\n"
+        "winget install --id Python.Python.3.11 -e\n"
+        "\n"
+        "문서의 신뢰도를 높인다\n",
+        "# 설치\n"
+        "winget install --id Python.Python.3.12 -e\n"
+        "문서의 신뢰성을 높인다\n",
+    )
+    unit = literals.units[0]
+    changed = {(c.key, c.from_value, c.to_value) for c in unit.changed}
+    assert ("Python.Python", "3.11", "3.12") in changed
+    assert unit.textual == (("문서의 신뢰도를 높인다", "문서의 신뢰성을 높인다"),)
+
+
+def test_unchanged_duplicate_value_elsewhere_keeps_change_paired() -> None:
+    """같은 키의 변하지 않은 값이 섹션에 또 있어도 짝이 added 로 새지 않는다.
+
+    다이어그램 표기의 '2회' 는 equal 줄이라 원자 후보가 못 된다. 예전의
+    섹션 전체 diff 는 이 값이 재시도 줄의 '2회 → 3회' 짝을 삼켜 added[3]
+    을 만들었다 — 값 diff 는 이제 replace run 단위로 묶인다.
+    """
+
+    literals = _pipeline(
+        "# 흐름\n"
+        "| 다이어그램 | 흐름을 2회 반복 표기 |\n"
+        "\n"
+        "검증 실패 시 재호출 최대 2회\n",
+        "# 흐름\n"
+        "| 다이어그램 | 흐름을 2회 반복 표기 |\n"
+        "\n"
+        "검증 실패 시 재호출 최대 3회\n",
+    )
+    unit = literals.units[0]
+    changed = {(c.key, c.from_value, c.to_value) for c in unit.changed}
+    assert ("회", "2", "3") in changed
+    assert unit.added == () and unit.removed == ()
+
+
 def test_literal_free_lines_become_prose_runs() -> None:
     """값 없는 문장의 추가/삭제 — 값 원자와 겹치지 않는 의미 원자."""
 
@@ -105,8 +152,10 @@ def test_literal_free_lines_become_prose_runs() -> None:
 
 def test_atom_fields_survive_the_round_trip() -> None:
     literals = _pipeline(
-        "# 설정\n지워질 문장입니다\n동일한 첫 문장입니다\n타임아웃은 30초로 설정한다\n동일 문장입니다\n",
-        "# 설정\n동일한 첫 문장입니다\n타임아웃을 30초로 지정한다\n동일 문장입니다\n새로운 안내 문장입니다\n",
+        "# 설정\n지워질 문장입니다\n동일한 첫 문장입니다\n"
+        "타임아웃은 30초로 설정한다\n동일 문장입니다\n",
+        "# 설정\n동일한 첫 문장입니다\n타임아웃을 30초로 지정한다\n"
+        "동일 문장입니다\n새로운 안내 문장입니다\n",
     )
     unit = literals.units[0]
     assert unit.textual and unit.prose_added and unit.prose_removed

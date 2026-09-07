@@ -183,39 +183,62 @@ def extract_literals(text: str) -> list[Literal]:
 def _diff(
     base: list[Literal], head: list[Literal]
 ) -> tuple[tuple[str, ...], tuple[str, ...], tuple[ChangedValue, ...]]:
-    """Group by (kind, key): moved values -> changed, leftovers -> removed/added.
+    """Section-wide literal diff — added/removed units diff both sides at once.
 
     Leftovers pair in document order, not sorted order: '3.12.4' and '3.8+'
     must meet '3.12.7' and '3.10+' the way they sit in the sentence. Sorting
     first pairs '3.12.4' with '3.10+' — deterministic, and wrong.
     """
 
-    def grouped(literals: list[Literal]) -> dict[tuple[str, str], list[str]]:
-        result: dict[tuple[str, str], list[str]] = {}
-        for lit in literals:
-            result.setdefault((lit.kind, lit.key), []).append(lit.value)
-        return result
+    changed, removed, added = _pair_groups(_group_values(base), _group_values(head))
+    return (
+        tuple(sorted(value for values in removed.values() for value in values)),
+        tuple(sorted(value for values in added.values() for value in values)),
+        tuple(sorted(changed, key=lambda c: (c.key, c.from_value, c.to_value))),
+    )
 
-    base_groups = grouped(base)
-    head_groups = grouped(head)
-    removed: list[str] = []
-    added: list[str] = []
+
+def _group_values(literals: list[Literal]) -> dict[tuple[str, str], list[str]]:
+    result: dict[tuple[str, str], list[str]] = {}
+    for lit in literals:
+        result.setdefault((lit.kind, lit.key), []).append(lit.value)
+    return result
+
+
+def _pair_groups(
+    base_groups: dict[tuple[str, str], list[str]],
+    head_groups: dict[tuple[str, str], list[str]],
+) -> tuple[
+    list[ChangedValue],
+    dict[tuple[str, str], list[str]],
+    dict[tuple[str, str], list[str]],
+]:
+    """Group by (kind, key): moved values -> changed, leftovers -> pools.
+
+    Leftovers come back keyed by their (kind, key) group so values from
+    several line runs can meet again later — a value rewritten across
+    distant lines still pairs, exactly as one section-wide diff would
+    have paired it.
+    """
+
     changed: list[ChangedValue] = []
+    removed: dict[tuple[str, str], list[str]] = {}
+    added: dict[tuple[str, str], list[str]] = {}
     for group in sorted(set(base_groups) | set(head_groups)):
         b_values = base_groups.get(group, [])
         h_values = head_groups.get(group, [])
         shared = set(b_values) & set(h_values)
         b_rest = [v for v in b_values if v not in shared]
         h_rest = [v for v in h_values if v not in shared]
-        for old, new in zip(b_rest, h_rest, strict=False):
-            changed.append(ChangedValue(group[1], old, new))
-        removed.extend(b_rest[len(h_rest) :])
-        added.extend(h_rest[len(b_rest) :])
-    return (
-        tuple(sorted(removed)),
-        tuple(sorted(added)),
-        tuple(sorted(changed, key=lambda c: (c.key, c.from_value, c.to_value))),
-    )
+        changed.extend(
+            ChangedValue(group[1], old, new)
+            for old, new in zip(b_rest, h_rest, strict=False)
+        )
+        if b_rest[len(h_rest) :]:
+            removed[group] = b_rest[len(h_rest) :]
+        if h_rest[len(b_rest) :]:
+            added[group] = h_rest[len(b_rest) :]
+    return changed, removed, added
 
 
 def _section_text(tree: dict[str, str], path: str | None, lines: tuple[int, int] | None) -> str:
@@ -273,42 +296,126 @@ def _prose_runs(lines: list[str]) -> list[str]:
     return runs
 
 
-def _prose_diff(
-    base_text: str, head_text: str
-) -> tuple[tuple[tuple[str, str], ...], tuple[str, ...], tuple[str, ...]]:
-    """(textual, prose_added, prose_removed) from a line diff of one section.
+def _textual_pairs(b_run: list[str], h_run: list[str]) -> list[tuple[str, str]]:
+    """표현 atoms inside one replace run.
 
-    A replace run whose two literal sets are identical kept every value and
-    rewrote the words around them — one 표현 atom, before/after collapsed.
-    Replace runs with different literal sets are the value atoms' territory
-    and are not double-counted here. Insert/delete runs contribute one 의미
-    prose atom per literal-free run; lines that carry values stay with the
-    value atoms for the same reason.
+    A run whose two literal sets are identical kept every value and rewrote
+    only the words — one collapsed 표현 pair, as before. A mixed run — a
+    value change next to a words-only rewrite — used to be dropped from the
+    prose diff entirely, taking the rewrite down with it. Mixed runs are
+    re-aligned here; only sub-pairs whose literal sets match survive, so
+    the value side stays with the run's value atoms.
+    """
+
+    pairs: list[tuple[str, str]] = []
+    matcher = difflib.SequenceMatcher(None, b_run, h_run, autojunk=False)
+    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+        if tag == "equal":
+            continue
+        b_sub = b_run[i1:i2]
+        h_sub = h_run[j1:j2]
+        if _literal_set(b_sub) == _literal_set(h_sub):
+            b_text = _collapse(" ".join(b_sub))
+            h_text = _collapse(" ".join(h_sub))
+            if b_text != h_text:
+                pairs.append((b_text, h_text))
+            continue
+        for b_line, h_line in zip(b_sub, h_sub, strict=False):
+            if _literal_set([b_line]) != _literal_set([h_line]):
+                continue  # this pair's values moved — value atoms own it
+            b_text = _collapse(b_line)
+            h_text = _collapse(h_line)
+            if b_text != h_text:
+                pairs.append((b_text, h_text))
+    return pairs
+
+
+def _section_diff(
+    base_text: str, head_text: str
+) -> tuple[
+    tuple[str, ...],
+    tuple[str, ...],
+    tuple[ChangedValue, ...],
+    tuple[tuple[str, str], ...],
+    tuple[str, ...],
+    tuple[str, ...],
+]:
+    """(removed, added, changed, textual, prose_added, prose_removed) per unit.
+
+    One pass over the line diff. Replace runs own the value atoms grouped
+    per run, not per section — an untouched '2회' elsewhere in the section
+    must not swallow the pairing that '2회 → 3회' on the edited line
+    deserves. Leftover values from every run then meet once more per group
+    in document order, so a value rewritten across distant lines still
+    pairs. Insert/delete runs contribute value atoms plus one 의미 prose
+    atom per literal-free run, as before.
     """
 
     before = _prose_lines(base_text)
     after = _prose_lines(head_text)
     matcher = difflib.SequenceMatcher(None, before, after, autojunk=False)
+    changed: list[ChangedValue] = []
+    removed_pools: dict[tuple[str, str], list[str]] = {}
+    added_pools: dict[tuple[str, str], list[str]] = {}
     textual: list[tuple[str, str]] = []
     prose_added: list[str] = []
     prose_removed: list[str] = []
+
+    def pool(
+        pools: dict[tuple[str, str], list[str]],
+        group: tuple[str, str],
+        values: list[str],
+    ) -> None:
+        merged = pools.setdefault(group, [])
+        merged.extend(value for value in values if value not in merged)
+
     for tag, i1, i2, j1, j2 in matcher.get_opcodes():
         if tag == "equal":
             continue
         if tag == "replace":
             b_run = before[i1:i2]
             h_run = after[j1:j2]
-            if _literal_set(b_run) != _literal_set(h_run):
-                continue  # values moved — the value atoms own this run
-            b_text = _collapse(" ".join(b_run))
-            h_text = _collapse(" ".join(h_run))
-            if b_text != h_text:
-                textual.append((b_text, h_text))
+            run_changed, run_removed, run_added = _pair_groups(
+                _group_values(extract_literals("\n".join(b_run))),
+                _group_values(extract_literals("\n".join(h_run))),
+            )
+            changed.extend(run_changed)
+            for group, values in run_removed.items():
+                pool(removed_pools, group, values)
+            for group, values in run_added.items():
+                pool(added_pools, group, values)
+            textual.extend(_textual_pairs(b_run, h_run))
         elif tag == "insert":
-            prose_added.extend(_prose_runs(after[j1:j2]))
+            h_run = after[j1:j2]
+            for lit in extract_literals("\n".join(h_run)):
+                pool(added_pools, (lit.kind, lit.key), [lit.value])
+            prose_added.extend(_prose_runs(h_run))
         else:
-            prose_removed.extend(_prose_runs(before[i1:i2]))
+            b_run = before[i1:i2]
+            for lit in extract_literals("\n".join(b_run)):
+                pool(removed_pools, (lit.kind, lit.key), [lit.value])
+            prose_removed.extend(_prose_runs(b_run))
+
+    final_removed: list[str] = []
+    final_added: list[str] = []
+    for group in sorted(set(removed_pools) | set(added_pools)):
+        pairs, b_extra, h_extra = _pair_groups(
+            {group: removed_pools.get(group, [])},
+            {group: added_pools.get(group, [])},
+        )
+        changed.extend(pairs)
+        final_removed.extend(b_extra.get(group, []))
+        final_added.extend(h_extra.get(group, []))
+    unique_changed = {(c.key, c.from_value, c.to_value): c for c in changed}
     return (
+        tuple(sorted(dict.fromkeys(final_removed))),
+        tuple(sorted(dict.fromkeys(final_added))),
+        tuple(
+            sorted(
+                unique_changed.values(),
+                key=lambda c: (c.key, c.from_value, c.to_value),
+            )
+        ),
         tuple(textual),
         tuple(dict.fromkeys(prose_added)),
         tuple(dict.fromkeys(prose_removed)),
@@ -330,14 +437,17 @@ def build_literals(
         head_path = head_paths.get(unit.section_id) if unit.new_lines else None
         base_text = _section_text(base_tree, base_path, unit.old_lines)
         head_text = _section_text(head_tree, head_path, unit.new_lines)
-        base = extract_literals(base_text)
-        head = extract_literals(head_text)
-        removed, added, changed = _diff(base, head)
-        textual: tuple[tuple[str, str], ...] = ()
-        prose_added: tuple[str, ...] = ()
-        prose_removed: tuple[str, ...] = ()
         if unit.kind == "modified":
-            textual, prose_added, prose_removed = _prose_diff(base_text, head_text)
+            removed, added, changed, textual, prose_added, prose_removed = _section_diff(
+                base_text, head_text
+            )
+        else:
+            removed, added, changed = _diff(
+                extract_literals(base_text), extract_literals(head_text)
+            )
+            textual = ()
+            prose_added = ()
+            prose_removed = ()
         units.append(
             UnitLiterals(
                 unit_id=unit.unit_id,
