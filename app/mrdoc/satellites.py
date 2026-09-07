@@ -24,14 +24,56 @@ from pathlib import Path
 from app.ai_runner import _CREDENTIAL_ENV_KEYS
 from app.config import Settings
 
-from .changeset import parse_changeset
+from . import classes, vocab
+from .analysis import AnalysisUnit, FileAnalysis, parse_analysis, render_analysis
+from .changeset import Changeset, parse_changeset
+from .inventory import build_inventory
+from .levelcheck import parse_levelcheck
+from .literals import parse_literals
+from .structure import parse_structure
+from .verifier import (
+    CountMismatch,
+    CountsCheck,
+    Fix,
+    Verifier,
+    VerifierUnit,
+    parse_verifier,
+    render_verifier,
+)
+from .workspace import artifact_paths
 
 logger = logging.getLogger("uvicorn.error")
 
 FENCE = chr(96) * 3
 
 _SCOPE = re.compile(r"^files (\d+)\.\.(\d+)$")
-_EFFORT = {"analyzer": "high", "verifier": "high", "reporter": "medium"}
+#: The FIX re-call's scope — named units instead of a file batch.
+_SCOPE_UNITS = re.compile(r"^units (.+)$")
+_EFFORT = {"analyzer": "high", "verifier": "high"}
+
+
+def _no_check() -> str:
+    return ""
+
+
+@dataclass(frozen=True)
+class MissionPlan:
+    """What a satellite is told, what it owes, and how to audit the result.
+
+    The executor cannot trust a satellite's word, so success means the
+    declared artifacts exist *and* `check` finds nothing wrong with them.
+    """
+
+    system: str
+    prompt: str
+    expected: tuple[Path, ...]
+    check: Callable[[], str] = _no_check
+
+
+def _round_number(work_dir: Path) -> int:
+    """1 before the FIX re-call has been spent, 2 after."""
+
+    return 2 if artifact_paths(work_dir)["fix_marker"].exists() else 1
 
 
 @dataclass(frozen=True)
@@ -72,56 +114,187 @@ def parse_spec(text: str) -> Mission:
 
 
 _ANALYZER_SYSTEM = (
-    "당신은 doc-analyzer 위성이다. "
-    "오케스트레이터의 판단을 돕는 읽기·집필 전문가 — 스스로 판단하지 않는다.\n"
+    "당신은 doc-analyzer 위성이다. 설명만 쓴다 — 판정하지 않는다.\n"
     "\n"
     "[HARD LIMITS]\n"
-    "1. before/after 두 줄은 base/와 snapshot/의 원문에서 해당 절을 직접 읽은 뒤에만 쓴다. "
-    "원문을 읽지 않고 서술한 파일은 전체가 폐기된다.\n"
-    "2. 사실(수치·키:값·코드·링크)을 직접 나열하지 않는다 — "
-    "기계 추출(06-literals)이 그 역할을 한다. before/after는 맥락 서술만 담는다.\n"
-    "3. 레벨(L1/L2/L3)은 06-literals의 해당 유닛 "
-    "차집합(removed/added/changed)을 근거로만 주장한다. "
-    "근거가 애매하면 L2.\n"
-    "4. severity를 부여하지 않는다. "
-    "category(contradiction|stale_reference|dangling_link|terminology|completeness)만 쓴다.\n"
-    "5. 변경 절의 라인 창 ±20줄만 읽는다. 파일 전체 통독은 금지.\n"
-    "6. finding의 evidence quote는 원문 한 줄에서 문자 그대로 복사하고 "
-    "rev(base|head)·file·line을 정확히 표기한다. "
-    "quote 대조에서 탈락한 finding은 조용히 사라진다."
+    "1. 원문을 읽지 않고 설명을 쓰지 않는다. 07-excerpts.md 의 발췌와 "
+    "base/·snapshot/ 의 해당 절을 실제로 읽는다. 못 읽었으면 UNCOVERED 에 적는다.\n"
+    "2. 사실을 직접 서술한다. 06-literals.md 의 값을 인용해 "
+    "무엇이 어디서 어디로 바뀌었는지 쓴다. 원문과 값은 도구가 리포트에 병기한다 — "
+    "설명은 그것을 풀어 쓰는 자리다.\n"
+    "3. 왜(동기·배경) · 그래서(영향·의미) · 평가 어휘를 쓰지 않는다. "
+    "금지 어휘: " + vocab.prompt_line() + ". "
+    "이 목록은 mrdoc levelcheck 어휘 게이트와 같은 파일을 공유한다 — "
+    "걸린 설명은 재작성 대상이다.\n"
+    "4. 분류(class)는 표현 후보에만 낸다. 차집합이 공집합이고 본문만 다른 유닛에만 "
+    "표현 또는 의미를 쓰고 나머지는 null 로 둔다 — "
+    "의미(값)·구조는 도구 확정값이라 바꾸지 않는다.\n"
+    "5. 지적 · 권고 · 심각도 · 머지 의견을 쓰지 않는다. 스키마에 그 필드가 없다.\n"
+    "6. 절 라인 창 ±20줄만 읽는다. 파일 통독 금지, 같은 파일 재Read 금지.\n"
+    "7. 템플릿에 없는 섹션을 만들지 않는다. UNIT · FILE_SUMMARY · RECEIPT 셋뿐이다."
+)
+
+#: The output template is rendered, never typed. In the measured run a
+#: hand-written template told the satellite to write list-objects as block
+#: sequences while the parser only accepted inline flow: the artifact was
+#: discarded whole and the pipeline still reported complete. One renderer,
+#: one shape, and a test that parses this very string.
+_ANALYZER_TEMPLATE = render_analysis(
+    FileAnalysis(
+        file_id="<file_id>",
+        path="<파일 경로>",
+        # Placeholders carry no spaces: '## UNIT <id>' takes one token, so a
+        # spaced placeholder would demonstrate a header the parser truncates.
+        units=(
+            AnalysisUnit(
+                unit_id="u-xxxxxxxx",
+                section_id="s-xxxxxxxx",
+                klass="",
+                explanation="<2~4문장. 바뀐 줄을 전부 서술한다>",
+            ),
+            AnalysisUnit(
+                unit_id="u-yyyyyyyy",
+                section_id="s-yyyyyyyy",
+                klass="표현",
+                explanation="<2~4문장. 표현 변경의 종류를 쓴다>",
+            ),
+        ),
+        summary_refs=("u-xxxxxxxx", "u-yyyyyyyy"),
+        summary=(
+            "<파일 전체 요약 한 문단 — 구조 변화 여부로 시작해 "
+            "종류별 카운트·위치를 세어 쓴다>"
+        ),
+        status="OK",
+        uncovered="none",
+        uncertain="none",
+        confidence="high — <직접 읽고 확인한 사실만>",
+    )
+)
+
+_ANALYZER_WRITING = (
+    "[설명 작성]\n"
+    "- 발췌의 before 와 after 를 줄 단위로 대조해 바뀐 줄을 전부 서술한다. "
+    "한 유닛에 값 변경과 표현 변경이 함께 있으면 둘 다 쓴다.\n"
+    "- 값 변경은 06-literals.md 의 값을 인용하되 "
+    "<항목> <이전값> → <이후값> 형식으로 쓴다(예: 검증 기준 3.12.4 → 3.12.7).\n"
+    "- 조건 변경은 어떤 조건이 어디서 어디로 바뀌는지 쓴다.\n"
+    "- yaml 키워드를 문장에 쓰지 않는다: key · from · to 라는 단어가 설명에 나오면 안 된다.\n"
+    "- 표현 변경은 종류(동의어·어순·서식·오탈자·문장 분할/병합)만 쓴다.\n"
+    "- ADDED 유닛은 추가된 내용이 무엇을 다루는지, 기존 어느 섹션 뒤/안에 "
+    "들어갔는지, 기존 내용과 어떤 관계인지(보충·대체·신규 주제)를 쓴다.\n"
+    "- REMOVED 유닛은 삭제된 내용이 무엇을 다루었는지를 쓰고, "
+    "대체하는 추가 유닛이 있으면 연결해 쓰며 없으면 순삭제라고 적는다.\n"
+    "- 바뀐 줄을 빠뜨리면 doc-verifier 가 omitted 로 잡는다.\n"
+    "- 원문을 설명에 통째로 옮기지 않는다 — 원문은 07-excerpts.md 가 든다."
+)
+
+_ANALYZER_RETURN = (
+    "[리턴] 12줄 이내로 다음 필드만 출력한다.\n"
+    "STATUS: OK | EMPTY | PARTIAL — <잘린 범위> | BLOCKED — <이유> | FAILED — <이유>\n"
+    "UNITS: <쓴 UNIT 블록 수>/<지목받은 유닛 수>\n"
+    "CLASSES: 의미 <n> · 표현 <n> · 후보판정 <n>\n"
+    "FILES: <쓴 파일 수>/<담당 파일 수>\n"
+    "UNCOVERED: <처리하지 못한 id 목록> | none\n"
+    "UNCERTAIN: <애매한 점 한 줄> | none\n"
+    "CONFIDENCE: high|medium|low — <직접 확인한 사실만 근거로>\n"
+    "REPORT: <산출 디렉터리 절대경로>\n"
+    "리턴을 조립하기 전에 각 산출물 말미에 리턴 블록을 '## RECEIPT' 로 복사한다."
 )
 
 _VERIFIER_SYSTEM = (
     "당신은 doc-verifier 위성이다. 남의 산출물을 감사한다 — "
-    "수정하지 않는다(Read만 쓴다).\n"
+    "수정하지 않는다(Read 와 자기 리포트 Write 만 쓴다).\n"
     "\n"
-    "[규칙]\n"
-    "1. base/·snapshot/ 원문을 직접 읽지 않고는 판정하지 않는다. "
-    "못 읽었으면 uncovered에 기록한다.\n"
-    "2. fidelity는 ok | distorted(왜곡) | omitted(누락). "
-    "before/after가 원문보다 범위를 넓히거나 좁히면 distorted다.\n"
-    "3. level_opinion은 agree | dispute. "
-    "dispute여도 레벨은 바뀌지 않는다(강등 금지 원칙) — 의견만 남긴다.\n"
-    "4. 애매하면 verdict를 REVISE로 하고 FIX 블록을 남긴다. 확신 없는 APPROVE는 거짓 영수증이다.\n"
-    "5. checked는 지목받은 수가 아니라 실제로 읽은 유닛 수다."
+    "[HARD LIMITS]\n"
+    "1. 보는 것은 설명의 충실도 하나다. fidelity 는 "
+    "ok | invented(원문에 없는 내용) | omitted(바뀐 것을 빠뜨림).\n"
+    "2. 07-excerpts.md 의 before/after 와 base/·snapshot/ 원문을 직접 읽지 않고는 "
+    "판정하지 않는다. 못 읽은 유닛은 판정하지 말고 uncovered 에 적는다.\n"
+    "3. checked 는 지목받은 수가 아니라 실제로 읽은 유닛 수다.\n"
+    "4. 애매하면 ok 로 넘기지 않는다. FIX 블록과 why 한 줄을 남긴다 — "
+    "부당한 통과가 이 계층을 없앤다.\n"
+    "5. class_opinion 은 agree | dispute 의견일 뿐이다. dispute 여도 분류는 바뀌지 않는다 "
+    "(강등 금지) — 의견만 남는다.\n"
+    "6. 어휘 위반은 잡지 않는다. mrdoc levelcheck 어휘 게이트가 먼저 본다.\n"
+    "7. 문서 내용의 옳고 그름 · 머지 의견 · 심각도 · 권고를 쓰지 않는다. "
+    "판정 자체가 없고 스키마에 그 필드가 없다.\n"
+    "8. 남의 산출물을 수정하지 않는다. 20-analysis/*.md 는 건드리지 않고 "
+    "FIX 에 대상 id 만 적는다.\n"
+    "9. [카운트 대조] FILE_SUMMARY 의 카운트 서술이 프롬프트에 주어진 원자 "
+    "집계와 모순되면 COUNTS 블록에 mismatch 로 남기고 "
+    "FIX(field: FILE_SUMMARY, reason: counts_mismatch) 를 쓴다. "
+    "존재 모순만 mismatch 다 — 'n곳' 과 'n항목' 은 단위가 다를 뿐이므로 "
+    "숫자 차이만으로 불일치로 삼지 않는다."
 )
 
-_REPORTER_SYSTEM = (
-    "당신은 doc-reporter 위성이다. 문장만 쓴다 — 새 주장을 만들지 않는다.\n"
-    "\n"
-    "[규칙]\n"
-    "1. verdict는 50-collect.md에서 그대로 복사한다. "
-    "변경하면 render 노드가 전체 리포트를 폐기한다.\n"
-    "2. 모든 숫자는 50-collect.md에서 복사한다 — 재계산 금지.\n"
-    "3. refs는 50-collect.md에 실재하는 u-/f- id만 지목한다. "
-    "없는 id를 지목한 블록은 버려진다.\n"
-    "4. 블록 종류: HEADLINE(전체 요약, 2문장 이내), "
-    "VERDICT_REASON(verdict 사유 1-2문장), "
-    "MUST_READ u-x(그 절이 왜 중요한지), "
-    "FILE_DIGEST slug(파일별 변경 요약 1문장).\n"
-    "5. UNSOURCED와 CONFLICTS는 필수 필드다 — 생략하면 clean으로 읽히는 거짓 영수증이 된다."
+#: Same rule as the analyzer: the template is rendered by the parser's own
+#: renderer, so prompt and parser cannot describe different shapes.
+_VERIFIER_TEMPLATE = render_verifier(
+    Verifier(
+        mr_iid=0,
+        round=1,
+        checked=2,
+        uncovered="none",
+        uncertain="none",
+        confidence="high — <직접 읽은 절 목록>",
+        units=(
+            VerifierUnit(
+                unit_id="u-xxxxxxxx",
+                fidelity="ok",
+                class_stated="",
+                class_opinion="agree",
+            ),
+            VerifierUnit(
+                unit_id="u-yyyyyyyy",
+                fidelity="invented",
+                class_stated="표현",
+                class_opinion="agree",
+                why="<원문에 없는 범위를 설명이 만들었다는 근거 한 줄>",
+            ),
+        ),
+        counts=(
+            CountsCheck(
+                file_id="f-zzzzzzzz",
+                mismatches=(
+                    CountMismatch(
+                        target="f-zzzzzzzz",
+                        stated="<FILE_SUMMARY 가 말한 카운트>",
+                        inventory="<원자 집계가 잰 카운트>",
+                    ),
+                ),
+                why="<어느 문장이 어느 숫자와 모순인지 한 줄>",
+            ),
+        ),
+        fixes=(
+            Fix(
+                fix_id="r-01",
+                target="u-yyyyyyyy",
+                field="설명",
+                reason="fidelity_invented",
+            ),
+            Fix(
+                fix_id="r-02",
+                target="f-zzzzzzzz",
+                field="FILE_SUMMARY",
+                reason="counts_mismatch",
+            ),
+        ),
+    )
 )
 
+_VERIFIER_RETURN = (
+    "[리턴] 12줄 이내로 다음 필드만 출력한다.\n"
+    "STATUS: OK | EMPTY | PARTIAL — <잘린 범위> | BLOCKED — <이유> | FAILED — <이유>\n"
+    "CHECKED: <실제로 읽은 unit 수>/<전체 unit 수> unit\n"
+    "FIDELITY: ok <n> / invented <n> / omitted <n>\n"
+    "CLASS_OPINION: agree <n> / dispute <n>\n"
+    "REQUIRED_FIXES: <FIX 블록 수>\n"
+    "UNCOVERED: <읽지 못한 unit id 목록> | none\n"
+    "UNCERTAIN: <애매한 점 한 줄> | none\n"
+    "CONFIDENCE: high|medium|low — <직접 확인한 사실만 근거로>\n"
+    "REPORT: <40-verifier.md 절대경로>\n"
+    "리턴을 조립하기 전에 산출물 말미에 리턴 블록을 '## RECEIPT' 로 복사한다."
+)
 
 def _scope_indices(scope: str) -> tuple[int, int] | None:
     match = _SCOPE.match(scope)
@@ -130,21 +303,94 @@ def _scope_indices(scope: str) -> tuple[int, int] | None:
     return int(match.group(1)), int(match.group(2))
 
 
+def _scope_units(scope: str) -> tuple[str, ...] | None:
+    """'units u-a,u-b' -> the ids, or None when this is a normal file batch."""
+
+    match = _SCOPE_UNITS.match(scope)
+    if not match:
+        return None
+    return tuple(
+        part.strip() for part in match.group(1).split(",") if part.strip()
+    )
+
+
 def _read(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
 
-def _analyzer_mission(
-    mission: Mission, work_dir: Path
-) -> tuple[str, str, tuple[Path, ...]]:
+def _unit_audit(paths: tuple[Path, ...], *, preserve: bool = False) -> Callable[[], str]:
+    """Audit the analyzer's own output before the wave accepts it.
+
+    Duplicate ids are checked on every call, first one included: the yaml
+    lookup is keyed by unit_id, so two blocks under one id make the second
+    silently win — a 설명 that was written and then lost inside its own
+    artifact. A file that does not parse at all is left alone on a first
+    call; load_analyses_split isolates it as '설명 생성 실패' and the report
+    still renders, which is the design's partial-failure rule rather than a
+    wave abort.
+
+    `preserve` adds the re-call's other half. A satellite told to redo two
+    units can overwrite the file with only those two, silently dropping the
+    rest — the report would then show '설명 생성 실패' for units that had a
+    perfectly good 설명 a minute earlier. There the prior artifact is the
+    contract, so a rewrite that no longer parses is a rejection too.
+    """
+
+    before = {
+        path: tuple(
+            unit.unit_id
+            for unit in parse_analysis(path.read_text(encoding="utf-8")).units
+        )
+        for path in paths
+        if preserve and path.is_file()
+    }
+
+    def check() -> str:
+        for path in paths:
+            if not path.is_file():
+                return f"{path.name} 이 사라졌다"
+            try:
+                after = [
+                    unit.unit_id
+                    for unit in parse_analysis(
+                        path.read_text(encoding="utf-8")
+                    ).units
+                ]
+            except ValueError as error:
+                if not preserve:
+                    continue  # isolated downstream, not a wave abort
+                return f"{path.name} 파싱 실패: {error}"
+            duplicated = sorted({unit for unit in after if after.count(unit) > 1})
+            if duplicated:
+                return f"{path.name} 에 중복 유닛: {', '.join(duplicated)}"
+            missing = [unit for unit in before.get(path, ()) if unit not in after]
+            if missing:
+                return f"{path.name} 에서 유닛 유실: {', '.join(missing)}"
+        return ""
+
+    return check
+
+
+def _analyzer_mission(mission: Mission, work_dir: Path) -> MissionPlan:
     """Resolve the SCOPE batch to concrete files + expected artifacts."""
 
     changeset = parse_changeset(_read(work_dir / "00-changeset.md"))
+    structure = parse_structure(_read(work_dir / "05-structure.md"))
+    units_by_file: dict[str, list[str]] = {}
+    for unit in structure.changed:
+        units_by_file.setdefault(unit.file_id, []).append(unit.unit_id)
+
+    scoped = _scope_units(mission.scope)
+    if scoped is not None:
+        return _fix_mission(mission, work_dir, changeset, units_by_file, scoped)
+
     span = _scope_indices(mission.scope) or (0, len(changeset.files) - 1)
     lo, hi = span
     entries = changeset.files[lo : hi + 1]
     if not entries:
         raise ValueError(f"analyzer scope {mission.scope} selects no files")
+
+    excerpts = (work_dir / "07-excerpts.md").resolve()
     lines = ["[담당 파일] 각 파일마다 RETURN 디렉터리에 <file_id>.md 하나를 쓴다."]
     expected: list[Path] = []
     for entry in entries:
@@ -152,168 +398,219 @@ def _analyzer_mission(
         base_rel = entry.old_path or entry.path
         base_path = (work_dir / "base" / base_rel).resolve()
         expected.append(mission.return_path / f"{entry.fid}.md")
+        assigned = units_by_file.get(entry.fid, [])
+        lines.append(f"- file_id {entry.fid} · path {entry.path}")
+        lines.append(f"  units: {', '.join(assigned) if assigned else '(없음)'}")
         lines.append(
-            f"- file_id {entry.fid} · head {head_path} · base {base_path}"
+            f"  발췌: {excerpts} 의 '## EXCERPT <unit_id>' 블록 (before/after 원문)"
         )
-    template = "\n".join(
-        [
-            "---",
-            "file_id: <file_id>",
-            'path: "<원본 경로>"',
-            "units: <UNIT 블록 수>",
-            "levels: {L1: 0, L2: 0, L3: 0}",
-            "findings: <FINDING 블록 수>",
-            "STATUS: OK",
-            "UNCOVERED: none",
-            "UNCERTAIN: none",
-            "CONFIDENCE: high",
-            "---",
-            "",
-            "## UNIT <05-structure CHANGED 표의 unit_id>",
-            FENCE + "yaml",
-            "section_id: <같은 표의 section_id>",
-            "level: L2",
-            FENCE,
-            "**before** <base 원문 근거 서술>",
-            "**after** <snapshot 원문 근거 서술>",
-            "",
-            "## FINDING f-01",
-            FENCE + "yaml",
-            "unit_id: <유닛 id>",
-            "category: stale_reference",
-            "evidence:",
-            '  - {role: changed, rev: head, file: <경로>, line: <줄>, quote: "<원문 그대로>"}',
-            FENCE,
-            "**claim** <한 줄>",
-            "**recommendation** <한 줄>",
-        ]
-    )
+        lines.append(f"  원문: head {head_path} · base {base_path}")
     prompt = "\n".join(
         [
-            "[산출 형식] 파일당 정확히 이 템플릿을 따른다 (yaml fence 필수):",
-            template,
+            "[산출 형식] 파일당 정확히 이 템플릿을 따른다 (yaml fence 필수). "
+            "리스트-객체는 한 줄 flow 로만 쓴다:",
+            _ANALYZER_TEMPLATE,
             "",
             *lines,
             "",
-            "[입력 산출물] READ 목록의 파일을 먼저 읽는다. "
-            "unit_id/section_id는 05-structure.md CHANGED 표에서 그대로 가져온다.",
+            "[읽는 순서] 07-excerpts.md 의 담당 유닛 → 06-literals.md 의 같은 유닛 → "
+            "05-structure.md CHANGED 표의 자기 파일 행 → base/·snapshot/ 의 해당 절 ±20줄.",
+            "unit_id 와 section_id 는 05-structure.md CHANGED 표에서 그대로 가져온다 — "
+            "표에 없는 id 를 지목한 블록은 버려진다.",
+            "담당 file_id 의 유닛이 하나도 없으면 BLOCKED — no changed unit 으로 끝낸다.",
+            "",
+            _ANALYZER_WRITING,
+            "",
+            _ANALYZER_RETURN,
+            "",
             f"[산출 위치] {mission.return_path.resolve()}",
         ]
     )
-    return _ANALYZER_SYSTEM, prompt, tuple(expected)
-
-
-def _verifier_mission(
-    mission: Mission, work_dir: Path
-) -> tuple[str, str, tuple[Path, ...]]:
-    template = "\n".join(
-        [
-            "---",
-            "mr_iid: <00-changeset.md 의 mr_iid>",
-            "round: 1",
-            "verdict: APPROVE",
-            "checked: <실제로 읽은 unit 수>",
-            "fidelity: {ok: 0, distorted: 0, omitted: 0}",
-            "levels: {agree: 0, dispute: 0}",
-            "required_fixes: 0",
-            "uncovered: none",
-            "uncertain: none",
-            'confidence: "high — <근거 한 줄>"',
-            "---",
-            "",
-            "## UNIT <unit_id>",
-            FENCE + "yaml",
-            "fidelity: ok",
-            "level_claimed: L2",
-            "level_opinion: agree",
-            FENCE,
-            "**why** <원문 근거 한 줄>",
-            "",
-            "## FIX r-01",
-            FENCE + "yaml",
-            "target: <unit_id>",
-            "field: after",
-            "reason: fidelity_distorted",
-            FENCE,
-            "",
-            "## RECEIPT",
-            "<이 스펙 블록 원문 복사>",
-        ]
+    return MissionPlan(
+        _ANALYZER_SYSTEM, prompt, tuple(expected), _unit_audit(tuple(expected))
     )
+
+
+def _fix_mission(
+    mission: Mission,
+    work_dir: Path,
+    changeset: Changeset,
+    units_by_file: dict[str, list[str]],
+    targets: tuple[str, ...],
+) -> MissionPlan:
+    """The one re-call: rewrite these units' 설명, leave every other block alone.
+
+    Reasons come from the two gates that produced them — doc-verifier's FIX
+    blocks and levelcheck's vocab hits — read here from the files rather than
+    carried through the orchestrator, so the spec stays deterministic.
+    """
+
+    owner = {
+        unit: fid for fid, units in units_by_file.items() for unit in units
+    }
+    paths = {entry.fid: entry.path for entry in changeset.files}
+    reasons = _fix_reasons(work_dir)
+    # counts_mismatch FIX targets are file_ids — the FILE_SUMMARY is the
+    # field being rewritten, so they ride along their file's mission.
+    file_targets = tuple(dict.fromkeys(t for t in targets if t in paths))
+    grouped: dict[str, list[str]] = {}
+    for unit in targets:
+        fid = owner.get(unit)
+        if fid is None:
+            continue  # points at nothing — the design drops inventions
+        grouped.setdefault(fid, []).append(unit)
+    if not grouped and not file_targets:
+        raise ValueError(f"fix scope {mission.scope} selects no known unit")
+
+    excerpts = (work_dir / "07-excerpts.md").resolve()
+    lines = ["[재작성 대상] 아래 대상만 다시 쓴다."]
+    counts_rows = (
+        {row.split(" ", 2)[1]: row for row in _counts_table(work_dir, changeset)}
+        if file_targets
+        else {}
+    )
+    expected: list[Path] = []
+    for fid in sorted(set(grouped) | set(file_targets)):
+        expected.append(mission.return_path / f"{fid}.md")
+        lines.append(f"- file_id {fid} · path {paths.get(fid, fid)}")
+        for unit in grouped.get(fid, []):
+            lines.append(f"  · {unit} — 설명 — {reasons.get(unit, '재작성 요청')}")
+        if fid in file_targets:
+            lines.append(
+                f"  · FILE_SUMMARY — {reasons.get(fid, '집계 불일치')}"
+            )
+            if fid in counts_rows:
+                lines.append(f"    원자 집계: {counts_rows[fid].split(': ', 1)[-1]}")
     prompt = "\n".join(
         [
-            "[산출 형식] 정확히 이 템플릿을 따른다 (yaml fence 필수):",
-            template,
+            "[산출 형식] 기존 파일과 같은 템플릿을 유지한다 (yaml fence 필수):",
+            _ANALYZER_TEMPLATE,
             "",
-            "[입력] 20-analysis/ 의 모든 UNIT과 30-levelcheck.md, 그리고 base/·snapshot/ 원문.",
-            "[입력 산출물] READ 목록의 파일을 먼저 읽는다.",
+            *lines,
+            "",
+            "[보존] 대상이 아닌 UNIT 블록과 FILE_SUMMARY 는 기존 파일의 내용을 "
+            "그대로 유지한다. 파일을 새로 쓰더라도 나머지 유닛이 전부 남아 있어야 하고, "
+            "같은 unit_id 를 두 번 쓰지 않는다 — 유실이나 중복이 있으면 결과가 폐기된다.",
+            "[FILE_SUMMARY 재작성] FILE_SUMMARY 가 대상인 파일은 요약 문단만 "
+            "다시 쓴다 — 카운트 서술은 위에 준 원자 집계와 일치해야 하고 "
+            "그 파일의 UNIT 블록은 그대로 둔다.",
+            f"[근거] {excerpts} 의 before/after 와 base/·snapshot/ 원문을 다시 읽고 쓴다.",
+            "",
+            _ANALYZER_WRITING,
+            "",
+            _ANALYZER_RETURN,
+            "",
+            f"[산출 위치] {mission.return_path.resolve()}",
+        ]
+    )
+    return MissionPlan(
+        _ANALYZER_SYSTEM,
+        prompt,
+        tuple(expected),
+        _unit_audit(tuple(expected), preserve=True),
+    )
+
+
+def _fix_reasons(work_dir: Path) -> dict[str, str]:
+    """unit_id -> why it is being redone, from 40-verifier and 30-levelcheck."""
+
+    paths = artifact_paths(work_dir)
+    reasons: dict[str, str] = {}
+    if paths["verifier"].is_file():
+        try:
+            report = parse_verifier(paths["verifier"].read_text(encoding="utf-8"))
+        except ValueError:
+            report = None
+        for fix in report.fixes if report else ():
+            reasons[fix.target] = f"{fix.reason} ({fix.field})"
+    if paths["levelcheck"].is_file():
+        try:
+            check = parse_levelcheck(paths["levelcheck"].read_text(encoding="utf-8"))
+        except ValueError:
+            check = None
+        for row in check.units if check else ():
+            if not row.vocab_violation:
+                continue
+            hit = "금지 어휘: " + " · ".join(row.vocab_violation)
+            reasons[row.unit_id] = (
+                f"{reasons[row.unit_id]} / {hit}" if row.unit_id in reasons else hit
+            )
+    return reasons
+
+
+def _counts_table(work_dir: Path, changeset: Changeset) -> list[str]:
+    """Per-file atom counts — the measured numbers prose is audited against.
+
+    The verifier's counts gate needs the inventory's numbers, not a re-derivation:
+    the satellite reads them off the prompt and only judges whether the
+    FILE_SUMMARY contradicts them. Measuring here keeps one source — the same
+    build_inventory 50-collect counts from.
+    """
+
+    structure = parse_structure(_read(work_dir / "05-structure.md"))
+    literals = parse_literals(_read(work_dir / "06-literals.md"))
+    inventory = build_inventory(structure, literals, changeset)
+    lines: list[str] = []
+    for entry in changeset.files:
+        axes = inventory.matrix_by_file.get(entry.fid, {})
+        described: list[str] = []
+        for axis in (classes.STRUCTURE, classes.MEANING, classes.EXPRESSION):
+            ops = axes.get(axis, {})
+            hits = [
+                f"{op} {ops.get(op, 0)}"
+                for op in ("추가", "삭제", "변경")
+                if ops.get(op, 0)
+            ]
+            if hits:
+                described.append(f"{axis}({' · '.join(hits)})")
+        lines.append(
+            f"- {entry.fid} ({entry.path}): "
+            + (" · ".join(described) if described else "원자 없음")
+        )
+    return lines
+
+
+def _verifier_mission(mission: Mission, work_dir: Path) -> MissionPlan:
+    changeset = parse_changeset(_read(work_dir / "00-changeset.md"))
+    excerpts = (work_dir / "07-excerpts.md").resolve()
+    literals = (work_dir / "06-literals.md").resolve()
+    analysis_dir = (work_dir / "20-analysis").resolve()
+    prompt = "\n".join(
+        [
+            "[산출 형식] 정확히 이 템플릿을 따른다 (yaml fence 필수). "
+            "카운트 필드는 블록에서 다시 세므로 블록과 어긋나면 블록이 이긴다:",
+            _VERIFIER_TEMPLATE,
+            "",
+            f"[mr_iid] {changeset.mr_iid}",
+            f"[round] {_round_number(work_dir)}",
+            "",
+            "[읽는 순서] "
+            f"{analysis_dir} 의 UNIT 별 설명 → {excerpts} 의 같은 유닛 before/after → "
+            f"{literals} 의 같은 유닛 값 → "
+            f"{(work_dir / 'base').resolve()} · {(work_dir / 'snapshot').resolve()} 의 변경 절.",
+            "20-analysis 의 UNIT 마다 UNIT 블록 하나를 쓴다. "
+            "class_stated 는 20-analysis 가 쓴 class 를 그대로 옮기고, 없으면 null 이다.",
+            "fidelity 가 ok 가 아닌 유닛마다 FIX 블록을 하나씩 쓴다 "
+            "(reason: fidelity_invented | fidelity_omitted). "
+            "ok 인 유닛에는 FIX 를 쓰지 않는다.",
+            "",
+            "[카운트 대조] FILE_SUMMARY 마다 아래 원자 집계와 대조한다. "
+            "'없다'는 서술 뒤에 실재 원자가 있으면 COUNTS 블록에 mismatch 로 "
+            "남기고 FIX(field: FILE_SUMMARY, reason: counts_mismatch) 를 쓴다. "
+            "모순이 없는 파일의 COUNTS 블록은 쓰지 않는다.",
+            *_counts_table(work_dir, changeset),
+            "",
+            _VERIFIER_RETURN,
+            "",
             f"[산출 위치] {mission.return_path.resolve()} — 이 파일 하나만 쓴다.",
         ]
     )
-    return _VERIFIER_SYSTEM, prompt, (mission.return_path,)
+    return MissionPlan(_VERIFIER_SYSTEM, prompt, (mission.return_path,))
 
 
-def _reporter_mission(
-    mission: Mission, work_dir: Path
-) -> tuple[str, str, tuple[Path, ...]]:
-    template = "\n".join(
-        [
-            "---",
-            "verdict: <50-collect.md 의 verdict 그대로>",
-            "sentences: <본문 문장 수>",
-            "STATUS: OK",
-            'SOURCES: "<n>/<n> 대응"',
-            "UNSOURCED: none",
-            "CONFLICTS: none",
-            "UNCOVERED: none",
-            "CONFIDENCE: high",
-            "---",
-            "",
-            "## HEADLINE",
-            FENCE + "yaml",
-            "refs: []",
-            FENCE,
-            "<전체 요약 2문장 이내>",
-            "",
-            "## VERDICT_REASON",
-            FENCE + "yaml",
-            "refs: [<u-/f- id들>]",
-            FENCE,
-            "<verdict 사유 1-2문장>",
-            "",
-            "## MUST_READ <u-id>",
-            FENCE + "yaml",
-            "refs: [<같은 u-id>]",
-            FENCE,
-            "**why_matters** <그 절이 왜 중요한지>",
-            "",
-            "## FILE_DIGEST <파일 slug>",
-            FENCE + "yaml",
-            "refs: [<그 파일의 u-id들>]",
-            FENCE,
-            "<파일별 변경 요약 1문장>",
-        ]
-    )
-    prompt = "\n".join(
-        [
-            "[산출 형식] 정확히 이 템플릿을 따른다 (yaml fence 필수):",
-            template,
-            "",
-            "[입력] 50-collect.md 가 유일한 사실 원천이다. "
-            "must_read 목록의 각 id마다 MUST_READ 블록을, 변경 파일마다 FILE_DIGEST 블록을 쓴다.",
-            "[입력 산출물] READ 목록의 파일을 먼저 읽는다.",
-            f"[산출 위치] {mission.return_path.resolve()} — 이 파일 하나만 쓴다.",
-        ]
-    )
-    return _REPORTER_SYSTEM, prompt, (mission.return_path,)
-
-
-_MISSIONS: dict[
-    str, Callable[[Mission, Path], tuple[str, str, tuple[Path, ...]]]
-] = {
+_MISSIONS: dict[str, Callable[[Mission, Path], MissionPlan]] = {
     "analyzer": _analyzer_mission,
     "verifier": _verifier_mission,
-    "reporter": _reporter_mission,
 }
 
 
@@ -343,7 +640,7 @@ def satellite_executor(
             logger.warning("mrdoc satellite: codex CLI not found on PATH")
             return False
         try:
-            system_prompt, prompt, expected = builder(mission, work_dir)
+            plan = builder(mission, work_dir)
         except (OSError, ValueError) as error:
             logger.warning(
                 "mrdoc satellite(%s): mission build failed: %s",
@@ -363,6 +660,7 @@ def satellite_executor(
             "-c",
             'model_reasoning_effort="' + _EFFORT[mission.agent] + '"',
         ]
+        system_prompt, prompt, expected = plan.system, plan.prompt, plan.expected
         if settings.mrdoc_satellite_model:
             cmd += ["--model", settings.mrdoc_satellite_model]
         cmd += ["-"]
@@ -412,6 +710,12 @@ def satellite_executor(
                 "mrdoc satellite(%s): artifact missing after run: %s",
                 mission.agent,
                 names,
+            )
+            return False
+        problem = plan.check()
+        if problem:
+            logger.warning(
+                "mrdoc satellite(%s): result rejected: %s", mission.agent, problem
             )
             return False
         logger.info(

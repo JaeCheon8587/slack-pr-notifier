@@ -1,7 +1,7 @@
 """Pipeline orchestrator — one wave per call, injectable executors.
 
 The design's loop is: look at artifacts, run what is runnable, record it,
-exit. Tool nodes (changeset/structure/literals) run the deterministic
+exit. Tool nodes (changeset/structure/literals/excerpt) run the deterministic
 toolchain in-process; agent nodes go to an injected executor that gets the
 SPEC block text and writes the artifact itself — production wires a
 satellite CLI there, tests wire a fake, and the loop logic under test is
@@ -20,9 +20,10 @@ from . import dispatch
 from .analysis import load_analyses_split
 from .changeset import build_changeset, parse_changeset, render_changeset
 from .collect import build_collect, parse_collect, render_collect
+from .excerpt import build_excerpts, parse_excerpts, render_excerpts
 from .levelcheck import build_levelcheck, parse_levelcheck, render_levelcheck
 from .literals import build_literals, parse_literals, render_literals
-from .report_render import render_report_html
+from .report_render import render_report_html, render_slack_summary
 from .structure import build_structure, parse_structure, render_structure
 from .workspace import artifact_paths
 
@@ -82,10 +83,22 @@ def _run_tool_node(
             structure, changeset, inputs.base_tree, inputs.head_tree
         )
         paths["literals"].write_text(render_literals(literals), encoding="utf-8")
+    elif node == "excerpt":
+        changeset = parse_changeset(paths["changeset"].read_text(encoding="utf-8"))
+        structure = parse_structure(paths["structure"].read_text(encoding="utf-8"))
+        excerpts = build_excerpts(
+            structure,
+            changeset,
+            inputs.base_tree,
+            inputs.head_tree,
+            mr_iid=inputs.mr_iid,
+        )
+        paths["excerpt"].write_text(render_excerpts(excerpts), encoding="utf-8")
     elif node == "levelcheck":
         analyses, _failed = load_analyses_split(paths["analysis_dir"])
         literals = parse_literals(paths["literals"].read_text(encoding="utf-8"))
-        levelcheck = build_levelcheck(inputs.mr_iid, literals, analyses)
+        structure = parse_structure(paths["structure"].read_text(encoding="utf-8"))
+        levelcheck = build_levelcheck(inputs.mr_iid, literals, analyses, structure)
         paths["levelcheck"].write_text(render_levelcheck(levelcheck), encoding="utf-8")
     elif node == "collect":
         analyses, failed = load_analyses_split(paths["analysis_dir"])
@@ -101,25 +114,49 @@ def _run_tool_node(
             literals=literals,
             structure=structure,
             changeset=changeset,
+            excerpts=parse_excerpts(paths["excerpt"].read_text(encoding="utf-8")),
             verifier_text=paths["verifier"].read_text(encoding="utf-8"),
-            base_tree=inputs.base_tree,
-            head_tree=inputs.head_tree,
         )
         paths["collect"].write_text(render_collect(collect), encoding="utf-8")
     elif node == "render":
         collect = parse_collect(paths["collect"].read_text(encoding="utf-8"))
+        excerpts = parse_excerpts(paths["excerpt"].read_text(encoding="utf-8"))
+        structure = parse_structure(paths["structure"].read_text(encoding="utf-8"))
         page = render_report_html(
             collect,
-            paths["reporter"].read_text(encoding="utf-8"),
             mr_iid=inputs.mr_iid,
+            excerpts=excerpts,
+            structure=structure,
+            base_sha=inputs.base_sha,
+            head_sha=inputs.head_sha,
             diff_url=inputs.diff_url,
         )
         paths["render"].write_text(page, encoding="utf-8")
+        # Both outputs are this one node's: the overview must be the same
+        # text in the page and in Slack, so it is rendered once.
+        paths["slack_summary"].write_text(
+            render_slack_summary(
+                collect,
+                mr_iid=inputs.mr_iid,
+                base_sha=inputs.base_sha,
+                head_sha=inputs.head_sha,
+                link=inputs.diff_url,
+            ),
+            encoding="utf-8",
+        )
     else:  # pragma: no cover — _TOOL_NODES is closed
         raise ValueError(f"unknown tool node: {node}")
 
 
-_TOOL_NODES = ("changeset", "structure", "literals", "levelcheck", "collect", "render")
+_TOOL_NODES = (
+    "changeset",
+    "structure",
+    "literals",
+    "excerpt",
+    "levelcheck",
+    "collect",
+    "render",
+)
 
 
 def _run_tool_nodes(inputs: PipelineInputs, work_dir: Path) -> list[str]:
@@ -148,6 +185,35 @@ def _run_tool_nodes(inputs: PipelineInputs, work_dir: Path) -> list[str]:
         done.append(node + " done")
 
 
+def _run_fix_round(
+    work_dir: Path,
+    agent_executor: AgentExecutor,
+    wave: int,
+    budget_usd: float,
+) -> list[str]:
+    """The pipeline's one branch: re-analyze the units the gates rejected.
+
+    It is not a node — no new artifact appears — so it lives here rather than
+    in the DAG, and it happens at most once per work directory. Spending the
+    round is recorded before the satellite runs, so a failure costs the retry
+    instead of buying an unbounded supply of them: 2회차에 남은 지적은
+    verify.outstanding 으로 리포트에 실리고, 분석기로 돌아가지 않는다.
+    """
+
+    targets = dispatch.fix_round_due(work_dir)
+    if not targets:
+        return []
+    spec = dispatch.fix_spec(
+        work_dir, wave=wave, budget_usd=budget_usd, targets=targets
+    )
+    dispatch.close_fix_round(work_dir)
+    lines = [f"fix round 1: {', '.join(targets)}"]
+    if not agent_executor(spec.render()):
+        raise RuntimeError("agent failed: analyzer (fix round)")
+    lines.append(f"analyzer done (fix round, {len(targets)} units)")
+    return lines
+
+
 def run_wave(
     inputs: PipelineInputs,
     work_dir: Path,
@@ -162,6 +228,7 @@ def run_wave(
     work_dir.mkdir(parents=True, exist_ok=True)
     before = dispatch.derive_state(work_dir)
     ledger: list[str] = [f"wave {wave} start"]
+    retried = False
 
     try:
         ledger.extend(_run_tool_nodes(inputs, work_dir))
@@ -172,6 +239,9 @@ def run_wave(
             if not agent_executor(spec.render()):
                 raise RuntimeError(f"agent failed: {spec.agent}")
             ledger.append(f"{spec.agent} done ({spec.return_path.name})")
+        fix_lines = _run_fix_round(work_dir, agent_executor, wave, budget_usd)
+        retried = bool(fix_lines)
+        ledger.extend(fix_lines)
         ledger.extend(_run_tool_nodes(inputs, work_dir))
     except Exception as error:  # noqa: BLE001 — abort contract covers all
         ledger.append(f"abort: {error}")
@@ -183,7 +253,10 @@ def run_wave(
         ledger.append("pipeline complete")
         _append_ledger(work_dir, ledger)
         return dispatch.EXIT_COMPLETE
-    if after == before:
+    if after == before and not retried:
+        # A spent fix round looks like standstill — it reopens levelcheck and
+        # verifier on purpose — but the marker it burned is irreversible, so
+        # the loop is strictly closer to finishing than it was.
         ledger.append("abort: no progress")
         _append_ledger(work_dir, ledger)
         return dispatch.EXIT_ABORT

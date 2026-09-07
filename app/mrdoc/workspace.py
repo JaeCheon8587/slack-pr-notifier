@@ -80,11 +80,19 @@ def artifact_paths(directory: Path) -> dict[str, Path]:
         "changeset": directory / "00-changeset.md",
         "structure": directory / "05-structure.md",
         "literals": directory / "06-literals.md",
+        "excerpt": directory / "07-excerpts.md",
         "levelcheck": directory / "30-levelcheck.md",
         "verifier": directory / "40-verifier.md",
         "collect": directory / "50-collect.md",
-        "reporter": directory / "60-report.md",
         "render": directory / "report.html",
+        # Written by the render node beside report.html — section 1 verbatim,
+        # which is all Slack ever gets to see of a document.
+        "slack_summary": directory / "slack-summary.txt",
         "analysis_dir": directory / "20-analysis",
         "ledger": directory / "ledger.md",
+        # Presence means the one FIX re-call has been spent. It is what makes
+        # the retry loop finite without asking anybody's opinion.
+        "fix_marker": directory / ".fix-round",
+        "verifier_r1": directory / "40-verifier.r1.md",
+        "levelcheck_r1": directory / "30-levelcheck.r1.md",
     }

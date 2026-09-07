@@ -48,3 +48,19 @@ def test_section_roundtrip_and_multi_block_parse() -> None:
     assert set(parsed) == {"u-abc", "u-def"}
     assert parsed["u-abc"]["section_id"] == "s-x"
     assert parsed["u-abc"]["removed"] == ["30초"]
+
+
+def test_nested_flow_maps_round_trip() -> None:
+    """50-collect's matrix is a map of maps of maps — one line, both ways."""
+
+    data = {
+        "matrix": {
+            "auth-md-a3c19d": {
+                "구조": {"추가": 0, "삭제": 0, "변경": 1},
+                "의미": {"추가": 0, "삭제": 0, "변경": 2},
+            }
+        }
+    }
+    text = render_frontmatter(data)
+    assert "{구조: {추가: 0, 삭제: 0, 변경: 1}" in text
+    assert parse_frontmatter(text + "\n") == data

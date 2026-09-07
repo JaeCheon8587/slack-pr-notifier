@@ -4,7 +4,7 @@ app/ingest.handle_mr_open's non-blocking follow-up: once the normal Slack
 notification is posted, an MR whose changes are md-dominant
 (mrdoc_doc_ratio_threshold, default 0.8) gets the full pipeline run against
 it in a daemon thread: the deterministic tool chain in-process plus the
-three LLM satellites (analyzer/verifier/reporter) as headless claude calls.
+two LLM satellites (analyzer/verifier) as headless codex calls.
 Trees are fetched through the GitLab API -- this host has no clone of the
 company GitLab -- materialized to base/ and snapshot/ so satellites can
 Read the sources, artifacts land under .mrdoc-ws/.work/<iid>-<sha8>, and a
@@ -202,12 +202,25 @@ _SUMMARY_KEYS = {
 
 
 def _summarize(directory: Path, exit_code: int, mr_iid: Any) -> str:
-    """One Slack-sized summary block from the artifacts' frontmatter."""
+    """One Slack-sized summary block — slack-summary.txt when the run made it.
 
-    lines = [
-        "*mrdoc 문서 리뷰 -- MR !" + str(mr_iid) + "* (exit=" + str(exit_code) + ")"
-    ]
+    The render node writes that file from the same overview the report's
+    section 1 prints, so Slack and the page cannot drift apart. The
+    frontmatter fallback below is for a run that aborted before render: a
+    partial count is still better than silence, and it carries no document
+    text either.
+    """
+
+    header = (
+        "*mrdoc 문서 변경 리포트 -- MR !" + str(mr_iid) + "* (exit=" + str(exit_code) + ")"
+    )
     paths = artifact_paths(directory)
+    summary = paths["slack_summary"]
+    if summary.exists():
+        body = summary.read_text(encoding="utf-8").strip()
+        if body:
+            return header + "\n" + body
+    lines = [header]
     for name, (key, wanted) in _SUMMARY_KEYS.items():
         artifact = paths[name]
         if not artifact.exists():

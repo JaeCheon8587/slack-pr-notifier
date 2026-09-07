@@ -12,6 +12,13 @@ Moves are exact-only: a head section whose normalized-text hash matches a
 base section living in a *different* file is a MOVED row and produces no
 change unit (nothing to review — the reviewer sees the relocation).
 Canonical ids prefer the head side, so a section keeps one id across pushes.
+
+Both trees are emitted and both are scoped to the changeset's files: TREE is
+the head revision, BASE_TREE the base revision (old_path side). Repo-wide
+trees were the measured failure — 3,893 rows / 600KB landed in a satellite
+READ list. CHANGED carries a 'kind' column naming the structural change
+(none | heading_renamed | level_changed | reordered | added | removed), which
+is what the report's structure section is written from.
 """
 
 from __future__ import annotations
@@ -41,6 +48,19 @@ class TreeSection:
     lines: tuple[int, int]
 
 
+#: CHANGED.kind vocabulary, in the design's precedence order — at most one
+#: value per row, the first that holds. 'moved' lives in the MOVED table
+#: instead: a relocation produces no change unit.
+STRUCTURE_KINDS = (
+    "added",
+    "removed",
+    "heading_renamed",
+    "level_changed",
+    "reordered",
+    "none",
+)
+
+
 @dataclass(frozen=True)
 class ChangeUnit:
     """One reviewable section change — kind derived from line columns."""
@@ -50,9 +70,12 @@ class ChangeUnit:
     file_id: str
     old_lines: tuple[int, int] | None  # None -> added
     new_lines: tuple[int, int] | None  # None -> removed
+    structure_kind: str = "none"  # CHANGED.kind — the structural change
 
     @property
     def kind(self) -> str:
+        """Operation axis (added/removed/modified) — not the kind column."""
+
         if self.old_lines and self.new_lines:
             return "modified"
         return "added" if self.new_lines else "removed"
@@ -69,7 +92,8 @@ class Move:
 
 @dataclass(frozen=True)
 class Structure:
-    tree: tuple[TreeSection, ...]
+    tree: tuple[TreeSection, ...]  # head revision, changeset files only
+    base_tree: tuple[TreeSection, ...]  # base revision, changeset files only
     changed: tuple[ChangeUnit, ...]
     moved: tuple[Move, ...]
 
@@ -86,12 +110,18 @@ def _norm_hash(text: str) -> str:
     return hashlib.sha256(norm_text(text).encode("utf-8")).hexdigest()
 
 
-def _tree_sections(tree: dict[str, str]) -> list[tuple[str, Section]]:
-    """(path, section) for every md file, file order then document order."""
+def _tree_sections(
+    tree: dict[str, str], paths: list[str]
+) -> list[tuple[str, Section]]:
+    """(path, section) for the named files only, file order then doc order.
+
+    The path list is the changeset's, never the repository's: a repo-wide
+    tree is what put 600KB into a satellite's READ list in the measured run.
+    """
 
     result: list[tuple[str, Section]] = []
-    for path in sorted(tree):
-        if not path.lower().endswith((".md", ".mdx")):
+    for path in sorted(dict.fromkeys(paths)):
+        if not path.lower().endswith((".md", ".mdx")) or path not in tree:
             continue
         result.extend((path, section) for section in parse_sections(tree[path]))
     return result
@@ -187,6 +217,35 @@ def _hunk_candidates(
     return candidates
 
 
+def _pair_ranks(
+    pairs: list[tuple[Section, Section]],
+) -> dict[int, tuple[int, int]]:
+    """Per pair: (rank by base position, rank by head position) in this file.
+
+    A differing rank is the design's "base 순서와 head 순서가 다르다" — the
+    section sits at a different ordinal among its file's paired sections.
+    """
+
+    by_base = sorted(pairs, key=lambda pair: pair[0].start)
+    by_head = sorted(pairs, key=lambda pair: pair[1].start)
+    base_rank = {id(b): i for i, (b, _) in enumerate(by_base)}
+    head_rank = {id(b): i for i, (b, _) in enumerate(by_head)}
+    return {id(b): (base_rank[id(b)], head_rank[id(b)]) for b, _ in pairs}
+
+
+def _pair_kind(
+    base: Section, head: Section, ranks: dict[int, tuple[int, int]]
+) -> str:
+    """CHANGED.kind for a paired section — first match in precedence order."""
+
+    if base.heading_path != head.heading_path:
+        return "heading_renamed"
+    if base.level != head.level:
+        return "level_changed"
+    before, after = ranks.get(id(base), (0, 0))
+    return "reordered" if before != after else "none"
+
+
 def _section_text(text: str, section: Section) -> str:
     lines = text.splitlines()
     return "\n".join(lines[section.start - 1 : section.end])
@@ -205,14 +264,20 @@ def build_structure(
     in which entries iterate.
     """
 
-    tree = tuple(
-        TreeSection(
-            section_id=_sid(path, section),
-            file=path,
-            heading_path=section.heading_path,
-            lines=(section.start, section.end),
+    def rows(tree: dict[str, str], paths: list[str]) -> tuple[TreeSection, ...]:
+        return tuple(
+            TreeSection(
+                section_id=_sid(path, section),
+                file=path,
+                heading_path=section.heading_path,
+                lines=(section.start, section.end),
+            )
+            for path, section in _tree_sections(tree, paths)
         )
-        for path, section in _tree_sections(head_tree)
+
+    tree = rows(head_tree, [entry.path for entry in changeset.files])
+    base_rows = rows(
+        base_tree, [entry.old_path or entry.path for entry in changeset.files]
     )
     tree_ids = {row.section_id for row in tree}
 
@@ -301,7 +366,9 @@ def build_structure(
         else:
             leftover_base_rows.append((entry_path, base_path, b))
 
-    def emit_head(path: str, section: Section, old: Section | None) -> None:
+    def emit_head(
+        path: str, section: Section, old: Section | None, structure_kind: str
+    ) -> None:
         sid = _sid(path, section)
         if sid not in tree_ids:
             raise ValueError(f"canonical id {sid} missing from head TREE")
@@ -312,18 +379,20 @@ def build_structure(
                 file_id=file_id(path),
                 old_lines=(old.start, old.end) if old else None,
                 new_lines=(section.start, section.end),
+                structure_kind=structure_kind,
             )
         )
 
     for entry_path, (_base_path, pairs, base_text, head_text) in pair_map.items():
+        ranks = _pair_ranks(pairs)
         for b, h in pairs:
             if base_text[id(b)] == head_text[id(h)]:
                 continue  # pairing shift only — nothing to review
-            emit_head(entry_path, h, b)
+            emit_head(entry_path, h, b, _pair_kind(b, h, ranks))
         for section in head_leftovers.get(entry_path, []):
             if id(section) in {id(x) for x in claimed_heads.get(entry_path, [])}:
                 continue  # moved away — relocation recorded, no unit
-            emit_head(entry_path, section, None)
+            emit_head(entry_path, section, None, "added")
 
     for entry_path, base_path, b in leftover_base_rows:
         # canonical id falls back to the base side (no head exists)
@@ -335,6 +404,7 @@ def build_structure(
                 file_id=file_id(entry_path),
                 old_lines=(b.start, b.end),
                 new_lines=None,
+                structure_kind="removed",
             )
         )
     for entry_path, sections in head_leftovers.items():
@@ -343,9 +413,14 @@ def build_structure(
         for section in sections:
             if id(section) in {id(x) for x in claimed_heads.get(entry_path, [])}:
                 continue
-            emit_head(entry_path, section, None)
+            emit_head(entry_path, section, None, "added")
 
-    return Structure(tree=tree, changed=tuple(changed), moved=tuple(moved))
+    return Structure(
+        tree=tree,
+        base_tree=base_rows,
+        changed=tuple(changed),
+        moved=tuple(moved),
+    )
 
 
 def _lines_text(lines: tuple[int, int] | None) -> str:
@@ -362,13 +437,19 @@ def _parse_lines(text: str) -> tuple[int, int] | None:
     return (int(a), int(b or a))
 
 
-def render_structure(structure: Structure) -> str:
-    """Render 05-structure.md — TREE, CHANGED, MOVED pipe tables."""
+_TREE_HEADER = ["section_id", "file", "heading_path", "lines"]
 
-    tree_rows = [
+
+def _tree_rows(rows: tuple[TreeSection, ...]) -> list[list[str]]:
+    return [
         [row.section_id, row.file, row.heading_path, _lines_text(row.lines)]
-        for row in structure.tree
+        for row in rows
     ]
+
+
+def render_structure(structure: Structure) -> str:
+    """Render 05-structure.md — TREE, BASE_TREE, CHANGED, MOVED tables."""
+
     changed_rows = [
         [
             unit.unit_id,
@@ -376,6 +457,7 @@ def render_structure(structure: Structure) -> str:
             unit.file_id,
             _lines_text(unit.old_lines),
             _lines_text(unit.new_lines),
+            unit.structure_kind,
         ]
         for unit in structure.changed
     ]
@@ -383,11 +465,14 @@ def render_structure(structure: Structure) -> str:
         [moved.section, moved.from_file, moved.to_file] for moved in structure.moved
     ]
     parts = [
-        f"## TREE\n\n{render_table(['section_id', 'file', 'heading_path', 'lines'], tree_rows)}",
+        "## TREE\n\n" + render_table(_TREE_HEADER, _tree_rows(structure.tree)),
+        "",
+        "## BASE_TREE\n\n"
+        + render_table(_TREE_HEADER, _tree_rows(structure.base_tree)),
         "",
         "## CHANGED\n\n"
         + render_table(
-            ["unit_id", "section_id", "file_id", "old_lines", "new_lines"],
+            ["unit_id", "section_id", "file_id", "old_lines", "new_lines", "kind"],
             changed_rows,
         ),
         "",
@@ -397,17 +482,21 @@ def render_structure(structure: Structure) -> str:
 
 
 def parse_structure(text: str) -> Structure:
-    """Parse 05-structure.md back — kind re-derived from line columns."""
+    """Parse 05-structure.md back — the round-trip contract for resume."""
 
-    tree = tuple(
-        TreeSection(
-            section_id=row[0],
-            file=row[1],
-            heading_path=row[2],
-            lines=_parse_lines(row[3]) or (0, 0),
+    def tree_rows(marker: str) -> tuple[TreeSection, ...]:
+        return tuple(
+            TreeSection(
+                section_id=row[0],
+                file=row[1],
+                heading_path=row[2],
+                lines=_parse_lines(row[3]) or (0, 0),
+            )
+            for row in parse_table(text, marker)
         )
-        for row in parse_table(text, "TREE")
-    )
+
+    tree = tree_rows("TREE")
+    base_tree = tree_rows("BASE_TREE")
     changed = tuple(
         ChangeUnit(
             unit_id=row[0],
@@ -415,6 +504,7 @@ def parse_structure(text: str) -> Structure:
             file_id=row[2],
             old_lines=_parse_lines(row[3]),
             new_lines=_parse_lines(row[4]),
+            structure_kind=row[5] if len(row) > 5 and row[5] else "none",
         )
         for row in parse_table(text, "CHANGED")
     )
@@ -422,4 +512,4 @@ def parse_structure(text: str) -> Structure:
         Move(section=row[0], from_file=row[1], to_file=row[2])
         for row in parse_table(text, "MOVED")
     )
-    return Structure(tree=tree, changed=changed, moved=moved)
+    return Structure(tree=tree, base_tree=base_tree, changed=changed, moved=moved)

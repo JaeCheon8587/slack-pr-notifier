@@ -2,10 +2,14 @@
 
 The satellite writes one file per changed md (20-analysis/<file_id>.md).
 Everything downstream (levelcheck, verifier, collect) parses through this
-module so the format has exactly one reader contract. Bold marker lines
-('**before** …') are the satellite's two prose lines per unit — the parser
-joins their wrapped continuation lines; everything else stays in the yaml
-fence the shared frontmatter module already understands.
+module so the format has exactly one reader contract.
+
+The v2 schema is deliberately small: per unit one '**설명**' paragraph and an
+optional class on 표현 candidates, per file one FILE_SUMMARY. 판정하는
+필드는 없다 — 심각도 · 권고 · 머지 의견을 쓸 자리가 스키마에 없으니 쓸 수
+없다. Bold marker lines are the satellite's prose; the
+parser joins their wrapped continuation lines, and everything else stays in
+the yaml fence the shared frontmatter module already understands.
 """
 
 from __future__ import annotations
@@ -14,42 +18,26 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-from .frontmatter import parse_frontmatter, parse_sections, render_section
+from .frontmatter import (
+    parse_frontmatter,
+    parse_sections,
+    render_frontmatter,
+    render_section,
+)
 
-
-@dataclass(frozen=True)
-class Evidence:
-    """One quoted source line a finding rests on."""
-
-    role: str  # changed | conflicting | supporting …
-    rev: str  # base | head — which tree the quote lives in
-    file: str
-    line: int
-    quote: str
+#: What the analyzer may claim. 의미(값)·구조 are tool-determined, so the
+#: satellite leaves those units unclassified (null) instead of guessing.
+CLASS_VALUES = ("의미", "표현")
 
 
 @dataclass(frozen=True)
 class AnalysisUnit:
-    """One changed section's claimed level + the satellite's two prose lines."""
+    """One changed section: the satellite's 설명, plus a class when claimed."""
 
     unit_id: str
     section_id: str
-    level: str  # claimed L1 | L2 | L3
-    before: str
-    after: str
-
-
-@dataclass(frozen=True)
-class AnalysisFinding:
-    """One contradiction/staleness observation with verbatim evidence."""
-
-    finding_id: str
-    unit_id: str
-    category: str  # contradiction | stale_reference | terminology | completeness | dangling_link
-    evidence: tuple[Evidence, ...]
-    claim: str
-    recommendation: str
-    check_id: str | None = None  # 부가 checklist only — None in the 1st scope
+    klass: str  # '의미' | '표현' | '' (null — tool-determined unit)
+    explanation: str
 
 
 @dataclass(frozen=True)
@@ -59,47 +47,37 @@ class FileAnalysis:
     file_id: str
     path: str
     units: tuple[AnalysisUnit, ...] = ()
-    findings: tuple[AnalysisFinding, ...] = ()
+    summary_refs: tuple[str, ...] = ()
+    summary: str = ""
     status: str = "OK"
     uncovered: str = "none"
     uncertain: str = "none"
     confidence: str = ""
-    summary: str = ""
+
+    def class_counts(self) -> dict[str, int]:
+        """The frontmatter's classes block — 표현 claimed, everything else 의미.
+
+        '후보판정' counts the calls the satellite actually made; a null class
+        is not an abstention it can hide behind, it is the tool's territory.
+        """
+
+        expression = sum(1 for unit in self.units if unit.klass == "표현")
+        judged = sum(1 for unit in self.units if unit.klass)
+        return {
+            "의미": len(self.units) - expression,
+            "표현": expression,
+            "후보판정": judged,
+        }
 
 
 _BLOCK_HEADER = re.compile(r"^## ([A-Z][A-Z0-9_]*)(?: ([^\s]+))?")
-_BOLD = re.compile(r"^\*\*(before|after|claim|recommendation)\*\*\s*(.*)$")
+#: Closed marker set: an arbitrary '**...**' inside prose must not read as one.
+_BOLD = re.compile(r"^\*\*(설명|FILE_SUMMARY|before|after)\*\*\s*(.*)$")
 _FENCE = chr(96) * 3
 
 
 def _text_str(value: object) -> str:
     return "" if value is None else str(value)
-
-
-def _int_or_zero(value: object) -> int:
-    try:
-        return int(value)  # type: ignore[arg-type]
-    except (TypeError, ValueError):
-        return 0
-
-
-def _parse_evidence(raw: object) -> tuple[Evidence, ...]:
-    if not isinstance(raw, list):
-        return ()
-    items = []
-    for row in raw:
-        if not isinstance(row, dict):
-            continue
-        items.append(
-            Evidence(
-                role=_text_str(row.get("role")),
-                rev=_text_str(row.get("rev")),
-                file=_text_str(row.get("file")),
-                line=_int_or_zero(row.get("line")),
-                quote=_text_str(row.get("quote")),
-            )
-        )
-    return tuple(items)
 
 
 def _bold_lines(lines: list[str]) -> dict[str, str]:
@@ -143,6 +121,21 @@ def _split_blocks(text: str) -> list[tuple[tuple[str, str], list[str]]]:
     return blocks
 
 
+def _prose(block_lines: list[str]) -> str:
+    """Everything under a block that is neither its yaml fence nor a marker."""
+
+    out: list[str] = []
+    inside = False
+    for line in block_lines:
+        if line.startswith(_FENCE):
+            inside = not inside
+            continue
+        if inside or not line.strip():
+            continue
+        out.append(line.strip())
+    return " ".join(out)
+
+
 def parse_analysis(text: str) -> FileAnalysis:
     """Parse one 20-analysis file (ValueError on malformed frontmatter)."""
 
@@ -150,85 +143,66 @@ def parse_analysis(text: str) -> FileAnalysis:
     sections = parse_sections(text)
 
     units: list[AnalysisUnit] = []
-    findings: list[AnalysisFinding] = []
+    summary_refs: tuple[str, ...] = ()
     summary = ""
 
     for header, block_lines in _split_blocks(text):
-        bold = _bold_lines(block_lines)
         if header[0] == "UNIT":
             fields = sections.get(header[1], {})
             units.append(
                 AnalysisUnit(
                     unit_id=header[1],
                     section_id=_text_str(fields.get("section_id")),
-                    level=_text_str(fields.get("level")),
-                    before=bold.get("before", ""),
-                    after=bold.get("after", ""),
+                    klass=_text_str(fields.get("class")),
+                    explanation=_bold_lines(block_lines).get("설명", ""),
                 )
             )
-        elif header[0] == "FINDING":
+        elif header[0] == "FILE_SUMMARY":
             fields = sections.get(header[1], {})
-            findings.append(
-                AnalysisFinding(
-                    finding_id=header[1],
-                    unit_id=_text_str(fields.get("unit_id")),
-                    category=_text_str(fields.get("category")),
-                    evidence=_parse_evidence(fields.get("evidence")),
-                    claim=bold.get("claim", ""),
-                    recommendation=bold.get("recommendation", ""),
-                    check_id=_text_str(fields.get("check_id")) or None,
-                )
-            )
-        elif header[0] == "SUMMARY":
-            summary = "\n".join(
-                line for line in block_lines if line.strip() and not line.startswith(_FENCE)
-            )
+            raw = fields.get("refs")
+            summary_refs = tuple(
+                _text_str(ref) for ref in raw if _text_str(ref)
+            ) if isinstance(raw, list) else ()
+            summary = _prose(block_lines)
+        # RECEIPT (and any other block) is accepted and ignored — the design
+        # keeps the return copy in the artifact for 529 recovery.
 
     return FileAnalysis(
         file_id=_text_str(meta.get("file_id")),
         path=_text_str(meta.get("path")),
         units=tuple(units),
-        findings=tuple(findings),
+        summary_refs=summary_refs,
+        summary=summary,
         status=_text_str(meta.get("STATUS")) or "OK",
         uncovered=_text_str(meta.get("UNCOVERED")) or "none",
         uncertain=_text_str(meta.get("UNCERTAIN")) or "none",
         confidence=_text_str(meta.get("CONFIDENCE")),
-        summary=summary,
     )
 
 
-def _evidence_rows(evidence: tuple[Evidence, ...]) -> list[dict[str, object]]:
-    return [
-        {
-            "role": item.role,
-            "rev": item.rev,
-            "file": item.file,
-            "line": item.line,
-            "quote": item.quote,
-        }
-        for item in evidence
-    ]
-
-
 def render_analysis(analysis: FileAnalysis) -> str:
-    """Render 20-analysis markdown — test/double-side of the parse contract."""
+    """Render 20-analysis markdown — and the analyzer prompt's own template.
 
-    levels = {"L1": 0, "L2": 0, "L3": 0}
-    for unit in analysis.units:
-        if unit.level in levels:
-            levels[unit.level] += 1
+    The satellite prompt is built by calling this with placeholder values, so
+    prompt and parser share one source. The measured failure was the other
+    way round: a hand-written template told the satellite to use block
+    sequences, the parser only took inline flow, and the file was discarded
+    whole while the pipeline reported complete.
+    """
+
     parts = [
-        "---",
-        f"file_id: {analysis.file_id}",
-        f'path: "{analysis.path}"',
-        f"units: {len(analysis.units)}",
-        "levels: {" + ", ".join(f"{k}: {v}" for k, v in levels.items()) + "}",
-        f"findings: {len(analysis.findings)}",
-        f"STATUS: {analysis.status}",
-        f"UNCOVERED: {analysis.uncovered}",
-        f"UNCERTAIN: {analysis.uncertain}",
-        f"CONFIDENCE: {analysis.confidence}",
-        "---",
+        render_frontmatter(
+            {
+                "file_id": analysis.file_id,
+                "path": analysis.path,
+                "units": len(analysis.units),
+                "classes": analysis.class_counts(),
+                "STATUS": analysis.status,
+                "UNCOVERED": analysis.uncovered,
+                "UNCERTAIN": analysis.uncertain,
+                "CONFIDENCE": analysis.confidence,
+            }
+        )
     ]
     for unit in analysis.units:
         parts.append("")
@@ -236,26 +210,15 @@ def render_analysis(analysis: FileAnalysis) -> str:
             render_section(
                 "UNIT",
                 unit.unit_id,
-                {"section_id": unit.section_id, "level": unit.level},
+                {"section_id": unit.section_id, "class": unit.klass or None},
             )
         )
-        parts.append(f"**before** {unit.before}")
-        parts.append(f"**after** {unit.after}")
-    for finding in analysis.findings:
+        parts.append(f"**설명** {unit.explanation}")
+    if analysis.summary or analysis.summary_refs:
         parts.append("")
-        fields: dict[str, object] = {
-            "unit_id": finding.unit_id,
-            "category": finding.category,
-            "evidence": _evidence_rows(finding.evidence),
-        }
-        if finding.check_id:
-            fields["check_id"] = finding.check_id
-        parts.append(render_section("FINDING", finding.finding_id, fields))
-        parts.append(f"**claim** {finding.claim}")
-        parts.append(f"**recommendation** {finding.recommendation}")
-    if analysis.summary:
-        parts.append("")
-        parts.append("## SUMMARY")
+        parts.append(
+            render_section("FILE_SUMMARY", "", {"refs": list(analysis.summary_refs)})
+        )
         parts.append(analysis.summary)
     return "\n".join(parts) + "\n"
 

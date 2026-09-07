@@ -74,6 +74,112 @@ def test_pure_addition_lands_in_added() -> None:
     assert "100" in unit.added
 
 
+def test_rewritten_words_with_identical_literals_are_textual() -> None:
+    """리터럴 집합이 같고 문장만 고친 줄 — 값 원자 없이 표현 원자 1쌍."""
+
+    literals = _pipeline(
+        "# 설정\n타임아웃은 30초로 설정한다\n",
+        "# 설정\n타임아웃을 30초로 지정한다\n",
+    )
+    unit = literals.units[0]
+    assert unit.changed == () and unit.added == () and unit.removed == ()
+    assert unit.textual == (
+        ("타임아웃은 30초로 설정한다", "타임아웃을 30초로 지정한다"),
+    )
+
+
+def test_literal_free_lines_become_prose_runs() -> None:
+    """값 없는 문장의 추가/삭제 — 값 원자와 겹치지 않는 의미 원자."""
+
+    # equal 줄을 앵커로 삼아야 insert/delete 가 각각 열린다 — 인접하면
+    # 하나의 replace 로 병합되어 prose 원자가 사라진다.
+    literals = _pipeline(
+        "# 설정\n지워질 문장입니다\n기존 안내 문장입니다\n",
+        "# 설정\n기존 안내 문장입니다\n새로운 안내 문장입니다\n",
+    )
+    unit = literals.units[0]
+    assert unit.prose_added == ("새로운 안내 문장입니다",)
+    assert unit.prose_removed == ("지워질 문장입니다",)
+    assert unit.textual == ()
+
+
+def test_atom_fields_survive_the_round_trip() -> None:
+    literals = _pipeline(
+        "# 설정\n지워질 문장입니다\n동일한 첫 문장입니다\n타임아웃은 30초로 설정한다\n동일 문장입니다\n",
+        "# 설정\n동일한 첫 문장입니다\n타임아웃을 30초로 지정한다\n동일 문장입니다\n새로운 안내 문장입니다\n",
+    )
+    unit = literals.units[0]
+    assert unit.textual and unit.prose_added and unit.prose_removed
+    again = parse_literals(render_literals(literals))
+    assert again.units[0].textual == unit.textual
+    assert again.units[0].prose_added == unit.prose_added
+    assert again.units[0].prose_removed == unit.prose_removed
+
+
+def _kinds(text: str) -> set[tuple[str, str, str]]:
+    return {(lit.kind, lit.key, lit.value) for lit in extract_literals(text)}
+
+
+def test_version_extractor_keys_on_the_token_it_is_glued_to() -> None:
+    found = _kinds("winget install --id Python.Python.3.11 -e")
+    assert ("version", "Python.Python", "3.11") in found
+    assert ("version", "python@", "3.12") in _kinds("brew install python@3.12")
+
+
+def test_standalone_version_keys_on_version() -> None:
+    """'3.12.4' and '3.12.7' must group even when the sentence is rewritten."""
+
+    base = _kinds("권장 버전은 3.12 이상 (검증 기준 3.12.4). 최소 3.8+에서 동작한다")
+    head = _kinds("권장 버전은 3.12 이상 (검증 기준 3.12.7). 최소 지원은 3.10+이다")
+    assert ("version", "version", "3.12.4") in base
+    assert ("version", "version", "3.8+") in base
+    assert ("version", "version", "3.12.7") in head
+    assert ("version", "version", "3.10+") in head
+
+
+def test_version_never_double_counts_a_number_unit() -> None:
+    found = _kinds("타임아웃 1.5 초")
+    assert ("unit", "초", "1.5") in found
+    assert not any(kind == "version" for kind, _, _ in found)
+
+
+def test_code_span_stays_inside_one_line() -> None:
+    text = "앞줄 " + _T + "TIMEOUT=30" + _T + " 뒤\n다음 줄 " + _T + "PATH" + _T + " 끝\n"
+    spans = {value for kind, _, value in _kinds(text) if kind == "code"}
+    assert spans == {"TIMEOUT=30", "PATH"}
+    assert not any("\n" in value for value in spans)
+
+
+def test_fenced_block_is_extracted_line_by_line() -> None:
+    text = (
+        "본문\n"
+        + _T * 3
+        + "powershell\n"
+        + "winget install --id Python.Python.3.11 -e\n"
+        + "타임아웃: 30초\n"
+        + _T * 3
+        + "\n"
+    )
+    found = _kinds(text)
+    assert ("version", "Python.Python", "3.11") in found
+    assert ("kv", "타임아웃", "30초") in found
+    # the info string is a delimiter, never a value; no whole-block literal
+    assert not any(key == "powershell" for _, key, _ in found)
+    assert not any("\n" in value for _, _, value in found)
+
+
+def test_changed_pairs_leftovers_in_document_order() -> None:
+    """The measured expectation: 3.12.4→3.12.7 and 3.8+→3.10+, not crossed."""
+
+    literals = _pipeline(
+        "# 요구사항\n- Python 3.12 이상 (검증 기준 3.12.4). 최소 3.8+에서 동작한다.\n",
+        "# 요구사항\n- Python 3.12 이상 (검증 기준 3.12.7). 최소 지원은 3.10+이다.\n",
+    )
+    changed = {(c.from_value, c.to_value) for c in literals.units[0].changed}
+    assert ("3.12.4", "3.12.7") in changed
+    assert ("3.8+", "3.10+") in changed
+
+
 def test_density_average_and_roundtrip() -> None:
     literals = _pipeline(
         "# 설정\n타임아웃: 30초, 재시도 5회, verbose true\n",

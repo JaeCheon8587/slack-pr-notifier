@@ -4,9 +4,9 @@ The design's exit contract: 0 after a wave ran, 4 when everything is done,
 2 on abort. Nodes never ask each other for status; they look at the work
 directory. The analyzer fans out over md files in batches (fanout, default
 5) so one satellite failure costs one batch, and the whole first-order DAG
-is declared here once. The tool chain (changeset -> structure -> literals)
-completes first inside every wave, so analyzer specs — keyed off the
-changeset alone — always execute with structure/literals materialized.
+is declared here once. The tool chain (changeset -> structure -> literals ->
+excerpt) completes first inside every wave, so analyzer specs — keyed off the
+changeset alone — always execute with every tool artifact materialized.
 """
 
 from __future__ import annotations
@@ -14,6 +14,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
+from .levelcheck import parse_levelcheck
+from .verifier import parse_verifier
 from .workspace import artifact_paths
 
 EXIT_WAVE_RAN = 0
@@ -24,26 +26,26 @@ DEPS: dict[str, tuple[str, ...]] = {
     "changeset": (),
     "structure": ("changeset",),
     "literals": ("structure",),
-    # The analyzer reads structure/literals, but the orchestrator finishes
+    "excerpt": ("literals",),
+    # The analyzer reads structure/literals/excerpt, but the orchestrator finishes
     # the tool chain before any spec executes in the same wave, so the spec
     # edge is the changeset: fanout is plannable once files are known.
     "analysis": ("changeset",),
     "levelcheck": ("analysis",),
     "verifier": ("levelcheck",),
     "collect": ("verifier",),
-    "reporter": ("collect",),
-    "render": ("reporter",),
+    "render": ("collect",),
 }
 
 _NODES: tuple[str, ...] = (
     "changeset",
     "structure",
     "literals",
+    "excerpt",
     "analysis",
     "levelcheck",
     "verifier",
     "collect",
-    "reporter",
     "render",
 )
 
@@ -117,6 +119,91 @@ def runnable_nodes(state: dict[str, str]) -> list[str]:
     ]
 
 
+def _parse_or_none(path: Path, parser):  # type: ignore[no-untyped-def]
+    if not path.is_file():
+        return None
+    try:
+        return parser(path.read_text(encoding="utf-8"))
+    except ValueError:
+        return None  # an unreadable gate flags nothing; collect still renders
+
+
+def fix_targets(work_dir: Path) -> tuple[str, ...]:
+    """Units owed a rewritten 설명 — 두 게이트가 지목한 것의 합집합.
+
+    doc-verifier names units whose 설명 invented or omitted something; the
+    levelcheck vocab gate names units whose 설명 used a banned word. Both are
+    "this prose has to be written again", so both feed the one re-call rather
+    than each asking for its own round.
+    """
+
+    paths = artifact_paths(work_dir)
+    targets: list[str] = []
+    report = _parse_or_none(paths["verifier"], parse_verifier)
+    if report is not None:
+        targets.extend(report.fix_targets())
+    check = _parse_or_none(paths["levelcheck"], parse_levelcheck)
+    if check is not None:
+        targets.extend(row.unit_id for row in check.units if row.vocab_violation)
+    return tuple(dict.fromkeys(targets))
+
+
+def fix_round_due(work_dir: Path) -> tuple[str, ...]:
+    """Targets for the single re-call, or () when it is not owed or spent."""
+
+    paths = artifact_paths(work_dir)
+    if paths["fix_marker"].exists() or not paths["verifier"].is_file():
+        return ()
+    return fix_targets(work_dir)
+
+
+def fix_spec(
+    work_dir: Path, *, wave: int, budget_usd: float, targets: tuple[str, ...]
+) -> SpecBlock:
+    """The analyzer re-call — SCOPE names units, never a file batch."""
+
+    paths = artifact_paths(work_dir)
+    return SpecBlock(
+        wave=wave,
+        agent="analyzer",
+        read=(
+            paths["changeset"],
+            paths["structure"],
+            paths["literals"],
+            paths["excerpt"],
+            paths["levelcheck"],
+            paths["verifier"],
+        ),
+        budget_usd=budget_usd,
+        return_path=paths["analysis_dir"],
+        scope="units " + ",".join(targets),
+    )
+
+
+def close_fix_round(work_dir: Path) -> None:
+    """Spend the round: mark it, archive round 1's gates, reopen 30 and 40.
+
+    The marker goes down before anything else so a crash mid-round still
+    costs the round — the design's one hard requirement here is that the
+    loop ends, not that it always gets its retry. Archiving rather than
+    deleting keeps round 1 readable next to the ledger; removing the live
+    files is what puts levelcheck and verifier back to pending, which is how
+    the DAG re-runs them over the rewritten 설명.
+    """
+
+    paths = artifact_paths(work_dir)
+    paths["fix_marker"].write_text("1\n", encoding="utf-8")
+    for live, archived in (
+        ("verifier", "verifier_r1"),
+        ("levelcheck", "levelcheck_r1"),
+    ):
+        if paths[live].is_file():
+            paths[archived].write_text(
+                paths[live].read_text(encoding="utf-8"), encoding="utf-8"
+            )
+            paths[live].unlink()
+
+
 def next_specs(
     work_dir: Path, *, wave: int, fanout: int, budget_usd: float
 ) -> list[SpecBlock]:
@@ -138,12 +225,16 @@ def next_specs(
     for node in runnable:
         if node == "changeset":
             continue
-        if node in ("structure", "literals"):
-            read = (
-                (paths["changeset"],)
-                if node == "structure"
-                else (paths["changeset"], paths["structure"])
-            )
+        if node in ("structure", "literals", "excerpt"):
+            read = {
+                "structure": (paths["changeset"],),
+                "literals": (paths["changeset"], paths["structure"]),
+                "excerpt": (
+                    paths["changeset"],
+                    paths["structure"],
+                    paths["literals"],
+                ),
+            }[node]
             specs.append(
                 SpecBlock(
                     wave=wave,
@@ -163,7 +254,12 @@ def next_specs(
                     SpecBlock(
                         wave=wave,
                         agent="analyzer",
-                        read=(paths["changeset"], paths["structure"], paths["literals"]),
+                        read=(
+                            paths["changeset"],
+                            paths["structure"],
+                            paths["literals"],
+                            paths["excerpt"],
+                        ),
                         budget_usd=budget_usd,
                         return_path=paths["analysis_dir"],
                         scope=f"files {start}..{min(start + fanout, expected) - 1}",
@@ -174,23 +270,14 @@ def next_specs(
                 SpecBlock(
                     wave=wave,
                     agent="verifier",
+                    # Not 30-levelcheck: the vocab gate is the tool's
+                    # job, and showing what it decided here would only
+                    # invite agreement.
                     read=(
-                        paths["levelcheck"],
-                        paths["changeset"],
-                        paths["structure"],
-                        paths["literals"],
                         paths["analysis_dir"],
+                        paths["excerpt"],
+                        paths["literals"],
                     ),
-                    budget_usd=budget_usd,
-                    return_path=paths[node],
-                )
-            )
-        elif node == "reporter":
-            specs.append(
-                SpecBlock(
-                    wave=wave,
-                    agent="reporter",
-                    read=(paths["collect"], paths["levelcheck"], paths["analysis_dir"]),
                     budget_usd=budget_usd,
                     return_path=paths[node],
                 )

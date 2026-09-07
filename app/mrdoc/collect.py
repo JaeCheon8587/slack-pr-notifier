@@ -1,216 +1,127 @@
-"""50-collect node — deterministic finding gate over every upstream artifact.
+"""50-collect node — one deterministic assembly of every upstream artifact.
 
-The design's 9-step collector: parse every 20-analysis file, drop findings
-whose unit reference or quoted evidence does not survive a direct check
-against the source trees, dedup by content hash, assign severity by rule
-(never by the satellite's opinion), aggregate levels from 30-levelcheck's
-*verified* column, and compute the verdict. Dropped findings leave a count
-in 'gate' — partial failure stays visible but never re-prompts: the loop's
-only exit condition remains "every artifact exists", so it always ends.
+The design's six steps: parse every 20-analysis file, assemble each change
+unit out of the tools' facts (05 kind + 06 literal diffs + 07 excerpt ref +
+30 verified 성질 + 20 설명), check that the prose points at ids that really
+exist, count the matrix the report's second section prints verbatim, group
+by product folder -> file -> section, write the artifact.
+
+Two rules shape the whole module. Nothing here judges — the only natural
+language is the 설명 and FILE_SUMMARY the analyzer wrote. And partial failure
+degrades to "a report without 설명", never to a wrong report: an unparsable
+or missing analysis leaves the prose field saying so while structure, raw
+text, literal values and the tool-determined 성질 all still render.
 """
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
 
-from .analysis import AnalysisFinding, Evidence, FileAnalysis, _bold_lines, _split_blocks
+from . import classes
+from .analysis import FileAnalysis, _bold_lines, _split_blocks
 from .changeset import Changeset
+from .excerpt import Excerpts
+from .inventory import build_inventory
 from .frontmatter import (
     parse_frontmatter,
     parse_sections,
     render_frontmatter,
     render_section,
 )
-from .ids import sha8
 from .levelcheck import LevelCheck
-from .literals import ChangedValue, Literals, extract_literals
+from .literals import ChangedValue, Literals
 from .structure import Structure
+from .verifier import verify_summary
 
-_MAJOR_CATEGORIES = frozenset({"stale_reference", "dangling_link", "contradiction"})
-_NORM = re.compile(r"\s+")
-_CONF_RANK = {"high": 3, "medium": 2, "low": 1}
+#: What a prose field says when the analyzer produced nothing usable for it.
+#: The design's words, not a paraphrase — the report prints them as-is and
+#: the 리포트 신뢰도 block counts them.
+EXPLANATION_FAILED = "설명 생성 실패"
+SUMMARY_FAILED = "FILE_SUMMARY 생성 실패"
 
+#: ChangeUnit.kind speaks the diff's vocabulary; the artifact speaks the
+#: design's.
+_KIND = {"modified": "changed", "added": "added", "removed": "removed"}
 
-def _norm(text: str) -> str:
-    return _NORM.sub(" ", text).strip()
+_OPS = ("추가", "삭제", "변경")
+
+_CONF_KEYS = ("high", "medium", "low")
 
 
 @dataclass(frozen=True)
 class CollectedUnit:
-    """One change unit as the report shows it — verified level + tool facts."""
+    """One change unit as the report shows it — tool facts plus one 설명."""
 
     unit_id: str
-    level: str
+    kind: str  # added | removed | changed
+    structure_kind: str  # 05 CHANGED.kind — 'none' when purely textual
+    klass: str  # 구조 | 의미 | 표현 | 미분류
     section: str
-    file: str
+    file: str  # file_id
     removed: tuple[str, ...]
     added: tuple[str, ...]
     changed: tuple[ChangedValue, ...]
-    before: str
-    after: str
-    confidence: str = ""
+    excerpt_ref: str
+    explanation: str
+    vocab_violation: tuple[str, ...] = ()
+    #: 성질/연산 columns this unit's atoms touch — axis order, from 06/05.
+    axes: tuple[str, ...] = ()
+    ops: tuple[str, ...] = ()
+    textual: tuple[tuple[str, str], ...] = ()
+    prose_added: tuple[str, ...] = ()
+    prose_removed: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
-class CollectedFinding:
-    """One finding that survived the gate — severity assigned here, by rule."""
+class CollectedFile:
+    """One changed file — its product folder and the file-level FILE_SUMMARY."""
 
-    finding_id: str
-    severity: str  # BLOCKER | MAJOR | MINOR
-    category: str
-    unit_id: str
-    evidence: tuple[Evidence, ...]
-    claim: str
-    recommendation: str
-    confidence: str = ""
-
-
-@dataclass(frozen=True)
-class DroppedFinding:
-    """One finding the gate rejected — count-only, never re-prompted."""
-
-    finding_id: str
-    reason: str  # bad_ref | quote_mismatch | merged_dup
-    detail: str
+    file_id: str
+    path: str
+    product_dir: str
+    units: int
+    summary: str
 
 
 @dataclass(frozen=True)
 class Collect:
-    """Everything 50-collect.md carries — the reporter/render input contract."""
+    """Everything 50-collect.md carries — the render node's input contract."""
 
     mr_iid: int
-    verdict: str  # BLOCK | REVIEW | PASS
-    reason: str
-    levels: dict[str, int]
     files: dict[str, int]
-    counts: dict[str, int]
-    gate: dict[str, int]
+    matrix: dict[str, dict[str, dict[str, int]]]
+    classes: dict[str, int]
+    ops: dict[str, int]
+    value_changes: int
     verify: dict[str, object]
-    coverage: dict[str, object]
     confidence_dist: dict[str, int]
     uncertain: tuple[str, ...]
     failed_files: tuple[str, ...]
-    must_read: tuple[str, ...]
+    refs_dropped: int
+    file_blocks: tuple[CollectedFile, ...]
     units: tuple[CollectedUnit, ...]
-    findings: tuple[CollectedFinding, ...]
-    dropped: tuple[DroppedFinding, ...]
 
     def valid_ids(self) -> frozenset[str]:
-        """Every u-/f- id the reporter may point at (render's ref gate)."""
+        """Every id a block may point at — render's one gate."""
 
         return frozenset(
             [unit.unit_id for unit in self.units]
-            + [finding.finding_id for finding in self.findings]
+            + [entry.file_id for entry in self.file_blocks]
         )
 
-
-def _confidence_head(text: str) -> str:
-    return text.split()[0].lower() if text.split() else ""
-
-
-def _rank(text: str) -> int:
-    return _CONF_RANK.get(_confidence_head(text), 0)
+    def units_of(self, file_id: str) -> tuple[CollectedUnit, ...]:
+        return tuple(unit for unit in self.units if unit.file == file_id)
 
 
-def _quote_matches(
-    evidence: Evidence, base_tree: dict[str, str], head_tree: dict[str, str]
-) -> bool:
-    """Step 3 — the quote must appear in its declared rev's line ±3 window."""
+def _product_dir(path: str) -> str:
+    """The folder a file belongs to — the report's 영향 제품 grouping key."""
 
-    if evidence.rev == "head":
-        tree = head_tree
-    elif evidence.rev == "base":
-        tree = base_tree
-    else:
-        return False
-    source = tree.get(evidence.file)
-    if source is None or evidence.line <= 0:
-        return False
-    quote = _norm(evidence.quote)
-    if not quote:
-        return False
-    rows = source.splitlines()
-    lo = max(evidence.line - 3, 1)
-    hi = min(evidence.line + 3, len(rows))
-    return any(quote in _norm(row) for row in rows[lo - 1 : hi])
+    head, _, _ = path.rpartition("/")
+    return head or "."
 
 
-def _dedup_key(finding: AnalysisFinding) -> str:
-    quotes = sorted(sha8(_norm(item.quote)) for item in finding.evidence)
-    return sha8(finding.category + "|" + "|".join(quotes))
-
-
-def _has_conflicting_literal(quotes: tuple[str, ...]) -> bool:
-    """BLOCKER test — same literal key, different values, across two quotes."""
-
-    by_key: dict[str, set[str]] = {}
-    for quote in quotes:
-        for lit in extract_literals(quote):
-            by_key.setdefault(f"{lit.kind}:{lit.key}", set()).add(lit.value)
-    return any(len(values) > 1 for values in by_key.values())
-
-
-def _severity(finding: AnalysisFinding) -> str:
-    quotes = tuple(item.quote for item in finding.evidence)
-    if finding.category == "contradiction" and _has_conflicting_literal(quotes):
-        return "BLOCKER"
-    if finding.category in _MAJOR_CATEGORIES:
-        return "MAJOR"
-    return "MINOR"
-
-
-def _section_label(structure: Structure, section_id: str) -> tuple[str, str]:
-    for row in structure.tree:
-        if row.section_id == section_id:
-            return row.file, f"{row.file} § {row.heading_path}"
-    return "", section_id
-
-
-def _verify_summary(verifier_text: str) -> dict[str, object]:
-    """The verify block — parsed from 40-verifier.md, never from returns."""
-
-    meta = parse_frontmatter(verifier_text)
-    return {
-        "rounds": int(meta.get("round", 1) or 1),
-        "verdict": str(meta.get("verdict", "")),
-        "outstanding": int(meta.get("required_fixes", 0) or 0),
-    }
-
-
-def _must_read(
-    units: tuple[CollectedUnit, ...], findings: tuple[CollectedFinding, ...]
-) -> tuple[str, ...]:
-    """BLOCKER finding → L1 절 → MAJOR finding → finding 걸린 L2 절; top 5."""
-
-    units_by_id = {unit.unit_id: unit for unit in units}
-
-    def unit_key(unit: CollectedUnit) -> tuple[int, str]:
-        return (-_rank(unit.confidence), unit.section)
-
-    def finding_key(finding: CollectedFinding) -> tuple[int, str]:
-        unit = units_by_id.get(finding.unit_id)
-        section = unit.section if unit else finding.finding_id
-        return (-_rank(finding.confidence or (unit.confidence if unit else "")), section)
-
-    blocker = sorted(
-        (f for f in findings if f.severity == "BLOCKER"), key=finding_key
-    )
-    l1 = sorted((u for u in units if u.level == "L1"), key=unit_key)
-    major = sorted((f for f in findings if f.severity == "MAJOR"), key=finding_key)
-    with_findings = {
-        finding.unit_id for finding in findings if finding.severity != "BLOCKER"
-    }
-    l2 = sorted(
-        (u for u in units if u.level == "L2" and u.unit_id in with_findings),
-        key=unit_key,
-    )
-    ordered: list[str] = []
-    for item in (*blocker, *l1, *major, *l2):
-        ident = item.finding_id if isinstance(item, CollectedFinding) else item.unit_id
-        if ident not in ordered:
-            ordered.append(ident)
-    return tuple(ordered[:5])
+def _one_line(text: str) -> str:
+    return " ".join(text.split())
 
 
 def build_collect(
@@ -222,271 +133,249 @@ def build_collect(
     literals: Literals,
     structure: Structure,
     changeset: Changeset,
+    excerpts: Excerpts,
     verifier_text: str,
-    base_tree: dict[str, str],
-    head_tree: dict[str, str],
 ) -> Collect:
-    """Run the 9 gate steps over parsed artifacts — no LLM anywhere."""
+    """Run the design's six steps over parsed artifacts — no LLM anywhere."""
 
-    claimed: dict[str, tuple[object, FileAnalysis]] = {}
+    # 1. parse — the caller did it; failed_files is what could not be read.
+    known = {unit.unit_id for unit in structure.changed}
+    explanation: dict[str, str] = {}
+    refs_dropped = 0
     for analysis in analyses:
         for unit in analysis.units:
-            claimed[unit.unit_id] = (unit, analysis)
+            # 3. refs — a 설명 for a unit 05 never produced points at nothing.
+            # The design drops it rather than asking for a rewrite, so the
+            # loop keeps exactly one exit condition.
+            if unit.unit_id not in known:
+                refs_dropped += 1
+                continue
+            text = _one_line(unit.explanation)
+            if text:
+                explanation[unit.unit_id] = text
 
+    # 2. assemble — every unit 05 found, covered by the analyzer or not.
+    lit_by_unit = {unit.unit_id: unit for unit in literals.units}
+    excerpt_by_unit = {unit.unit_id: unit for unit in excerpts.units}
+    vocab_by_unit = {row.unit_id: row.vocab_violation for row in levelcheck.units}
+    inventory = build_inventory(structure, literals, changeset)
     units: list[CollectedUnit] = []
-    for lit in literals.units:
-        entry = claimed.get(lit.unit_id)
-        unit = entry[0] if entry else None
-        analysis = entry[1] if entry else None
-        file, label = _section_label(structure, lit.section_id)
+    for unit in structure.changed:
+        kind = _KIND.get(unit.kind, unit.kind)
+        lit = lit_by_unit.get(unit.unit_id)
+        excerpt = excerpt_by_unit.get(unit.unit_id)
+        verified = levelcheck.verified_level(unit.unit_id) or ""
         units.append(
             CollectedUnit(
-                unit_id=lit.unit_id,
-                level=levelcheck.verified_level(lit.unit_id) or "L2",
-                section=label,
-                file=file or (analysis.path if analysis else lit.section_id),
-                removed=lit.removed,
-                added=lit.added,
-                changed=lit.changed,
-                before=str(getattr(unit, "before", "") or ""),
-                after=str(getattr(unit, "after", "") or ""),
-                confidence=str(getattr(analysis, "confidence", "") or ""),
+                unit_id=unit.unit_id,
+                kind=kind,
+                structure_kind=unit.structure_kind,
+                klass=(
+                    classes.axis(verified) if kind == "changed" else classes.STRUCTURE
+                ),
+                section=excerpt.section if excerpt else unit.section_id,
+                file=unit.file_id,
+                removed=lit.removed if lit else (),
+                added=lit.added if lit else (),
+                changed=lit.changed if lit else (),
+                excerpt_ref=unit.unit_id if excerpt else "",
+                explanation=explanation.get(unit.unit_id, EXPLANATION_FAILED),
+                vocab_violation=vocab_by_unit.get(unit.unit_id, ()),
+                axes=inventory.unit_axes.get(unit.unit_id, (classes.UNCLASSIFIED,)),
+                ops=inventory.unit_ops.get(unit.unit_id, ()),
+                textual=lit.textual if lit else (),
+                prose_added=lit.prose_added if lit else (),
+                prose_removed=lit.prose_removed if lit else (),
             )
         )
 
-    known_units = {unit.unit_id for unit in units} | set(claimed)
-    findings: list[CollectedFinding] = []
-    dropped: list[DroppedFinding] = []
-    findings_in = 0
-    seen_dedup: dict[str, str] = {}
-    unit_confidence = {
-        unit.unit_id: unit.confidence for unit in units
-    }
+    # 3. refs (cont.) — a FILE_SUMMARY naming an id that does not exist goes
+    # the same way as an orphan 설명: dropped, counted, shown as failed.
+    summaries: dict[str, str] = {}
     for analysis in analyses:
-        for candidate in analysis.findings:
-            findings_in += 1
-            if candidate.unit_id not in known_units:
-                dropped.append(
-                    DroppedFinding(
-                        candidate.finding_id,
-                        "bad_ref",
-                        f"unit_id {candidate.unit_id} 이 05-structure/20-analysis 에 없음",
-                    )
-                )
-                continue
-            if not candidate.evidence or not all(
-                _quote_matches(item, base_tree, head_tree) for item in candidate.evidence
-            ):
-                dropped.append(
-                    DroppedFinding(
-                        candidate.finding_id,
-                        "quote_mismatch",
-                        "evidence quote 가 rev 지정 트리의 line ±3 창에서 불일치",
-                    )
-                )
-                continue
-            key = _dedup_key(candidate)
-            if key in seen_dedup:
-                dropped.append(
-                    DroppedFinding(
-                        candidate.finding_id,
-                        "merged_dup",
-                        f"{seen_dedup[key]} 와 같은 절 쌍·같은 리터럴",
-                    )
-                )
-                continue
-            seen_dedup[key] = candidate.finding_id
-            findings.append(
-                CollectedFinding(
-                    finding_id=candidate.finding_id,
-                    severity=_severity(candidate),
-                    category=candidate.category,
-                    unit_id=candidate.unit_id,
-                    evidence=candidate.evidence,
-                    claim=candidate.claim,
-                    recommendation=candidate.recommendation,
-                    confidence=unit_confidence.get(candidate.unit_id, ""),
-                )
-            )
+        if any(ref not in known for ref in analysis.summary_refs):
+            refs_dropped += 1
+            continue
+        text = _one_line(analysis.summary)
+        if text:
+            summaries[analysis.file_id] = text
 
-    levels = {
-        "L1": sum(1 for unit in units if unit.level == "L1"),
-        "L2": sum(1 for unit in units if unit.level == "L2"),
-        "L3": sum(1 for unit in units if unit.level == "L3"),
-        "promoted": levelcheck.promoted,
-    }
-    counts = {
-        "blocker": sum(1 for f in findings if f.severity == "BLOCKER"),
-        "major": sum(1 for f in findings if f.severity == "MAJOR"),
-        "minor": sum(1 for f in findings if f.severity == "MINOR"),
-    }
-    gate = {
-        "files_parsed": len(analyses),
-        "findings_in": findings_in,
-        "dropped_bad_check_ref": sum(1 for d in dropped if d.reason == "bad_ref"),
-        "dropped_quote_mismatch": sum(1 for d in dropped if d.reason == "quote_mismatch"),
-        "merged_dup": sum(1 for d in dropped if d.reason == "merged_dup"),
-        "findings_out": len(findings),
-    }
-
-    confidence_dist = {"high": 0, "medium": 0, "low": 0}
-    for analysis in analyses:
-        head = _confidence_head(analysis.confidence)
-        if head in confidence_dist:
-            confidence_dist[head] += 1
-    uncertain = tuple(
-        analysis.uncertain
-        for analysis in analyses
-        if analysis.uncertain and analysis.uncertain != "none"
+    # 5. group + sort — product folder, then file, then the section order 05
+    # emitted (document order inside a file).
+    entries = sorted(
+        changeset.files, key=lambda entry: (_product_dir(entry.path), entry.path)
+    )
+    file_blocks = tuple(
+        CollectedFile(
+            file_id=entry.fid,
+            path=entry.path,
+            product_dir=_product_dir(entry.path),
+            units=sum(1 for unit in units if unit.file == entry.fid),
+            summary=summaries.get(entry.fid, SUMMARY_FAILED),
+        )
+        for entry in entries
+    )
+    order = {entry.fid: index for index, entry in enumerate(entries)}
+    ordered_units = tuple(
+        sorted(units, key=lambda unit: order.get(unit.file, len(order)))
     )
 
-    if counts["blocker"] > 0:
-        verdict = "BLOCK"
-        reason = f"모순 {counts['blocker']}건 — 같은 키의 리터럴 값이 서로 충돌"
-    elif counts["major"] > 0 or levels["L1"] > 0:
-        parts = []
-        if levels["L1"]:
-            parts.append(f"맥락이 바뀐 절 {levels['L1']}건")
-        if counts["major"]:
-            parts.append(f"주의할 finding {counts['major']}건")
-        verdict = "REVIEW"
-        reason = " + ".join(parts)
-    else:
-        verdict = "PASS"
-        reason = "값/표현 변경만 있고 finding 없음"
+    # 4. counts — measured from the atom inventory (05/06 facts), not from
+    # unit-level tags: a mixed unit lights every column its atoms touch.
+
+    confidence_dist = dict.fromkeys(_CONF_KEYS, 0)
+    for analysis in analyses:
+        head = analysis.confidence.split()[0].lower() if analysis.confidence else ""
+        if head in confidence_dist:
+            confidence_dist[head] += 1
 
     return Collect(
         mr_iid=mr_iid,
-        verdict=verdict,
-        reason=reason,
-        levels=levels,
         files={
             "added": sum(1 for e in changeset.files if e.status == "added"),
             "deleted": sum(1 for e in changeset.files if e.status == "removed"),
+            "modified": sum(1 for e in changeset.files if e.status == "modified"),
             "moved_sections": len(structure.moved),
         },
-        counts=counts,
-        gate=gate,
-        verify=_verify_summary(verifier_text),
-        coverage={"checks": 0, "answered": 0, "missing": []},
+        matrix=inventory.matrix_by_file,
+        classes=inventory.axis_counts,
+        ops=inventory.op_counts,
+        value_changes=inventory.value_changes,
+        verify=verify_summary(verifier_text),
         confidence_dist=confidence_dist,
-        uncertain=uncertain,
+        uncertain=tuple(
+            analysis.uncertain
+            for analysis in analyses
+            if analysis.uncertain and analysis.uncertain != "none"
+        ),
         failed_files=failed_files,
-        must_read=_must_read(tuple(units), tuple(findings)),
-        units=tuple(units),
-        findings=tuple(findings),
-        dropped=tuple(dropped),
+        refs_dropped=refs_dropped,
+        file_blocks=file_blocks,
+        units=ordered_units,
     )
 
 
 def render_collect(collect: Collect) -> str:
-    """Render 50-collect.md — the reporter/render parse contract."""
+    """Render 50-collect.md — the render node's parse contract."""
 
     parts = [
         render_frontmatter(
             {
                 "mr_iid": collect.mr_iid,
-                "verdict": collect.verdict,
-                "reason": collect.reason,
-                "levels": collect.levels,
                 "files": collect.files,
-                "counts": collect.counts,
-                "gate": collect.gate,
-                "verify": collect.verify,
-                "coverage": collect.coverage,
+               "matrix": collect.matrix,
+               "classes": collect.classes,
+                "ops": collect.ops,
+                "value_changes": collect.value_changes,
+               "verify": collect.verify,
                 "confidence_dist": collect.confidence_dist,
                 "uncertain": list(collect.uncertain),
                 "failed_files": list(collect.failed_files),
-                "must_read": list(collect.must_read),
+                "refs_dropped": collect.refs_dropped,
             }
         ),
     ]
-    for unit in collect.units:
+    for entry in collect.file_blocks:
         parts.append("")
         parts.append(
             render_section(
-                "UNIT",
-                unit.unit_id,
+                "FILE",
+                entry.file_id,
                 {
-                    "level": unit.level,
-                    "section": unit.section,
-                    "file": unit.file,
-                    "removed": list(unit.removed),
-                    "added": list(unit.added),
-                    "changed": [
-                        {"key": c.key, "from": c.from_value, "to": c.to_value}
-                        for c in unit.changed
-                    ],
+                    "path": entry.path,
+                    "product_dir": entry.product_dir,
+                    "units": entry.units,
                 },
             )
         )
-        parts.append(f"**before** {unit.before}")
-        parts.append(f"**after** {unit.after}")
-    for finding in collect.findings:
-        parts.append("")
-        parts.append(
-            render_section(
-                "FINDING",
-                finding.finding_id,
-                {
-                    "severity": finding.severity,
-                    "category": finding.category,
-                    "unit_id": finding.unit_id,
-                    "evidence": [
-                        {
-                            "role": item.role,
-                            "rev": item.rev,
-                            "file": item.file,
-                            "line": item.line,
-                            "quote": item.quote,
-                        }
-                        for item in finding.evidence
-                    ],
-                },
-            )
-        )
-        parts.append(f"**claim** {finding.claim}")
-        parts.append(f"**recommendation** {finding.recommendation}")
-    for item in collect.dropped:
-        parts.append("")
-        parts.append(
-            render_section(
-                "DROPPED",
-                item.finding_id,
-                {"reason": item.reason, "detail": item.detail},
-            )
-        )
+        parts.append("**FILE_SUMMARY** " + entry.summary)
+        for unit in collect.units_of(entry.file_id):
+            fields: dict[str, object] = {
+                "kind": unit.kind,
+                "structure_kind": unit.structure_kind,
+                "class": unit.klass,
+                "section": unit.section,
+                "file": unit.file,
+                "removed": list(unit.removed),
+                "added": list(unit.added),
+                "changed": [
+                    {"key": c.key, "from": c.from_value, "to": c.to_value}
+                    for c in unit.changed
+                ],
+                "excerpt_ref": unit.excerpt_ref,
+                "axes": list(unit.axes),
+                "ops": list(unit.ops),
+                "textual": [
+                    {"before": before, "after": after}
+                    for before, after in unit.textual
+                ],
+                "prose_added": list(unit.prose_added),
+                "prose_removed": list(unit.prose_removed),
+            }
+            if unit.vocab_violation:
+                fields["vocab_violation"] = list(unit.vocab_violation)
+            parts.append("")
+            parts.append(render_section("UNIT", unit.unit_id, fields))
+            parts.append("**설명** " + unit.explanation)
     return "\n".join(parts) + "\n"
 
 
+def _as_int(value: object, default: int = 0) -> int:
+    try:
+        return int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return default
+
+
+def _int_map(value: object) -> dict[str, int]:
+    if not isinstance(value, dict):
+        return {}
+    return {str(key): _as_int(item) for key, item in value.items()}
+
+
 def parse_collect(text: str) -> Collect:
-    """Parse 50-collect.md back — the render node's input contract."""
+    """Parse 50-collect.md back — render reads the artifact, not the builder."""
 
     meta = parse_frontmatter(text)
     sections = parse_sections(text)
-
-    def as_int(value: object, default: int = 0) -> int:
-        try:
-            return int(value)  # type: ignore[arg-type]
-        except (TypeError, ValueError):
-            return default
 
     def dict_of(key: str) -> dict[str, object]:
         raw = meta.get(key)
         return dict(raw) if isinstance(raw, dict) else {}
 
+    def str_list(key: str) -> tuple[str, ...]:
+        raw = meta.get(key)
+        return tuple(str(item) for item in raw) if isinstance(raw, list) else ()
+
+    matrix: dict[str, dict[str, dict[str, int]]] = {}
+    for file_id, axes in dict_of("matrix").items():
+        if isinstance(axes, dict):
+            matrix[str(file_id)] = {
+                str(axis): _int_map(ops) for axis, ops in axes.items()
+            }
+
+    file_blocks: list[CollectedFile] = []
     units: list[CollectedUnit] = []
-    findings: list[CollectedFinding] = []
-    dropped: list[DroppedFinding] = []
     for header, block_lines in _split_blocks(text):
         bold = _bold_lines(block_lines)
         fields = sections.get(header[1], {})
-        if header[0] == "UNIT":
-            changed_raw = fields.get("changed") or []
+        if header[0] == "FILE":
+            file_blocks.append(
+                CollectedFile(
+                    file_id=header[1],
+                    path=str(fields.get("path", "")),
+                    product_dir=str(fields.get("product_dir", "")),
+                    units=_as_int(fields.get("units")),
+                    summary=bold.get("FILE_SUMMARY", ""),
+                )
+            )
+        elif header[0] == "UNIT":
             units.append(
                 CollectedUnit(
                     unit_id=header[1],
-                    level=str(fields.get("level", "")),
+                    kind=str(fields.get("kind", "")),
+                    structure_kind=str(fields.get("structure_kind", "")),
+                    klass=str(fields.get("class", "")),
                     section=str(fields.get("section", "")),
                     file=str(fields.get("file", "")),
                     removed=tuple(str(v) for v in fields.get("removed") or []),
@@ -497,66 +386,42 @@ def parse_collect(text: str) -> Collect:
                             str(row.get("from", "")),
                             str(row.get("to", "")),
                         )
-                        for row in changed_raw
+                        for row in fields.get("changed") or []
                         if isinstance(row, dict)
                     ),
-                    before=bold.get("before", ""),
-                    after=bold.get("after", ""),
-                )
-            )
-        elif header[0] == "FINDING":
-            evidence_raw = fields.get("evidence") or []
-            findings.append(
-                CollectedFinding(
-                    finding_id=header[1],
-                    severity=str(fields.get("severity", "")),
-                    category=str(fields.get("category", "")),
-                    unit_id=str(fields.get("unit_id", "")),
-                    evidence=tuple(
-                        Evidence(
-                            role=str(row.get("role", "")),
-                            rev=str(row.get("rev", "")),
-                            file=str(row.get("file", "")),
-                            line=as_int(row.get("line")),
-                            quote=str(row.get("quote", "")),
-                        )
-                        for row in evidence_raw
+                    excerpt_ref=str(fields.get("excerpt_ref") or ""),
+                    axes=tuple(str(v) for v in fields.get("axes") or []),
+                    ops=tuple(str(v) for v in fields.get("ops") or []),
+                    textual=tuple(
+                        (str(row.get("before", "")), str(row.get("after", "")))
+                        for row in fields.get("textual") or []
                         if isinstance(row, dict)
                     ),
-                    claim=bold.get("claim", ""),
-                    recommendation=bold.get("recommendation", ""),
+                    prose_added=tuple(
+                        str(v) for v in fields.get("prose_added") or []
+                    ),
+                    prose_removed=tuple(
+                        str(v) for v in fields.get("prose_removed") or []
+                    ),
+                    explanation=bold.get("설명", ""),
+                    vocab_violation=tuple(
+                        str(v) for v in fields.get("vocab_violation") or []
+                    ),
                 )
             )
-        elif header[0] == "DROPPED":
-            dropped.append(
-                DroppedFinding(
-                    finding_id=header[1],
-                    reason=str(fields.get("reason", "")),
-                    detail=str(fields.get("detail", "")),
-                )
-            )
-
-    def str_list(key: str) -> tuple[str, ...]:
-        raw = meta.get(key)
-        if isinstance(raw, list):
-            return tuple(str(item) for item in raw)
-        return ()
 
     return Collect(
-        mr_iid=as_int(meta.get("mr_iid")),
-        verdict=str(meta.get("verdict", "")),
-        reason=str(meta.get("reason", "")),
-        levels={k: as_int(v) for k, v in dict_of("levels").items()},
-        files={k: as_int(v) for k, v in dict_of("files").items()},
-        counts={k: as_int(v) for k, v in dict_of("counts").items()},
-        gate={k: as_int(v) for k, v in dict_of("gate").items()},
+        mr_iid=_as_int(meta.get("mr_iid")),
+        files=_int_map(dict_of("files")),
+        matrix=matrix,
+        classes=_int_map(dict_of("classes")),
+        ops=_int_map(dict_of("ops")),
+        value_changes=_as_int(meta.get("value_changes")),
         verify=dict_of("verify"),
-        coverage=dict_of("coverage"),
-        confidence_dist={k: as_int(v) for k, v in dict_of("confidence_dist").items()},
+        confidence_dist=_int_map(dict_of("confidence_dist")),
         uncertain=str_list("uncertain"),
         failed_files=str_list("failed_files"),
-        must_read=str_list("must_read"),
+        refs_dropped=_as_int(meta.get("refs_dropped")),
+        file_blocks=tuple(file_blocks),
         units=tuple(units),
-        findings=tuple(findings),
-        dropped=tuple(dropped),
     )

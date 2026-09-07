@@ -110,6 +110,32 @@ def test_summarize_extracts_frontmatter_counts(tmp_path: Path) -> None:
     assert "counts: files=2, md=1, non_md=1, skipped=False" in summary
 
 
+def test_summarize_prefers_the_render_nodes_slack_summary(tmp_path: Path) -> None:
+    """One overview, two destinations — Slack must not compute its own."""
+
+    (tmp_path / "00-changeset.md").write_text(
+        "---\nmr_iid: 17\ncounts: {files: 2, md: 1}\n---\n", encoding="utf-8"
+    )
+    (tmp_path / "slack-summary.txt").write_text(
+        "MR !17\n구조 0 · 의미 1 (값 1) · 표현 0\n[리포트 신뢰도] 지적 잔존 0\n",
+        encoding="utf-8",
+    )
+    summary = rail._summarize(tmp_path, 4, 17)
+    assert "MR !17" in summary
+    assert "exit=4" in summary
+    assert "[리포트 신뢰도] 지적 잔존 0" in summary
+    assert "counts:" not in summary  # the fallback stayed out of the way
+
+
+def test_summary_keys_are_exactly_the_two_count_blocks() -> None:
+    """The fallback reads counts only — nothing that could read as a ruling."""
+
+    assert rail._SUMMARY_KEYS == {
+        "changeset": ("counts", ("files", "md", "non_md", "skipped")),
+        "literals": ("totals", ("removed", "added", "changed")),
+    }
+
+
 def test_uploadable_report_rejects_stub_output(tmp_path: Path) -> None:
     (tmp_path / "report.html").write_text(
         "<html>RAIL-STUB placeholder</html>", encoding="utf-8"

@@ -1,108 +1,257 @@
-"""Tests for app/mrdoc/report_render.py — verdict/ref gates + escaping."""
+"""Tests for app/mrdoc/report_render.py — the four sections, one gate, escaping.
+
+The page's contract is that the deterministic half always renders. A run
+whose 설명 all failed must still show the overview, the matrix, the heading
+trees, the raw text and the literal values; only the prose says it failed.
+The other half is the refs gate: a block pointing at a file no block
+declares is dropped and counted, never re-prompted.
+"""
 
 from __future__ import annotations
 
-import pytest
+import re
+from dataclasses import replace
 
-from app.mrdoc.collect import Collect, CollectedUnit
-from app.mrdoc.frontmatter import render_frontmatter, render_section
-from app.mrdoc.report_render import parse_reportdata, render_report_html
+from app.mrdoc.analysis import AnalysisUnit, FileAnalysis
+from app.mrdoc.changeset import build_changeset
+from app.mrdoc.collect import build_collect, parse_collect, render_collect
+from app.mrdoc.excerpt import build_excerpts
+from app.mrdoc.levelcheck import build_levelcheck
+from app.mrdoc.literals import build_literals
+from app.mrdoc.report_render import (
+    overview_lines,
+    render_report_html,
+    render_slack_summary,
+    structure_notes,
+)
+from app.mrdoc.structure import build_structure
+
+_BASE = {"docs/p-a/setup.md": "# 개요\n권장 Python 3.12.4\n\n## 정책\n만료 60분\n"}
+_HEAD = {
+    "docs/p-a/setup.md": "# 개요\n권장 Python 3.12.7\n\n## 정책 v2\n만료 30분\n",
+    "docs/p-a/new.md": "# 새 문서\n항목 3개\n",
+}
+
+_RAW_FILES = [
+    {
+        "filename": "docs/p-a/setup.md",
+        "status": "modified",
+        "patch": "@@ -1,5 +1,5 @@",
+    },
+    {"filename": "docs/p-a/new.md", "status": "added", "patch": "@@ -0,0 +1,2 @@"},
+]
 
 
-def _collect(verdict: str = "PASS") -> Collect:
-    return Collect(
-        mr_iid=17,
-        verdict=verdict,
-        reason="수집 사유 문구",
-        levels={"L1": 0, "L2": 1, "L3": 0, "promoted": 0},
-        files={"added": 0, "deleted": 0, "moved_sections": 0},
-        counts={"blocker": 0, "major": 0, "minor": 0},
-        gate={"files_parsed": 1, "findings_in": 0, "findings_out": 0},
-        verify={"rounds": 1, "verdict": "APPROVE", "outstanding": 0},
-        coverage={"checks": 0, "answered": 0, "missing": []},
-        confidence_dist={"high": 1, "medium": 0, "low": 0},
-        uncertain=(),
-        failed_files=(),
-        must_read=(),
-        units=(
-            CollectedUnit(
-                unit_id="u-1",
-                level="L2",
-                section="docs/a.md § 가이드",
-                file="docs/a.md",
-                removed=(),
-                added=(),
-                changed=(),
-                before="이전",
-                after="이후",
-                confidence="high",
-            ),
-        ),
-        findings=(),
-        dropped=(),
+def _pipeline(*, explain: bool = True):
+    """Run the deterministic chain, then collect — returns what render reads."""
+
+    changeset = build_changeset(
+        mr_iid=18,
+        project_id="p",
+        base_sha="9c1e77a",
+        head_sha="ee95ae7",
+        start_sha="9c1e77a",
+        raw_files=_RAW_FILES,
+    )
+    structure = build_structure(_BASE, _HEAD, changeset)
+    literals = build_literals(structure, changeset, _BASE, _HEAD)
+    excerpts = build_excerpts(structure, changeset, _BASE, _HEAD, mr_iid=18)
+    fid = next(e.fid for e in changeset.files if e.path.endswith("setup.md"))
+    analyses: list[FileAnalysis] = []
+    if explain:
+        units = [unit for unit in structure.changed if unit.file_id == fid]
+        analyses.append(
+            FileAnalysis(
+                file_id=fid,
+                path="docs/p-a/setup.md",
+                units=tuple(
+                    AnalysisUnit(
+                        unit.unit_id,
+                        unit.section_id,
+                        "",
+                        "권장 버전 3.12.4 → 3.12.7 로 바뀌었다.",
+                    )
+                    for unit in units
+                ),
+                summary_refs=tuple(unit.unit_id for unit in units),
+                summary="버전 문구 1곳, 만료 값 1곳 변경.",
+                confidence="high — 두 절을 읽었다",
+            )
+        )
+    levelcheck = build_levelcheck(18, literals, analyses, structure)
+    collect = build_collect(
+        mr_iid=18,
+        analyses=analyses,
+        # what load_analyses_split reports: the artifact name, not the doc path
+        failed_files=() if explain else (fid + ".md",),
+        levelcheck=levelcheck,
+        literals=literals,
+        structure=structure,
+        changeset=changeset,
+        excerpts=excerpts,
+        verifier_text="",
+    )
+    return parse_collect(render_collect(collect)), structure, excerpts
+
+
+def _page(**kwargs) -> str:
+    collect, structure, excerpts = _pipeline(**kwargs)
+    return render_report_html(
+        collect,
+        mr_iid=18,
+        excerpts=excerpts,
+        structure=structure,
+        base_sha="9c1e77a",
+        head_sha="ee95ae7",
+        diff_url="http://example.invalid/mr/18/diffs",
     )
 
 
-def _report(
-    verdict: str = "PASS",
-    headline_body: str = "요약 문장",
-    headline_refs: tuple[str, ...] = (),
-    reason_body: str = "사유 문장",
-    reason_refs: tuple[str, ...] = (),
-) -> str:
-    parts = [
-        render_frontmatter(
-            {
-                "verdict": verdict,
-                "sentences": 2,
-                "STATUS": "OK",
-                "SOURCES": '"1/1"',
-                "UNSOURCED": "none",
-                "CONFLICTS": "none",
-                "UNCOVERED": "none",
-                "CONFIDENCE": "high",
-            }
-        ),
-        "",
-        render_section("HEADLINE", "", {"refs": list(headline_refs)}),
-        headline_body,
-        "",
-        render_section("VERDICT_REASON", "", {"refs": list(reason_refs)}),
-        reason_body,
+def test_page_has_the_four_sections() -> None:
+    page = _page()
+    for heading in (
+        "1. 개요",
+        "2. 변경 매트릭스",
+        "3. 파일별 상세",
+        "4. 부록",
+        "3.1 구조 변화",
+        "3.2 추가된 내용",
+        "3.3 삭제된 내용",
+        "3.4 변경된 내용",
+    ):
+        assert heading in page, heading
+
+
+def test_value_change_and_raw_text_appear_together() -> None:
+    """3.4 carries the literal diff beside the excerpt — tools, then 설명."""
+
+    page = _page()
+    assert "version 3.12.4 → 3.12.7" in page
+    assert "권장 Python 3.12.4" in page  # 07 before
+    assert "권장 Python 3.12.7" in page  # 07 after
+    assert "권장 버전 3.12.4 → 3.12.7 로 바뀌었다." in page
+    assert "[의미]" in page
+
+
+def test_slack_summary_is_section_one_verbatim() -> None:
+    collect, _structure, _excerpts = _pipeline()
+    lines = overview_lines(collect, mr_iid=18, base_sha="9c1e77a", head_sha="ee95ae7")
+    summary = render_slack_summary(
+        collect,
+        mr_iid=18,
+        base_sha="9c1e77a",
+        head_sha="ee95ae7",
+        link="http://example.invalid/mr/18/diffs",
+    )
+    assert summary.splitlines() == [*lines, "http://example.invalid/mr/18/diffs"]
+    assert "[리포트 신뢰도]" in summary
+    assert "권장 Python" not in summary  # no document body ever reaches Slack
+    page = _page()
+    for line in lines:
+        assert line in page, line
+
+
+def test_page_renders_with_no_analysis_at_all() -> None:
+    """LLM failure isolated: overview, matrix, trees, raw text, values intact."""
+
+    page = _page(explain=False)
+    assert "1. 개요" in page
+    assert "version 3.12.4 → 3.12.7" in page
+    assert "권장 Python 3.12.7" in page
+    assert "설명 생성 실패" in page
+    assert "FILE_SUMMARY 생성 실패" in page
+    assert "개명" in page  # 3.1 still describes the heading change
+    # two documents, counted once each — the unreadable 20-analysis artifact
+    # name resolves through file_id instead of adding a third entry
+    assert "설명 생성 실패 파일 2" in page
+
+
+def test_prose_is_escaped() -> None:
+    collect, structure, excerpts = _pipeline()
+    hostile = tuple(
+        replace(unit, explanation="<script>alert(1)</script>")
+        for unit in collect.units
+    )
+    page = render_report_html(
+        replace(collect, units=hostile),
+        mr_iid=18,
+        excerpts=excerpts,
+        structure=structure,
+    )
+    assert "&lt;script&gt;" in page
+    assert "<script>alert" not in page
+
+
+def test_unit_pointing_at_an_unknown_file_is_dropped() -> None:
+    collect, structure, excerpts = _pipeline()
+    orphan = replace(collect.units[0], file="no-such-file")
+    broken = replace(collect, units=(orphan, *collect.units[1:]))
+    page = render_report_html(
+        broken, mr_iid=18, excerpts=excerpts, structure=structure
+    )
+    assert "refs 드롭 1" in page
+    assert orphan.unit_id not in page
+
+
+def test_appendix_carries_the_fixed_criteria() -> None:
+    page = _page()
+    assert "분류 기준표" in page
+    assert "헤딩 · 파일 · 절의 존재 · 위치 · 레벨이 바뀜. 본문 명제는 무관" in page
+    assert "명제 동일 — 동의어 · 어순 · 오탈자 · 서식 · 문장 분할/병합" in page
+    assert "유닛 ID · 소스 대응" in page
+    assert "부분 실패 목록" in page
+
+
+def test_page_shows_only_the_four_sections_and_three_properties() -> None:
+    """Closed sets: no banner, no ranked cards, no level labels, no 권고."""
+
+    page = _page()
+    assert re.findall(r"<h2>([^<]*)</h2>", page) == [
+        "1. 개요",
+        "2. 변경 매트릭스",
+        "3. 파일별 상세",
+        "4. 부록",
     ]
-    return "\n".join(parts) + "\n"
+    tags = set(re.findall(r'<span class="tag">\[([^\]]*)\]</span>', page))
+    # a mixed unit's tag lists every axis it touches, ' · '-joined
+    atoms = {axis for tag in tags for axis in tag.split(" · ")}
+    assert atoms <= {"구조", "의미", "표현", "미분류"}
+    assert "부분" not in atoms  # the partial note is not an axis
+    assert "권고" not in page
+    assert not {"L1", "L2", "L3"} & set(re.findall(r"L[123]", page))
 
 
-def test_verdict_mismatch_raises() -> None:
-    with pytest.raises(ValueError, match="verdict mismatch"):
-        render_report_html(_collect("PASS"), _report(verdict="REVIEW"), mr_iid=17)
+def test_pure_reorder_is_read_off_the_two_trees() -> None:
+    """Identical text in a new place makes no unit — only the trees show it."""
 
-
-def test_block_with_bad_refs_is_dropped() -> None:
-    html = render_report_html(
-        _collect("PASS"),
-        _report(reason_body="유령 블록 문장", reason_refs=("u-ghost",)),
-        mr_iid=17,
+    base = {"docs/x.md": "# A\n알파\n\n# B\n베타\n"}
+    head = {"docs/x.md": "# B\n베타\n\n# A\n알파\n"}
+    changeset = build_changeset(
+        mr_iid=1,
+        project_id="p",
+        base_sha="b",
+        head_sha="h",
+        start_sha="s",
+        raw_files=[
+            {
+                "filename": "docs/x.md",
+                "status": "modified",
+                "patch": "@@ -1,5 +1,5 @@",
+            }
+        ],
     )
-    assert "수집 사유 문구" in html  # collect.reason fallback
-    assert "유령 블록 문장" not in html
+    structure = build_structure(base, head, changeset)
+    assert structure.changed == ()
+    assert structure_notes(structure, "docs/x.md") == [
+        "§B 가 문서 맨 앞으로 이동되었다",
+        "§A 가 §B 뒤로 이동되었다",
+    ]
 
 
-def test_valid_blocks_render_and_scripts_escape() -> None:
-    html = render_report_html(
-        _collect("PASS"),
-        _report(headline_body="<script>alert(1)</script>"),
-        mr_iid=17,
-        diff_url="http://example.invalid/mr/17/diffs",
-    )
-    assert "&lt;script&gt;" in html
-    assert "<script>" not in html
-    assert "MR diff 보기" in html
-    assert "docs/a.md § 가이드" in html
-
-
-def test_parse_reportdata_strips_fences_from_bodies() -> None:
-    data = parse_reportdata(_report())
-    headline = next(b for b in data.blocks if b.kind == "HEADLINE")
-    assert headline.body == "요약 문장"
-    assert headline.refs == ()
+def test_rename_and_no_change_both_get_a_sentence() -> None:
+    _collect, structure, _excerpts = _pipeline()
+    notes = structure_notes(structure, "docs/p-a/setup.md")
+    assert "§정책 가 §정책 v2 로 개명되었다" in notes
+    assert structure_notes(structure, "docs/p-a/new.md") == [
+        "§새 문서 절이 문서 맨 앞에 추가되었다"
+    ]

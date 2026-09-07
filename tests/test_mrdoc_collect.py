@@ -1,200 +1,280 @@
-"""Tests for app/mrdoc/collect.py — the deterministic finding gate."""
+"""Tests for app/mrdoc/collect.py — assembly, the matrix, and empty prose.
+
+Three things have to hold. The unit spine is 05-structure, not 20-analysis,
+so a file the analyzer never covered still shows its kind, its raw literal
+diff and its tool-determined 성질 — the design calls that degrading to "a
+report without 설명" and it is the difference between an empty report and a
+wrong one. The matrix is counted here once, because the report prints it
+verbatim and two sources of a number leave nothing to compare. And prose
+pointing at an id that does not exist is dropped and counted, never
+re-prompted: the loop keeps one exit condition.
+"""
 
 from __future__ import annotations
 
-from app.mrdoc.analysis import AnalysisFinding, AnalysisUnit, Evidence, FileAnalysis
-from app.mrdoc.changeset import Changeset, FileEntry
-from app.mrdoc.collect import build_collect
-from app.mrdoc.frontmatter import render_frontmatter
-from app.mrdoc.levelcheck import LevelCheck, LevelRow
-from app.mrdoc.literals import ChangedValue, Literals, UnitLiterals
-from app.mrdoc.structure import Structure, TreeSection
+from dataclasses import replace
 
-BASE_TREE = {"docs/a.md": "intro\nRetry Count: 3\n"}
-HEAD_TREE = {"docs/a.md": "Retry Count: 5\noutro\n"}
+from app.mrdoc.analysis import AnalysisUnit, FileAnalysis
+from app.mrdoc.changeset import build_changeset
+from app.mrdoc.collect import (
+    EXPLANATION_FAILED,
+    SUMMARY_FAILED,
+    build_collect,
+    parse_collect,
+    render_collect,
+)
+from app.mrdoc.excerpt import build_excerpts
+from app.mrdoc.frontmatter import parse_frontmatter, parse_sections
+from app.mrdoc.levelcheck import build_levelcheck
+from app.mrdoc.literals import build_literals
+from app.mrdoc.structure import build_structure
 
-
-def _structure() -> Structure:
-    return Structure(
-        tree=(
-            TreeSection(
-                section_id="s-x",
-                file="docs/a.md",
-                heading_path="guide > setup",
-                lines=(1, 2),
-            ),
-        ),
-        changed=(),
-        moved=(),
-    )
+_BASE = {"docs/p-a/auth.md": "# 개요\n권장 Python 3.12.4\n\n## 정책\n만료 60분\n"}
+_HEAD = {
+    "docs/p-a/auth.md": "# 개요\n권장 Python 3.12.7\n\n## 정책 v2\n만료 30분\n",
+    "docs/p-a/new.md": "# 새 문서\n항목 3개\n",
+}
 
 
-def _changeset() -> Changeset:
-    return Changeset(
-        mr_iid=17,
+def _inputs():
+    """(changeset, structure, literals, excerpts) for the two-file fixture."""
+
+    changeset = build_changeset(
+        mr_iid=18,
         project_id="p",
         base_sha="b",
         head_sha="h",
         start_sha="s",
-        files=(
-            FileEntry(
-                path="docs/a.md",
-                status="modified",
-                old_path=None,
-                new_ranges=((1, 2),),
-                old_ranges=((1, 2),),
-            ),
+        raw_files=[
+            {
+                "filename": "docs/p-a/auth.md",
+                "status": "modified",
+                "patch": "@@ -1,5 +1,5 @@",
+            },
+            {
+                "filename": "docs/p-a/new.md",
+                "status": "added",
+                "patch": "@@ -0,0 +1,2 @@",
+            },
+        ],
+    )
+    structure = build_structure(_BASE, _HEAD, changeset)
+    literals = build_literals(structure, changeset, _BASE, _HEAD)
+    excerpts = build_excerpts(structure, changeset, _BASE, _HEAD, mr_iid=18)
+    return changeset, structure, literals, excerpts
+
+
+def _analysis(structure, changeset, **overrides) -> FileAnalysis:
+    """A full 20-analysis for auth.md — new.md is deliberately uncovered."""
+
+    fid = next(e.fid for e in changeset.files if e.path.endswith("auth.md"))
+    units = [unit for unit in structure.changed if unit.file_id == fid]
+    fields: dict = {
+        "file_id": fid,
+        "path": "docs/p-a/auth.md",
+        "units": tuple(
+            AnalysisUnit(unit.unit_id, unit.section_id, "", "값 하나가 바뀌었다.")
+            for unit in units
         ),
-        non_md=(),
-        skipped=False,
-    )
+        "summary_refs": tuple(unit.unit_id for unit in units),
+        "summary": "값 2곳 변경.",
+        "confidence": "high — 두 절을 읽었다",
+    }
+    fields.update(overrides)
+    return FileAnalysis(**fields)
 
 
-def _levelcheck(verified: str = "L2") -> LevelCheck:
-    return LevelCheck(
-        mr_iid=17,
-        units=(LevelRow(unit_id="u-1", claimed="L2", verified=verified, basis="b"),),
-    )
-
-
-def _literals() -> Literals:
-    return Literals(
-        units=(
-            UnitLiterals(
-                unit_id="u-1",
-                section_id="s-x",
-                removed=(),
-                added=(),
-                changed=(ChangedValue("Retry Count", "3", "5"),),
-            ),
-        )
-    )
-
-
-def _analysis(findings: tuple[AnalysisFinding, ...] = ()) -> FileAnalysis:
-    return FileAnalysis(
-        file_id="docs-a-md",
-        path="docs/a.md",
-        units=(AnalysisUnit("u-1", "s-x", "L2", "이전 맥락", "이후 맥락"),),
-        findings=findings,
-        confidence="high",
-    )
-
-
-def _verifier_text() -> str:
-    return render_frontmatter(
-        {
-            "mr_iid": 17,
-            "round": 1,
-            "verdict": "APPROVE",
-            "checked": 1,
-            "required_fixes": 0,
-            "uncovered": "none",
-            "uncertain": "none",
-        }
-    )
-
-
-def _evidence(rev: str, line: int, quote: str) -> Evidence:
-    return Evidence(role="conflicting", rev=rev, file="docs/a.md", line=line, quote=quote)
-
-
-def _finding(
-    fid: str,
-    category: str,
-    unit_id: str = "u-1",
-    evidence: tuple[Evidence, ...] = (),
-) -> AnalysisFinding:
-    return AnalysisFinding(
-        finding_id=fid,
-        unit_id=unit_id,
-        category=category,
-        evidence=evidence,
-        claim="클레임",
-        recommendation="권고",
-    )
-
-
-def _collect(
-    analyses: list[FileAnalysis], levelcheck: LevelCheck | None = None
-):
+def _collect(analyses: list[FileAnalysis], *, failed=()):
+    changeset, structure, literals, excerpts = _inputs()
+    levelcheck = build_levelcheck(18, literals, analyses, structure)
     return build_collect(
-        mr_iid=17,
+        mr_iid=18,
         analyses=analyses,
-        failed_files=(),
-        levelcheck=levelcheck or _levelcheck(),
-        literals=_literals(),
-        structure=_structure(),
-        changeset=_changeset(),
-        verifier_text=_verifier_text(),
-        base_tree=BASE_TREE,
-        head_tree=HEAD_TREE,
+        failed_files=failed,
+        levelcheck=levelcheck,
+        literals=literals,
+        structure=structure,
+        changeset=changeset,
+        excerpts=excerpts,
+        verifier_text="",
     )
 
 
-def test_blocker_on_conflicting_literal_values() -> None:
-    finding = _finding(
-        "f-01",
-        "contradiction",
-        evidence=(
-            _evidence("base", 2, "Retry Count: 3"),
-            _evidence("head", 1, "Retry Count: 5"),
+def _unit(collect, needle: str):
+    return next(unit for unit in collect.units if needle in unit.section)
+
+
+def test_unit_assembly_takes_every_fact_from_a_tool() -> None:
+    changeset, structure, _literals, _excerpts = _inputs()
+    collect = _collect([_analysis(structure, changeset)])
+    unit = _unit(collect, "개요")
+    assert unit.kind == "changed"
+    assert unit.structure_kind == "none"
+    assert unit.klass == "의미"  # 06 found a literal diff, so 30 verified 의미
+    assert unit.section == "auth.md § 개요"
+    assert [(c.key, c.from_value, c.to_value) for c in unit.changed] == [
+        ("version", "3.12.4", "3.12.7")
+    ]
+    assert unit.excerpt_ref == unit.unit_id
+    assert unit.explanation == "값 하나가 바뀌었다."
+
+
+def test_renamed_heading_counts_in_two_columns() -> None:
+    """구조 comes from 05, the property column from 30 — a rename is both."""
+
+    changeset, structure, _literals, _excerpts = _inputs()
+    collect = _collect([_analysis(structure, changeset)])
+    unit = _unit(collect, "정책 v2")
+    assert unit.structure_kind == "heading_renamed"
+    assert unit.axes == ("구조", "의미")
+    auth = next(e.file_id for e in collect.file_blocks if "auth" in e.path)
+    assert collect.matrix[auth]["구조"] == {"추가": 0, "삭제": 0, "변경": 1}
+    assert collect.matrix[auth]["의미"] == {"추가": 0, "삭제": 0, "변경": 2}
+
+
+def test_added_section_counts_as_structure_only() -> None:
+    """An added section's 성질 is that it appeared — not what it says."""
+
+    changeset, structure, _literals, _excerpts = _inputs()
+    collect = _collect([_analysis(structure, changeset)])
+    unit = _unit(collect, "새 문서")
+    assert (unit.kind, unit.klass, unit.axes) == ("added", "구조", ("구조",))
+    new = next(e.file_id for e in collect.file_blocks if "new" in e.path)
+    assert collect.matrix[new]["구조"]["추가"] == 1
+    assert collect.classes == {"구조": 2, "의미": 2, "표현": 0, "미분류": 0}
+    assert collect.files == {
+        "added": 1,
+        "deleted": 0,
+        "modified": 1,
+        "moved_sections": 0,
+    }
+
+
+def test_no_analysis_at_all_still_carries_the_tool_facts() -> None:
+    """The design's partial-failure rule: empty prose, everything else exact."""
+
+    collect = _collect([], failed=("auth-md.md",))
+    unit = _unit(collect, "개요")
+    assert unit.explanation == EXPLANATION_FAILED
+    assert unit.klass == "의미"
+    assert [(c.key, c.from_value, c.to_value) for c in unit.changed] == [
+        ("version", "3.12.4", "3.12.7")
+    ]
+    assert unit.excerpt_ref == unit.unit_id
+    assert all(entry.summary == SUMMARY_FAILED for entry in collect.file_blocks)
+    assert collect.failed_files == ("auth-md.md",)
+    assert collect.classes["의미"] == 2  # counted from the tools, not the prose
+
+
+def test_explanation_for_an_unknown_unit_is_dropped_and_counted() -> None:
+    changeset, structure, _literals, _excerpts = _inputs()
+    analysis = _analysis(structure, changeset)
+    ghost = AnalysisUnit("u-ghost", "s-ghost", "", "존재하지 않는 절 설명.")
+    collect = _collect([replace(analysis, units=(*analysis.units, ghost))])
+    assert collect.refs_dropped == 1
+    assert "u-ghost" not in [unit.unit_id for unit in collect.units]
+
+
+def test_file_summary_naming_an_unknown_ref_is_dropped() -> None:
+    changeset, structure, _literals, _excerpts = _inputs()
+    analysis = _analysis(structure, changeset, summary_refs=("u-ghost",))
+    collect = _collect([analysis])
+    assert collect.refs_dropped == 1
+    assert collect.file_blocks[0].summary == SUMMARY_FAILED
+    # the units of that same file keep their 설명 — one bad ref, one drop
+    assert _unit(collect, "개요").explanation == "값 하나가 바뀌었다."
+
+
+def test_vocab_violation_reaches_the_artifact() -> None:
+    """어휘 게이트가 잡은 것은 재작성이 아니라 리포트 4 부록으로 간다."""
+
+    changeset, structure, _literals, _excerpts = _inputs()
+    fid = next(e.fid for e in changeset.files if e.path.endswith("auth.md"))
+    units = [unit for unit in structure.changed if unit.file_id == fid]
+    analysis = _analysis(
+        structure,
+        changeset,
+        units=(
+            AnalysisUnit(units[0].unit_id, units[0].section_id, "", "값이 상향되었다."),
+            *[
+                AnalysisUnit(unit.unit_id, unit.section_id, "", "값이 바뀌었다.")
+                for unit in units[1:]
+            ],
         ),
     )
-    collect = _collect([_analysis((finding,))])
-    assert collect.findings[0].severity == "BLOCKER"
-    assert collect.verdict == "BLOCK"
-    assert "모순" in collect.reason
-    assert collect.must_read[0] == "f-01"
+    collect = _collect([analysis])
+    hit = next(unit for unit in collect.units if unit.vocab_violation)
+    assert hit.vocab_violation == ("상향",)
 
 
-def test_quote_mismatch_drops_finding() -> None:
-    finding = _finding(
-        "f-01",
-        "stale_reference",
-        evidence=(_evidence("head", 1, "이런 문장은 원문에 없다"),),
-    )
-    collect = _collect([_analysis((finding,))])
-    assert collect.findings == ()
-    assert collect.dropped[0].reason == "quote_mismatch"
-    assert collect.gate["dropped_quote_mismatch"] == 1
-    assert collect.verdict == "PASS"
+def test_render_parse_round_trip() -> None:
+    changeset, structure, _literals, _excerpts = _inputs()
+    collect = _collect([_analysis(structure, changeset)])
+    text = render_collect(collect)
+    assert parse_collect(text) == collect
+    assert render_collect(parse_collect(text)) == text
 
 
-def test_dedup_merges_same_content() -> None:
-    evidence = (_evidence("base", 2, "Retry Count: 3"),)
-    first = _finding("f-01", "stale_reference", evidence=evidence)
-    second = _finding("f-02", "stale_reference", evidence=evidence)
-    collect = _collect([_analysis((first, second))])
-    assert len(collect.findings) == 1
-    assert collect.gate["merged_dup"] == 1
-    assert collect.gate["findings_out"] == 1
+def test_files_are_grouped_by_product_folder() -> None:
+    changeset, structure, _literals, _excerpts = _inputs()
+    collect = _collect([_analysis(structure, changeset)])
+    assert [entry.product_dir for entry in collect.file_blocks] == [
+        "docs/p-a",
+        "docs/p-a",
+    ]
+    assert [entry.path for entry in collect.file_blocks] == [
+        "docs/p-a/auth.md",
+        "docs/p-a/new.md",
+    ]
 
 
-def test_major_finding_forces_review() -> None:
-    finding = _finding(
-        "f-01",
-        "stale_reference",
-        evidence=(_evidence("head", 1, "Retry Count: 5"),),
-    )
-    collect = _collect([_analysis((finding,))])
-    assert collect.findings[0].severity == "MAJOR"
-    assert collect.verdict == "REVIEW"
+def test_artifact_carries_exactly_the_declared_fields() -> None:
+    """Closed sets, not a banned-word list — a new field has to be declared.
 
+    The v2 schema is the whole guard against judgement creeping back: there
+    is nowhere to put a ruling, a rank or a merge opinion, so exact equality
+    on the key sets is a stronger check than grepping for the old names.
+    """
 
-def test_minor_only_passes() -> None:
-    finding = _finding(
-        "f-01",
-        "terminology",
-        evidence=(_evidence("head", 1, "Retry Count: 5"),),
-    )
-    collect = _collect([_analysis((finding,))])
-    assert collect.findings[0].severity == "MINOR"
-    assert collect.verdict == "PASS"
-
-
-def test_l1_unit_forces_review_without_findings() -> None:
-    collect = _collect([_analysis()], levelcheck=_levelcheck("L1"))
-    assert collect.verdict == "REVIEW"
-    assert "맥락이 바뀐 절 1건" in collect.reason
-    assert collect.must_read == ("u-1",)
+    changeset, structure, _literals, _excerpts = _inputs()
+    collect = _collect([_analysis(structure, changeset)])
+    text = render_collect(collect)
+    assert list(parse_frontmatter(text)) == [
+        "mr_iid",
+        "files",
+        "matrix",
+        "classes",
+        "ops",
+        "value_changes",
+        "verify",
+        "confidence_dist",
+        "uncertain",
+        "failed_files",
+        "refs_dropped",
+    ]
+    blocks = parse_sections(text)
+    assert list(blocks[_unit(collect, "개요").unit_id]) == [
+        "kind",
+        "structure_kind",
+        "class",
+        "section",
+        "file",
+        "removed",
+        "added",
+        "changed",
+        "excerpt_ref",
+        "axes",
+        "ops",
+        "textual",
+        "prose_added",
+        "prose_removed",
+    ]
+    assert list(blocks[collect.file_blocks[0].file_id]) == [
+        "path",
+        "product_dir",
+        "units",
+    ]
+    # the only prose markers are one 설명 per unit and one summary per file
+    markers = [line.split("**")[1] for line in text.splitlines() if line[:2] == "**"]
+    assert sorted(set(markers)) == ["FILE_SUMMARY", "설명"]
+    assert len(markers) == len(collect.units) + len(collect.file_blocks)

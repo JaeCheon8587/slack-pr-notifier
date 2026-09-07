@@ -93,7 +93,10 @@ def _parse_flow(text: str) -> object:
             if ":" not in item:
                 raise ValueError(f"flow map entry without colon: {item!r}")
             key, _, value = item.partition(":")
-            result[key.strip()] = _parse_scalar(value)
+            # Recurse: 50-collect's matrix is a map of maps of maps, so a flow
+            # value has to be able to be a flow again. A scalar falls through
+            # the two prefix tests below and lands on _parse_scalar unchanged.
+            result[key.strip()] = _parse_flow(value)
         return result
     return _parse_scalar(text)
 
@@ -101,11 +104,15 @@ def _parse_flow(text: str) -> object:
 def _render_flow(value: dict[str, object] | list[object]) -> str:
     if isinstance(value, list):
         return "[" + ", ".join(_render_flow_item(item) for item in value) + "]"
-    return "{" + ", ".join(f"{k}: {_render_scalar(v)}" for k, v in value.items()) + "}"
+    return (
+        "{"
+        + ", ".join(f"{k}: {_render_flow_item(v)}" for k, v in value.items())
+        + "}"
+    )
 
 
 def _render_flow_item(item: object) -> str:
-    if isinstance(item, dict):
+    if isinstance(item, (dict, list)):
         return _render_flow(item)
     return _render_scalar(item)
 
