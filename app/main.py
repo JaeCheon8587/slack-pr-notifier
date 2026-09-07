@@ -6,9 +6,16 @@ from fastapi import FastAPI
 from app import gitlab_poller, notify_queue, slack_socket, sweeper
 from app.config import get_settings
 from app.gitlab_webhook import router as gitlab_webhook_router
+from app.logging_setup import configure_logging
 from app.slack_actions import router as slack_actions_router
 
 settings = get_settings()
+
+# At module scope, not in lifespan: uvicorn configures its loggers in
+# Config.__init__ and imports the ASGI app later, so this is the first point
+# that can override it — and it lands before anything the app logs while
+# starting up. settings.log_enabled is off by default (app/config.py).
+configure_logging(settings)
 
 
 @asynccontextmanager

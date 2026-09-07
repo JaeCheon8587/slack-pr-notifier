@@ -10,6 +10,15 @@ class Settings(BaseSettings):
 
     app_name: str = "Slack MR Notifier"
     app_env: str = "local"
+
+    # Master switch for application logging (app/logging_setup.py). Every
+    # module in this package logs through the single "uvicorn.error" logger,
+    # so one flag covers all of them plus uvicorn's own request access log.
+    # Off by default: the middleware runs silent unless someone asks for
+    # logs, and app/main.py applies the switch at import time. Turning it on
+    # does not pin a level — uvicorn's --log-level still decides that.
+    log_enabled: bool = False
+
     gitlab_url: str = "https://gitlab.com"
     gitlab_webhook_secret: SecretStr | None = None
     gitlab_token: SecretStr | None = None
