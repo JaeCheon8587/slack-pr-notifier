@@ -237,8 +237,10 @@ async def handle_mr_open(
     else:
         # Best-effort HTML report delivery -- failures are logged inside
         # _deliver_review_report and never propagated: the notification
-        # itself is already final here.
-        if review is not None:
+        # itself is already final here. md-dominant MRs are skipped: the
+        # mrdoc rail posts its own summary + report.html into this thread,
+        # and a second generic report for the same diff is redundant.
+        if review is not None and not mrdoc_rail.handles_mr(settings, context):
             await _deliver_review_report(settings, mr, review, context, posted, session_id)
         # mrdoc rail (Phase 1): md-dominant MRs get the deterministic doc
         # pipeline in a background thread -- gated and fire-and-forget inside

@@ -65,6 +65,24 @@ def passes_gate(settings: Settings, files: list[dict[str, Any]] | None) -> bool:
     return ratio is not None and ratio >= settings.mrdoc_doc_ratio_threshold
 
 
+def handles_mr(settings: Settings, context: dict[str, Any] | None) -> bool:
+    """True when the mrdoc rail owns Slack reporting for this MR.
+
+    Mirrors start_mrdoc_review's synchronous gating (both enable flags plus
+    the md-dominant gate), so ingest can skip the generic review-report
+    upload: an md-dominant MR gets its summary and report.html from the
+    mrdoc thread, and a second report-...-<sha8>.html attachment for the
+    same diff would only be noise. A None context resolves to False --
+    callers that cannot know the file list keep the legacy behavior.
+    """
+
+    return (
+        settings.mrdoc_enabled
+        and settings.mrdoc_satellite_enabled
+        and passes_gate(settings, (context or {}).get("files"))
+    )
+
+
 def start_mrdoc_review(
     settings: Settings,
     mr: dict[str, Any],

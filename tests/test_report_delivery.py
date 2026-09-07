@@ -6,7 +6,8 @@ Covers:
 * ingest._report_filename -- deterministic, filesystem-safe naming;
 * ingest.handle_mr_open -- when an AI review exists, the HTML report is
   rendered, archived, and uploaded to the notification's thread; when the
-  upload fails, the notification result is unaffected (best-effort).
+  upload fails, the notification result is unaffected (best-effort); an
+  md-dominant MR owned by the mrdoc rail gets no generic report.
 """
 
 from __future__ import annotations
@@ -19,7 +20,6 @@ import pytest
 import app.ingest as ingest
 from app.ingest import _report_filename
 from app.slack_client import SlackClient
-
 
 CHANNEL = "C_CHANNEL"
 THREAD_TS = "111.222"
@@ -91,7 +91,7 @@ def test_upload_report_file_three_step_dance(spy_upload: dict[str, Any]) -> None
 
     reserve = spy_upload["calls"][0]["payload"]
     assert reserve["filename"] == "report-group-project-7-deadbeef.html"
-    assert reserve["length"] == len("<html>report</html>".encode())
+    assert reserve["length"] == len(b"<html>report</html>")
 
     # Step 2: raw bytes POSTed to the pre-signed URL (no auth header -- the
     # fake client records the call, and the real one omits Authorization).
@@ -275,6 +275,81 @@ def test_handle_mr_open_renders_archives_and_uploads_report(
     # And the upload reached the notification's thread.
     complete = spy_upload["calls"][-1]["payload"]
     assert complete["thread_ts"] == THREAD_TS
+
+
+def test_handle_mr_open_skips_report_when_mrdoc_owns_it(
+    monkeypatch: pytest.MonkeyPatch, tmp_path, spy_upload: dict[str, Any]
+) -> None:
+    """An md-dominant MR gets no generic report -- the mrdoc rail reports."""
+    from app.ai_reviewer import MRReview
+    from app.config import get_settings
+    from app.db import get_connection, init_db
+    from app.mrdoc import rail as mrdoc_rail
+
+    settings = get_settings()
+    monkeypatch.setattr(settings, "db_path", str(tmp_path / "test.db"))
+    monkeypatch.setattr(settings, "slack_bot_token", "xoxb-test")
+    monkeypatch.setattr(settings, "slack_channel_id", CHANNEL)
+    monkeypatch.setattr(settings, "action_token_secret", "secret")
+    monkeypatch.setattr(settings, "reviewer_map", '{"group/project": "U1"}')
+    monkeypatch.setattr(settings, "ai_enabled", True)
+    monkeypatch.setattr(settings, "gitlab_token", "glpat-test")
+    monkeypatch.setattr(settings, "report_html_dir", str(tmp_path / "reports"))
+    monkeypatch.setattr(settings, "mrdoc_enabled", True)
+    monkeypatch.setattr(settings, "mrdoc_satellite_enabled", True)
+    monkeypatch.setattr(settings, "mrdoc_doc_ratio_threshold", 0.8)
+
+    review = MRReview(summary="요약", key_changes=["변경"], points_to_watch=["주의"])
+
+    async def fake_build(mr, settings):  # noqa: ANN001
+        return review, {
+            "files": [{"filename": "docs/a.md"}],
+            "contents": {},
+            "files_truncated": False,
+        }
+
+    monkeypatch.setattr(ingest, "_build_ai_review", fake_build)
+
+    async def fake_post(self, channel, mr, token, review=None):  # noqa: ANN001
+        return {"channel": CHANNEL, "ts": THREAD_TS}
+
+    monkeypatch.setattr(SlackClient, "post_mr_message", fake_post)
+
+    started: list[dict[str, Any]] = []
+
+    def fake_start(settings, mr, posted, *, context=None):  # noqa: ANN001
+        started.append({"iid": mr.get("iid")})
+        return None
+
+    monkeypatch.setattr(mrdoc_rail, "start_mrdoc_review", fake_start)
+
+    conn = get_connection(settings.db_path)
+    init_db(conn)
+    try:
+        result = asyncio.run(
+            ingest.handle_mr_open(
+                settings,
+                conn,
+                project_id="918",
+                repo_slug="group/project",
+                mr_iid=7,
+                sha="deadbeef1234",
+                title="Fix",
+                url="https://gitlab.example.com/mr/7",
+                source_branch="feat",
+                target_branch="main",
+                actor="alice",
+                source="poller",
+            )
+        )
+    finally:
+        conn.close()
+
+    assert result["notified"] is True
+    # The mrdoc rail was handed the MR; no generic report was archived or uploaded.
+    assert started == [{"iid": 7}]
+    assert not list((tmp_path / "reports").glob("*.html"))
+    assert spy_upload["uploads"] == []
 
 
 def test_report_upload_failure_never_fails_the_notification(

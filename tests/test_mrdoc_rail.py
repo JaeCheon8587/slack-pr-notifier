@@ -41,6 +41,23 @@ def test_passes_gate_disabled_setting(monkeypatch) -> None:
     assert rail.passes_gate(settings, _files("a.md")) is False
 
 
+def test_handles_mr_mirrors_rail_gating(monkeypatch) -> None:
+    settings = get_settings()
+    monkeypatch.setattr(settings, "mrdoc_enabled", True)
+    monkeypatch.setattr(settings, "mrdoc_satellite_enabled", True)
+    monkeypatch.setattr(settings, "mrdoc_doc_ratio_threshold", 0.8)
+    assert rail.handles_mr(settings, {"files": _files("a.md", "b.mdx")}) is True
+    assert rail.handles_mr(settings, {"files": _files("a.md", "b.py")}) is False
+    assert rail.handles_mr(settings, None) is False
+
+
+def test_handles_mr_requires_satellites(monkeypatch) -> None:
+    settings = get_settings()
+    monkeypatch.setattr(settings, "mrdoc_enabled", True)
+    monkeypatch.setattr(settings, "mrdoc_satellite_enabled", False)
+    assert rail.handles_mr(settings, {"files": _files("a.md")}) is False
+
+
 def test_start_returns_none_when_gate_fails(monkeypatch) -> None:
     settings = get_settings()
     monkeypatch.setattr(settings, "mrdoc_enabled", True)
