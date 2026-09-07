@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pytest
 
-from app.ai_runner import ClaudeCliRunner, StubRunner
+from app.ai_runner import ClaudeCliRunner, ReviseResult, StubRunner
 from app.config import Settings
 
 
@@ -259,3 +259,123 @@ def test_claude_cli_runner_redacts_secrets_from_success_summary_and_reasons(
     reason = next(entry["reason"] for entry in result.unapplied if entry["opinion_id"] == 2)
     assert action_secret not in reason
     assert "***" in reason
+
+
+# ---------------------------------------------------------------------------
+# ReviseResult's two optional staged-workflow fields (docs/revise-workflow.html
+# Part 4): both default to an empty list, and empty is what every existing
+# runner produces — that is the whole no-regression contract.
+# ---------------------------------------------------------------------------
+def test_revise_result_new_fields_default_to_empty_lists() -> None:
+    result = ReviseResult(kind="ok")
+
+    assert result.commit_paths == []
+    assert result.clarify == []
+    # Still constructible positionally/by keyword exactly as before.
+    legacy = ReviseResult(kind="ok", unapplied=[{"opinion_id": 1, "reason": "x"}], detail="d")
+    assert legacy.commit_paths == []
+    assert legacy.clarify == []
+
+
+def test_revise_result_default_lists_are_not_shared_between_instances() -> None:
+    """``field(default_factory=list)``, not a mutable class-level default —
+    one result appending to ``commit_paths`` must not touch another's."""
+
+    first = ReviseResult(kind="ok")
+    second = ReviseResult(kind="ok")
+    first.commit_paths.append("docs/a.md")
+    first.clarify.append({"opinion_id": 1, "question": "?", "candidates": []})
+
+    assert second.commit_paths == []
+    assert second.clarify == []
+
+
+def test_stub_runner_still_returns_empty_commit_paths_and_clarify() -> None:
+    """The default runner is untouched by the new fields — no behavior change
+    for AI_RUNNER=stub, which is still the config default."""
+
+    result = StubRunner().run(Path("."), _opinions(), {}, timeout_seconds=60)
+
+    assert result.commit_paths == []
+    assert result.clarify == []
+
+
+# ---------------------------------------------------------------------------
+# Runner selection: "staged" picks app.revise_workflow.runner.StagedRunner.
+#
+# That package does not exist yet (it is another work item), so the branch is
+# deliberately a *lazy* import inside ``_select_runner`` and this test stands a
+# fake module in for it via sys.modules — which also proves the import really
+# is deferred to call time rather than executed at module load.
+# ---------------------------------------------------------------------------
+def _install_fake_staged_runner(monkeypatch):  # type: ignore[no-untyped-def]
+    import sys
+    import types
+
+    class FakeStagedRunner:
+        def __init__(self, settings: Settings) -> None:
+            self.settings = settings
+
+        def run(self, workspace, opinions, session_ctx, timeout_seconds):  # type: ignore[no-untyped-def]
+            return ReviseResult(kind="ok")
+
+    package = types.ModuleType("app.revise_workflow")
+    package.__path__ = []  # type: ignore[attr-defined]
+    module = types.ModuleType("app.revise_workflow.runner")
+    module.StagedRunner = FakeStagedRunner  # type: ignore[attr-defined]
+    package.runner = module  # type: ignore[attr-defined]
+
+    monkeypatch.setitem(sys.modules, "app.revise_workflow", package)
+    monkeypatch.setitem(sys.modules, "app.revise_workflow.runner", module)
+    return FakeStagedRunner
+
+
+def test_select_runner_staged_picks_staged_runner(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    from app.revise_executor import _select_runner
+
+    fake_cls = _install_fake_staged_runner(monkeypatch)
+    settings = _settings(ai_runner="staged")
+
+    runner = _select_runner(settings)
+
+    assert isinstance(runner, fake_cls)
+    assert runner.settings is settings
+
+
+def test_select_runner_defaults_are_unchanged_by_the_staged_branch(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """No regression: "stub" (the default), "claude", and anything unknown
+    resolve exactly as they did before "staged" existed."""
+
+    from app.revise_executor import DEFAULT_RUNNER, _select_runner
+
+    _install_fake_staged_runner(monkeypatch)
+
+    assert _select_runner(_settings()) is DEFAULT_RUNNER  # ai_runner defaults to "stub"
+    assert _select_runner(_settings(ai_runner="stub")) is DEFAULT_RUNNER
+    assert isinstance(_select_runner(_settings(ai_runner="claude")), ClaudeCliRunner)
+    assert _select_runner(_settings(ai_runner="nonsense")) is DEFAULT_RUNNER
+
+
+def test_select_runner_does_not_import_revise_workflow_unless_staged(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """The staged import must stay *inside* the branch.
+
+    ``app.revise_executor`` is imported at app startup no matter which runner
+    is configured, so it has to stay importable — and every non-staged
+    selection has to keep working — even when ``app.revise_workflow.runner``
+    cannot be imported at all. A ``None`` entry in ``sys.modules`` is the
+    standard way to make an import raise, and it simulates exactly that.
+    """
+
+    import sys
+
+    from app.revise_executor import DEFAULT_RUNNER, _select_runner
+
+    monkeypatch.setitem(sys.modules, "app.revise_workflow.runner", None)
+
+    # Unaffected: nothing outside the "staged" branch touches that module.
+    assert _select_runner(_settings()) is DEFAULT_RUNNER
+    assert isinstance(_select_runner(_settings(ai_runner="claude")), ClaudeCliRunner)
+
+    # And the branch itself is the only thing that pays for the import.
+    with pytest.raises(ImportError):
+        _select_runner(_settings(ai_runner="staged"))

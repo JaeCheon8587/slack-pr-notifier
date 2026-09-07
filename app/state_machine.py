@@ -174,3 +174,28 @@ def advance_round_and_reset_attempts(conn: sqlite3.Connection, session_id: int) 
     conn.commit()
     row = conn.execute("SELECT round FROM review_session WHERE id = ?", (session_id,)).fetchone()
     return int(row["round"])
+
+
+def reset_attempts_only(conn: sqlite3.Connection, session_id: int) -> int:
+    """Reset revise_attempts to 0 *without* touching session.round.
+
+    ``advance_round_and_reset_attempts`` minus the ``round + 1``. Used for a
+    되물음(clarify) round — one where the machine could not locate what an
+    opinion refers to and asks the human instead of editing (docs/
+    revise-workflow.html Part 2 "라운드 회계 — 되물음"). The three human rounds
+    are a scarce resource, so a wheel the machine spent failing to find its
+    target must not consume one; the retry budget within the round *is* reset,
+    exactly as on a successful round, because the wheel did complete.
+
+    No new session status is involved: a clarify round still rides the
+    existing ``revising -> reviewing`` edge with reason ``revise_success``,
+    and the human answers by pressing the same [의견] button again. Returns
+    the session's (unchanged) round.
+    """
+    conn.execute(
+        "UPDATE review_session SET revise_attempts = 0, updated_at = ? WHERE id = ?",
+        (_now(), session_id),
+    )
+    conn.commit()
+    row = conn.execute("SELECT round FROM review_session WHERE id = ?", (session_id,)).fetchone()
+    return int(row["round"])

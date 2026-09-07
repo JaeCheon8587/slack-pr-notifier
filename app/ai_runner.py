@@ -46,11 +46,32 @@ class ReviseResult:
     ``{"opinion_id": int, "reason": str}`` — the 3c 대조검증 verdict. Any
     opinion passed to ``run`` that is *not* listed here is treated as applied
     this round.
+
+    The two fields below are optional, added for the staged workflow
+    (docs/revise-workflow.html); **both default to empty, and empty means
+    "behave exactly as before"** — every existing runner and every existing
+    ``ReviseResult(...)`` construction is unaffected.
+
+    ``commit_paths``: the workspace-relative posix paths touched by the
+    opinions 3c judged ``applied``/``partial``. When non-empty the executor
+    commits *only* these paths (``app.git_workspace.commit_paths``) so an
+    unrelated dirty file cannot ride along; when empty the executor falls
+    back to the existing whole-tree ``commit_all``.
+
+    ``clarify``: 되물음 for opinions whose target could not be located at
+    all — each entry ``{"opinion_id": int, "question": str, "candidates":
+    [str, str, str]}``. When non-empty the Slack re-notify renders the
+    question plus its candidates and, if the round produced no commit, the
+    round counter is held (``app.state_machine.reset_attempts_only``) so
+    asking a human does not spend one of their scarce rounds. When empty the
+    round is accounted for exactly as before.
     """
 
     kind: str
     unapplied: list[dict[str, Any]] = field(default_factory=list)
     detail: str = ""
+    commit_paths: list[str] = field(default_factory=list)
+    clarify: list[dict[str, Any]] = field(default_factory=list)
 
 
 class AIRunner(Protocol):

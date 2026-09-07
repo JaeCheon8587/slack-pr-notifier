@@ -32,13 +32,17 @@ from app.git_workspace import (
     _ASKPASS_SCRIPT_BODY,
     _git,
     _redact,
+    changed_paths,
     checkout,
     commit_all,
+    commit_paths,
     current_sha,
     ensure_askpass_script,
     ensure_workspace,
     has_changes,
     push,
+    restore_paths,
+    untracked_paths,
 )
 
 pytestmark = pytest.mark.skipif(shutil.which("git") is None, reason="system git not available")
@@ -276,3 +280,132 @@ def test_git_error_message_masks_non_pat_app_secret_from_stderr(monkeypatch, set
         _git(["fetch", "origin", "main"], cwd=workspace, settings=settings, network=True)
 
     assert fake_slack_token not in str(excinfo.value)
+
+
+# ---------------------------------------------------------------------------
+# Path-scoped helpers (docs/revise-workflow.html Part 4): the staged runner
+# commits only the files its applied opinions touched, and rolls a path set
+# back before re-running an edit stage. Exercised against the real local bare
+# repo like the rest of this module — these are the only tests that make real
+# git calls.
+# ---------------------------------------------------------------------------
+def _tracked_files_at_head(workspace: Path) -> set[str]:
+    out = subprocess.run(
+        ["git", "ls-tree", "-r", "--name-only", "HEAD"],
+        cwd=workspace,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+    return {line.strip() for line in out.splitlines() if line.strip()}
+
+
+@pytest.fixture()
+def workspace(monkeypatch, settings, bare_repo: Path) -> Path:  # type: ignore[no-untyped-def]
+    """A checked-out workspace on ``main``, clean."""
+
+    monkeypatch.setattr("app.git_workspace._remote_url", lambda settings, repo_slug: str(bare_repo))
+    path = ensure_workspace(settings, PROJECT_ID, MR_IID, REPO_SLUG)
+    checkout(settings, path, "main")
+    return path
+
+
+def test_changed_paths_reports_modified_and_untracked_as_posix(settings, workspace: Path) -> None:  # type: ignore[no-untyped-def]
+    (workspace / "file.txt").write_text("modified\n", encoding="utf-8")
+    (workspace / "docs").mkdir()
+    (workspace / "docs" / "new.md").write_text("brand new\n", encoding="utf-8")
+
+    changed = changed_paths(settings, workspace)
+
+    assert set(changed) == {"file.txt", "docs/new.md"}
+    assert untracked_paths(settings, workspace) == ["docs/new.md"]
+    # Every entry is posix-separated even though this may be running on Windows.
+    assert all("\\" not in entry for entry in changed)
+
+
+def test_commit_paths_commits_only_the_named_paths(settings, workspace: Path) -> None:  # type: ignore[no-untyped-def]
+    """The whole point of the path-scoped commit: a second dirty file that the
+    runner did *not* name must still be dirty afterwards, never swept in the
+    way ``commit_all``'s ``git add -A`` would sweep it."""
+
+    (workspace / "file.txt").write_text("wanted change\n", encoding="utf-8")
+    (workspace / "unrelated.txt").write_text("unwanted change\n", encoding="utf-8")
+
+    commit_paths(settings, workspace, "revise: only file.txt", ["file.txt"])
+
+    # The named path landed in the commit...
+    assert "file.txt" in _tracked_files_at_head(workspace)
+    committed = subprocess.run(
+        ["git", "show", "--name-only", "--format=", "HEAD"],
+        cwd=workspace,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.split()
+    assert committed == ["file.txt"]
+
+    # ...and the unrelated file is still sitting there, uncommitted.
+    assert has_changes(settings, workspace)
+    assert untracked_paths(settings, workspace) == ["unrelated.txt"]
+
+    subject = subprocess.run(
+        ["git", "log", "-1", "--format=%s%n%an%n%ae"],
+        cwd=workspace,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.splitlines()
+    assert subject[0] == "revise: only file.txt"
+    # Same bot identity commit_all uses.
+    assert subject[1] == "mr-review-bot"
+    assert subject[2] == "mr-review-bot@localhost"
+
+
+def test_commit_paths_with_empty_list_is_a_noop(settings, workspace: Path) -> None:  # type: ignore[no-untyped-def]
+    before = current_sha(settings, workspace)
+    (workspace / "file.txt").write_text("still dirty\n", encoding="utf-8")
+
+    commit_paths(settings, workspace, "revise: nothing", [])
+
+    assert current_sha(settings, workspace) == before  # no commit created
+    assert has_changes(settings, workspace)  # and nothing was staged away
+
+
+def test_restore_paths_reverts_tracked_and_deletes_untracked(settings, workspace: Path) -> None:  # type: ignore[no-untyped-def]
+    (workspace / "file.txt").write_text("edited\n", encoding="utf-8")
+    (workspace / "docs").mkdir()
+    new_file = workspace / "docs" / "invented.md"
+    new_file.write_text("a file that never existed at HEAD\n", encoding="utf-8")
+
+    restore_paths(settings, workspace, ["file.txt", "docs/invented.md"])
+
+    assert (workspace / "file.txt").read_text(encoding="utf-8") == "initial\n"
+    assert not new_file.exists()
+    assert not has_changes(settings, workspace)
+
+
+def test_restore_paths_leaves_paths_it_was_not_given_alone(settings, workspace: Path) -> None:  # type: ignore[no-untyped-def]
+    """The clean is path-scoped, never a workspace-wide ``git clean -f``."""
+
+    (workspace / "file.txt").write_text("edited\n", encoding="utf-8")
+    keep = workspace / "keep-me.txt"
+    keep.write_text("untracked but not named\n", encoding="utf-8")
+
+    restore_paths(settings, workspace, ["file.txt"])
+
+    assert (workspace / "file.txt").read_text(encoding="utf-8") == "initial\n"
+    assert keep.exists()
+    assert keep.read_text(encoding="utf-8") == "untracked but not named\n"
+
+
+def test_restore_paths_with_empty_list_is_a_noop(settings, workspace: Path) -> None:  # type: ignore[no-untyped-def]
+    """An empty path set must not degrade into an unscoped clean/checkout."""
+
+    (workspace / "file.txt").write_text("edited\n", encoding="utf-8")
+    stray = workspace / "stray.txt"
+    stray.write_text("untracked\n", encoding="utf-8")
+
+    restore_paths(settings, workspace, [])
+
+    assert (workspace / "file.txt").read_text(encoding="utf-8") == "edited\n"
+    assert stray.exists()

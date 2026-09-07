@@ -13,6 +13,7 @@ from app.state_machine import (
     advance_round_and_reset_attempts,
     cas_transition,
     record_revise_failure,
+    reset_attempts_only,
 )
 
 
@@ -223,3 +224,48 @@ def test_advance_round_resets_attempts(conn):
         "SELECT revise_attempts FROM review_session WHERE id = ?", (session_id,)
     ).fetchone()
     assert row["revise_attempts"] == 0
+
+
+# ---------------------------------------------------------------------------
+# 되물음 round accounting: reset_attempts_only is advance_round_and_reset_attempts
+# minus the round bump (docs/revise-workflow.html Part 2 "라운드 회계 — 되물음").
+# ---------------------------------------------------------------------------
+def test_reset_attempts_only_clears_attempts_without_advancing_round(conn):
+    session_id = _make_session(conn, status=REVISING)
+    record_revise_failure(conn, session_id)
+    advance_round_and_reset_attempts(conn, session_id)  # round -> 1
+    record_revise_failure(conn, session_id)  # attempts -> 1 again
+
+    held_round = reset_attempts_only(conn, session_id)
+
+    assert held_round == 1  # returns the *unchanged* round
+    row = conn.execute(
+        "SELECT round, revise_attempts FROM review_session WHERE id = ?", (session_id,)
+    ).fetchone()
+    assert row["round"] == 1  # not consumed
+    assert row["revise_attempts"] == 0  # but the retry budget is reset
+
+
+def test_reset_attempts_only_is_idempotent_and_never_goes_negative(conn):
+    session_id = _make_session(conn, status=REVISING)
+
+    assert reset_attempts_only(conn, session_id) == 0
+    assert reset_attempts_only(conn, session_id) == 0
+
+    row = conn.execute(
+        "SELECT round, revise_attempts FROM review_session WHERE id = ?", (session_id,)
+    ).fetchone()
+    assert row["round"] == 0
+    assert row["revise_attempts"] == 0
+
+
+def test_reset_attempts_only_adds_no_new_status_or_edge(conn):
+    """되물음 introduces no state: a held round still rides the existing
+    revising -> reviewing / revise_success edge."""
+
+    session_id = _make_session(conn, status=REVISING)
+    reset_attempts_only(conn, session_id)
+
+    assert _status(conn, session_id) == REVISING  # not a transition by itself
+    assert cas_transition(conn, session_id, REVISING, REVIEWING, reason="revise_success") is True
+    assert _status(conn, session_id) == REVIEWING

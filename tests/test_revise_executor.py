@@ -31,12 +31,26 @@ FAKE_WORKSPACE = Path("fake-workspace")
 # Fakes
 # ---------------------------------------------------------------------------
 class FakeRunner:
-    """Stands in for the P5 AI orchestrator (StubRunner-shaped, but scriptable)."""
+    """Stands in for the P5 AI orchestrator (StubRunner-shaped, but scriptable).
 
-    def __init__(self, *, kind: str = "ok", unapplied_ids: set[int] | None = None, detail: str = ""):
+    ``commit_paths``/``clarify`` default to empty so every pre-existing test
+    exercises the unchanged (whole-tree commit, no 되물음) path.
+    """
+
+    def __init__(
+        self,
+        *,
+        kind: str = "ok",
+        unapplied_ids: set[int] | None = None,
+        detail: str = "",
+        commit_paths: list[str] | None = None,
+        clarify: list[dict[str, Any]] | None = None,
+    ):
         self.kind = kind
         self.unapplied_ids = unapplied_ids or set()
         self.detail = detail
+        self.commit_paths = commit_paths or []
+        self.clarify = clarify or []
 
     def run(
         self,
@@ -52,7 +66,13 @@ class FakeRunner:
             for op in opinions
             if op["id"] in self.unapplied_ids
         ]
-        return ReviseResult(kind="ok", unapplied=unapplied, detail=self.detail)
+        return ReviseResult(
+            kind="ok",
+            unapplied=unapplied,
+            detail=self.detail,
+            commit_paths=list(self.commit_paths),
+            clarify=[dict(entry) for entry in self.clarify],
+        )
 
 
 class RaisingRunner:
@@ -113,6 +133,7 @@ def make_fake_slack_client(calls: list[dict[str, Any]]):
             summary: str | None = None,
             diff_stat: str | None = None,
             compare_url: str | None = None,
+            clarify: list[dict[str, Any]] | None = None,
         ) -> dict[str, Any]:
             calls.append(
                 {
@@ -125,6 +146,7 @@ def make_fake_slack_client(calls: list[dict[str, Any]]):
                     "summary": summary,
                     "diff_stat": diff_stat,
                     "compare_url": compare_url,
+                    "clarify": clarify,
                 }
             )
             return {"ts": "999.888", "channel": channel}
@@ -312,7 +334,12 @@ def test_ok_partial_apply_records_last_verdict_and_leaves_applied_round_null(
     assert session["round"] == 1
 
     assert calls[0]["kind"] == "revise_result_post"
-    assert calls[0]["unapplied"] == [{"reason": "테스트 미반영 사유"}]
+    # 미반영 항목은 이제 사유뿐 아니라 opinion_id와 본문 머리말을 함께 싣는다
+    # (docs/revise-workflow.html Part 4 "미반영 목록 개선").
+    assert calls[0]["unapplied"] == [
+        {"opinion_id": unapplied_id, "reason": "테스트 미반영 사유", "body": "미반영됨"}
+    ]
+    assert calls[0]["clarify"] == []
 
 
 # ---------------------------------------------------------------------------
@@ -782,3 +809,337 @@ def test_manual_notify_slack_reason_is_capped_at_300_chars(monkeypatch, tmp_path
     ).fetchone()["detail"]
     conn.close()
     assert db_detail == long_detail
+
+
+# ---------------------------------------------------------------------------
+# Path-scoped commit (docs/revise-workflow.html Part 4): a runner that reports
+# ``commit_paths`` gets a ``git add -- <paths>`` commit; one that reports none
+# keeps the pre-existing whole-tree ``commit_all``.
+# ---------------------------------------------------------------------------
+def _record_git_calls(monkeypatch, *, dirty: list[str] | None = None) -> dict[str, Any]:
+    """Capture which commit helper the executor reaches for."""
+
+    recorded: dict[str, Any] = {"commit_all": [], "commit_paths": [], "push": []}
+
+    monkeypatch.setattr(revise_executor.git_workspace, "has_changes", lambda *a, **k: True)
+    monkeypatch.setattr(
+        revise_executor.git_workspace,
+        "changed_paths",
+        lambda *a, **k: list(dirty if dirty is not None else []),
+    )
+    monkeypatch.setattr(
+        revise_executor.git_workspace,
+        "commit_all",
+        lambda settings, workspace, message: recorded["commit_all"].append(message),
+    )
+    monkeypatch.setattr(
+        revise_executor.git_workspace,
+        "commit_paths",
+        lambda settings, workspace, message, paths: recorded["commit_paths"].append(
+            {"message": message, "paths": list(paths)}
+        ),
+    )
+    monkeypatch.setattr(
+        revise_executor.git_workspace,
+        "push",
+        lambda settings, workspace, branch: recorded["push"].append(branch),
+    )
+    return recorded
+
+
+def test_commit_paths_result_uses_path_scoped_commit_not_commit_all(monkeypatch, tmp_path) -> None:  # type: ignore[no-untyped-def]
+    settings = configure(monkeypatch, tmp_path)
+    session_id, _ = seed_revising_session(settings, ["의견 1"])
+    recorded = _record_git_calls(monkeypatch, dirty=["docs/a.md", "docs/untouched.md"])
+
+    calls: list[dict[str, Any]] = []
+    monkeypatch.setattr(revise_executor, "SlackClient", make_fake_slack_client(calls))
+
+    revise_executor.process_one(
+        make_item(session_id),
+        settings=settings,
+        runner=FakeRunner(kind="ok", commit_paths=["docs/a.md"]),
+    )
+
+    assert recorded["commit_all"] == []  # the whole-tree commit is NOT used
+    assert len(recorded["commit_paths"]) == 1
+    assert recorded["commit_paths"][0]["paths"] == ["docs/a.md"]  # only what was named
+    assert recorded["push"] == ["feature/test"]
+
+    session = session_row(settings, session_id)
+    assert session["round"] == 1
+    assert session["mr_sha"] == "newsha000"
+
+
+def test_commit_paths_are_intersected_with_the_actual_dirty_set(monkeypatch, tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """A path the runner claims but that is in fact clean is dropped rather
+    than handed to git (``git commit -- <clean path>`` would fail with
+    "nothing to commit" and turn a good round into a failed retry). With
+    nothing left to stage there is no commit, and therefore no new sha."""
+
+    settings = configure(monkeypatch, tmp_path)
+    session_id, _ = seed_revising_session(settings, ["의견 1"])
+    recorded = _record_git_calls(monkeypatch, dirty=["docs/other.md"])
+
+    def _unreachable(*args: Any, **kwargs: Any) -> str:
+        raise AssertionError("current_sha must not be read when nothing was committed")
+
+    monkeypatch.setattr(revise_executor.git_workspace, "current_sha", _unreachable)
+
+    calls: list[dict[str, Any]] = []
+    monkeypatch.setattr(revise_executor, "SlackClient", make_fake_slack_client(calls))
+
+    revise_executor.process_one(
+        make_item(session_id),
+        settings=settings,
+        runner=FakeRunner(kind="ok", commit_paths=["docs/never-touched.md"]),
+    )
+
+    assert recorded["commit_paths"] == []  # the clean path was dropped, not staged
+    assert recorded["commit_all"] == []  # and it did NOT fall back to the whole tree
+    assert recorded["push"] == []  # nothing committed -> nothing pushed
+    # The round itself still completes normally (no clarify was involved).
+    assert session_row(settings, session_id)["round"] == 1
+
+
+def test_empty_commit_paths_falls_back_to_commit_all(monkeypatch, tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """No-regression: the existing runners report no commit_paths and must
+    keep getting the byte-identical whole-tree commit."""
+
+    settings = configure(monkeypatch, tmp_path)
+    session_id, _ = seed_revising_session(settings, ["의견 1"])
+    recorded = _record_git_calls(monkeypatch, dirty=["docs/a.md"])
+
+    calls: list[dict[str, Any]] = []
+    monkeypatch.setattr(revise_executor, "SlackClient", make_fake_slack_client(calls))
+
+    revise_executor.process_one(
+        make_item(session_id), settings=settings, runner=FakeRunner(kind="ok")
+    )
+
+    assert recorded["commit_paths"] == []
+    assert recorded["commit_all"] == [f"revise: MR !{IID} round 0"]
+    assert recorded["push"] == ["feature/test"]
+
+
+# ---------------------------------------------------------------------------
+# 되물음(clarify) round accounting (docs/revise-workflow.html Part 2
+# "라운드 회계 — 되물음"): a wheel the machine spent failing to find its target
+# must not consume one of the human's three rounds.
+# ---------------------------------------------------------------------------
+def _clarify(opinion_id: int) -> list[dict[str, Any]]:
+    return [
+        {
+            "opinion_id": opinion_id,
+            "question": "어느 절을 말씀하신 건가요?",
+            "candidates": ["docs/a.md#설치", "docs/a.md#설정", "docs/b.md#개요"],
+        }
+    ]
+
+
+def clarify_event_details(settings, session_id: int) -> list[str]:  # type: ignore[no-untyped-def]
+    conn = get_connection(settings.db_path)
+    rows = conn.execute(
+        "SELECT detail FROM event_log WHERE session_id = ? AND kind = 'clarify' ORDER BY id",
+        (session_id,),
+    ).fetchall()
+    conn.close()
+    return [row["detail"] for row in rows]
+
+
+def test_clarify_without_commit_holds_the_round_and_logs_the_event(monkeypatch, tmp_path) -> None:  # type: ignore[no-untyped-def]
+    settings = configure(monkeypatch, tmp_path)
+    session_id, opinion_ids = seed_revising_session(settings, ["어디 있는지 모를 의견"])
+
+    calls: list[dict[str, Any]] = []
+    monkeypatch.setattr(revise_executor, "SlackClient", make_fake_slack_client(calls))
+    # configure() already pins has_changes -> False, i.e. no commit this round.
+
+    revise_executor.process_one(
+        make_item(session_id),
+        settings=settings,
+        runner=FakeRunner(
+            kind="ok",
+            unapplied_ids={opinion_ids[0]},
+            clarify=_clarify(opinion_ids[0]),
+        ),
+    )
+
+    session = session_row(settings, session_id)
+    assert session["status"] == REVIEWING  # still the ordinary revising->reviewing edge
+    assert session["round"] == 0  # round UNCHANGED — asking costs no round
+    assert session["revise_attempts"] == 0  # but the retry budget is reset
+
+    assert event_kinds(settings, session_id).count("clarify") == 1
+    assert "어느 절을 말씀하신 건가요?" in clarify_event_details(settings, session_id)[0]
+
+    # The opinion stays queued for the next wheel (no applied_round stamp).
+    opinion = opinion_rows(settings, session_id)[0]
+    assert opinion["applied_round"] is None
+
+    # The question rides along on the re-notify.
+    assert calls[0]["kind"] == "revise_result_post"
+    assert calls[0]["round_number"] == 0
+    assert len(calls[0]["clarify"]) == 1
+    assert calls[0]["clarify"][0]["opinion_id"] == opinion_ids[0]
+    assert calls[0]["clarify"][0]["candidates"] == [
+        "docs/a.md#설치",
+        "docs/a.md#설정",
+        "docs/b.md#개요",
+    ]
+
+
+def test_clarify_with_a_commit_still_consumes_the_round(monkeypatch, tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """"일부만 MISSING" — the wheel produced a commit, so it was a real round
+    even though one opinion still needs a follow-up question."""
+
+    settings = configure(monkeypatch, tmp_path)
+    session_id, opinion_ids = seed_revising_session(settings, ["반영됨", "못 찾음"])
+    _record_git_calls(monkeypatch, dirty=["docs/a.md"])
+
+    calls: list[dict[str, Any]] = []
+    monkeypatch.setattr(revise_executor, "SlackClient", make_fake_slack_client(calls))
+
+    revise_executor.process_one(
+        make_item(session_id),
+        settings=settings,
+        runner=FakeRunner(
+            kind="ok",
+            unapplied_ids={opinion_ids[1]},
+            commit_paths=["docs/a.md"],
+            clarify=_clarify(opinion_ids[1]),
+        ),
+    )
+
+    session = session_row(settings, session_id)
+    assert session["round"] == 1  # consumed
+    assert event_kinds(settings, session_id).count("clarify") == 1  # asked, and it counts
+    assert len(calls[0]["clarify"]) == 1
+
+
+def test_clarify_limit_exhausted_closes_the_opinion(monkeypatch, tmp_path) -> None:  # type: ignore[no-untyped-def]
+    settings = configure(monkeypatch, tmp_path)
+    monkeypatch.setattr(settings, "revise_clarify_limit", 2)
+    session_id, opinion_ids = seed_revising_session(settings, ["끝내 못 찾는 의견"])
+
+    # Two clarify rounds already spent -> the budget is gone.
+    conn = get_connection(settings.db_path)
+    for _ in range(2):
+        conn.execute(
+            "INSERT INTO event_log (session_id, kind, detail) VALUES (?, 'clarify', 'earlier ask')",
+            (session_id,),
+        )
+    conn.commit()
+    conn.close()
+
+    calls: list[dict[str, Any]] = []
+    monkeypatch.setattr(revise_executor, "SlackClient", make_fake_slack_client(calls))
+
+    revise_executor.process_one(
+        make_item(session_id),
+        settings=settings,
+        runner=FakeRunner(
+            kind="ok",
+            unapplied_ids={opinion_ids[0]},
+            clarify=_clarify(opinion_ids[0]),
+        ),
+    )
+
+    opinion = opinion_rows(settings, session_id)[0]
+    assert opinion["last_verdict"] == "대상 미확인 — 재질문 한도 소진"
+    assert opinion["applied_round"] == 0  # stamped -> leaves the unapplied queue
+
+    session = session_row(settings, session_id)
+    assert session["round"] == 1  # round advances normally once we stop asking
+
+    # No third question was asked, in the log or in Slack.
+    assert event_kinds(settings, session_id).count("clarify") == 2
+    assert "clarify_exhausted" in event_kinds(settings, session_id)
+    assert calls[0]["clarify"] == []
+
+
+def test_clarify_strings_are_redacted_and_capped_before_db_and_slack(monkeypatch, tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """LLM-authored text: masked with the same 5-secret list git_workspace
+    uses, and capped at the 300-char Slack exposure limit."""
+
+    settings = configure(monkeypatch, tmp_path)
+    secret = "glpat-super-secret-value-xyz"
+    monkeypatch.setattr(settings, "gitlab_token", secret)
+    session_id, opinion_ids = seed_revising_session(settings, ["의견"])
+
+    calls: list[dict[str, Any]] = []
+    monkeypatch.setattr(revise_executor, "SlackClient", make_fake_slack_client(calls))
+
+    revise_executor.process_one(
+        make_item(session_id),
+        settings=settings,
+        runner=FakeRunner(
+            kind="ok",
+            unapplied_ids={opinion_ids[0]},
+            clarify=[
+                {
+                    "opinion_id": opinion_ids[0],
+                    "question": f"토큰 {secret} 이 있는 절을 말하는 건가요? " + ("가" * 400),
+                    "candidates": [f"docs/{secret}.md", "docs/b.md", "docs/c.md", "docs/d.md"],
+                }
+            ],
+        ),
+    )
+
+    clarify = calls[0]["clarify"][0]
+    assert secret not in clarify["question"]
+    assert "***" in clarify["question"]
+    assert len(clarify["question"]) <= 300
+    assert secret not in clarify["candidates"][0]
+    assert len(clarify["candidates"]) == 3  # capped at three candidates
+
+    assert secret not in clarify_event_details(settings, session_id)[0]
+
+
+def test_cas_race_leaves_round_and_sha_untouched_with_commit_paths_and_clarify(
+    monkeypatch, tmp_path
+) -> None:  # type: ignore[no-untyped-def]
+    """F1 still holds with the new fields in play: the revising->reviewing CAS
+    stays the leading precondition, so a lost race writes no round, no
+    applied_round, no mr_sha and no clarify event — even though this round did
+    commit and did carry a question."""
+
+    settings = configure(monkeypatch, tmp_path)
+    session_id, opinion_ids = seed_revising_session(settings, ["의견 1"])
+    _record_git_calls(monkeypatch, dirty=["docs/a.md"])
+
+    before = session_row(settings, session_id)
+
+    conn = get_connection(settings.db_path)
+    assert cas_transition(conn, session_id, REVISING, MANUAL, reason="human_push")
+    conn.close()
+
+    calls: list[dict[str, Any]] = []
+    monkeypatch.setattr(revise_executor, "SlackClient", make_fake_slack_client(calls))
+
+    handle_conn = get_connection(settings.db_path)
+    revise_executor._handle_ok(
+        conn=handle_conn,
+        settings=settings,
+        session=before,
+        mr_full={"source_branch": "feature/test", "sha": "newsha000"},
+        workspace=FAKE_WORKSPACE,
+        opinions=[dict(row) for row in opinion_rows(settings, session_id)],
+        result=ReviseResult(
+            kind="ok",
+            unapplied=[],
+            detail="",
+            commit_paths=["docs/a.md"],
+            clarify=_clarify(opinion_ids[0]),
+        ),
+    )
+    handle_conn.close()
+
+    after = session_row(settings, session_id)
+    assert after["status"] == MANUAL
+    assert after["round"] == 0
+    assert after["mr_sha"] == SHA
+    assert all(op["applied_round"] is None for op in opinion_rows(settings, session_id))
+    assert "clarify" not in event_kinds(settings, session_id)
+    assert "revise_success_raced" in event_kinds(settings, session_id)
+    assert calls == []

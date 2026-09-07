@@ -266,6 +266,7 @@ class SlackClient:
         summary: str | None = None,
         diff_stat: str | None = None,
         compare_url: str | None = None,
+        clarify: list[dict[str, Any]] | None = None,
     ) -> None:
         """Re-notify after a revise round completes (§S4② step (e), kind=ok).
 
@@ -277,8 +278,9 @@ class SlackClient:
         uses ``post_revise_result`` instead (사용자 결정: 라운드마다 새 알림).
 
         ``summary``/``diff_stat``/``compare_url`` render the "이전 대비
-        변경점" blocks (see ``_revise_result_payload``); all default to
-        ``None`` so existing callers are unaffected.
+        변경점" blocks and ``clarify`` the 되물음 block (see
+        ``_revise_result_payload``); all default to ``None`` so existing
+        callers are unaffected.
         """
         text, blocks = _revise_result_payload(
             mr,
@@ -288,6 +290,7 @@ class SlackClient:
             summary=summary,
             diff_stat=diff_stat,
             compare_url=compare_url,
+            clarify=clarify,
         )
         await self.call(
             "chat.update",
@@ -310,6 +313,7 @@ class SlackClient:
         summary: str | None = None,
         diff_stat: str | None = None,
         compare_url: str | None = None,
+        clarify: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         """Post a brand-new message for a completed revise round.
 
@@ -321,8 +325,9 @@ class SlackClient:
         withdrawing the previous message's buttons.
 
         ``summary``/``diff_stat``/``compare_url`` render the "이전 대비
-        변경점" blocks (see ``_revise_result_payload``); all default to
-        ``None`` so existing callers are unaffected.
+        변경점" blocks and ``clarify`` the 되물음 block (see
+        ``_revise_result_payload``); all default to ``None`` so existing
+        callers are unaffected.
         """
         text, blocks = _revise_result_payload(
             mr,
@@ -332,6 +337,7 @@ class SlackClient:
             summary=summary,
             diff_stat=diff_stat,
             compare_url=compare_url,
+            clarify=clarify,
         )
         return await self.call(
             "chat.postMessage",
@@ -453,6 +459,7 @@ def _revise_result_payload(
     summary: str | None = None,
     diff_stat: str | None = None,
     compare_url: str | None = None,
+    clarify: list[dict[str, Any]] | None = None,
 ) -> tuple[str, list[dict[str, Any]]]:
     """Build the (text, blocks) pair for a completed revise round's re-notify.
 
@@ -465,9 +472,24 @@ def _revise_result_payload(
     의견 context, in that fixed order (요약 → diff stat → compare 링크).
     Each is omitted when ``None`` or blank (after stripping); wiring real
     values in is a follow-up step — this only adds the rendering.
+
+    ``clarify`` (되물음, docs/revise-workflow.html Part 2) is the list of
+    opinions whose target the runner could not locate at all — each entry
+    ``{"opinion_id": int, "question": str, "candidates": [str, ...]}``. When
+    present it swaps the "라운드 N 완료" header for a 되물음 header and adds
+    one context block per question with its candidate targets. **The button
+    set is deliberately untouched**: the human answers by pressing the same
+    [의견] button again, so there is no new button and no modal here.
+    ``None``/empty leaves the payload exactly as it was.
     """
     blocks = review_blocks(mr, token)
-    header = f"🔄 라운드 {round_number} 완료 — 재확인 후 승인해주세요"
+    clarify_entries = [
+        entry for entry in (clarify or []) if str(entry.get("question") or "").strip()
+    ]
+    if clarify_entries:
+        header = "❓ 대상을 찾지 못했습니다 — 확인 부탁드립니다"
+    else:
+        header = f"🔄 라운드 {round_number} 완료 — 재확인 후 승인해주세요"
     blocks.insert(0, {"type": "section", "text": {"type": "mrkdwn", "text": header}})
 
     insert_at = 1
@@ -514,8 +536,12 @@ def _revise_result_payload(
         )
         insert_at += 1
 
+    for entry in clarify_entries:
+        blocks.insert(insert_at, _clarify_block(entry))
+        insert_at += 1
+
     if unapplied:
-        lines = "\n".join(f"• {item.get('reason') or '(사유 없음)'}" for item in unapplied)
+        lines = "\n".join(f"• {_unapplied_line(item)}" for item in unapplied)
         blocks.insert(
             insert_at,
             {
@@ -525,5 +551,60 @@ def _revise_result_payload(
                 ],
             },
         )
-    text = f"MR 리뷰 요청 (라운드 {round_number})"
+    if clarify_entries:
+        text = f"MR 리뷰 요청 (라운드 {round_number}) — 대상 확인 필요"
+    else:
+        text = f"MR 리뷰 요청 (라운드 {round_number})"
     return text, blocks
+
+
+def _clarify_block(entry: dict[str, Any]) -> dict[str, Any]:
+    """One 되물음 context block: the question plus its candidate targets.
+
+    A ``context`` block (same weight as the 미반영 list), not an interactive
+    one — answering happens through the existing [의견] button, so nothing
+    here is clickable. Every string is clipped like the rest of this module's
+    Slack-facing text.
+    """
+
+    opinion_id = entry.get("opinion_id")
+    prefix = f"의견 #{opinion_id}" if opinion_id is not None else "의견"
+    question = _clip(str(entry.get("question") or "").strip(), 300)
+    lines = [f"❓ {prefix}: {question}"]
+    candidates = [
+        str(candidate).strip()
+        for candidate in (entry.get("candidates") or [])
+        if str(candidate).strip()
+    ]
+    if candidates:
+        rendered = "\n".join(f"  • {_clip(candidate, 200)}" for candidate in candidates)
+        lines.append(f"후보:\n{rendered}")
+    lines.append("_[의견] 버튼을 다시 눌러 답해주세요._")
+    return {
+        "type": "context",
+        "elements": [{"type": "mrkdwn", "text": _clip("\n".join(lines), 2900)}],
+    }
+
+
+def _unapplied_line(item: dict[str, Any]) -> str:
+    """One 미반영 line: which opinion, its body head (if known), then the reason.
+
+    The reason alone does not say *which* opinion went unapplied, which made
+    the old list unreadable as soon as more than one did (docs/
+    revise-workflow.html Part 4 "미반영 목록 개선"). ``opinion_id`` and
+    ``body`` are both optional — a caller passing the old ``{"reason": ...}``
+    shape still renders exactly the old line.
+    """
+
+    reason = str(item.get("reason") or "").strip() or "(사유 없음)"
+    opinion_id = item.get("opinion_id")
+    body = str(item.get("body") or "").strip()
+
+    label = f"#{opinion_id}" if opinion_id is not None else ""
+    if body:
+        head = _clip(" ".join(body.split()), 60)
+        label = f"{label} 「{head}」" if label else f"「{head}」"
+
+    if not label:
+        return _clip(reason, 300)
+    return f"{label} — {_clip(reason, 300)}"

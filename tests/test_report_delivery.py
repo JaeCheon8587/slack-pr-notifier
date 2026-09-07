@@ -142,7 +142,7 @@ def test_revise_round_delivers_html_report_to_new_thread(
 
         async def post_revise_result(
             self, channel, mr, token, *, round_number, unapplied,
-            summary=None, diff_stat=None, compare_url=None
+            summary=None, diff_stat=None, compare_url=None, clarify=None
         ):  # noqa: ANN001
             return {"ts": "999.888", "channel": channel}
 

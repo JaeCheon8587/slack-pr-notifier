@@ -59,6 +59,7 @@ from app.state_machine import (
     advance_round_and_reset_attempts,
     cas_transition,
     record_revise_failure,
+    reset_attempts_only,
 )
 
 logger = logging.getLogger("uvicorn.error")
@@ -67,10 +68,26 @@ DEFAULT_RUNNER: AIRunner = StubRunner()
 
 
 def _select_runner(settings: Settings) -> AIRunner:
-    """Pick the ``AIRunner`` per ``settings.ai_runner`` ("stub" default, "claude" → P5)."""
+    """Pick the ``AIRunner`` per ``settings.ai_runner``.
+
+    ``"stub"`` (the default) → ``StubRunner``; ``"claude"`` → the P5
+    single-call ``ClaudeCliRunner``; ``"staged"`` → the 3a/3b/3c staged
+    workflow of docs/revise-workflow.html. Anything unrecognized falls back
+    to the stub, as before.
+    """
 
     if settings.ai_runner == "claude":
         return ClaudeCliRunner(settings)
+    if settings.ai_runner == "staged":
+        # Deliberately a *lazy* import: ``app.revise_workflow`` is a separate
+        # package that need not exist for this module to be importable (the
+        # whole app imports revise_executor at startup regardless of which
+        # runner is configured). Only an explicit AI_RUNNER=staged reaches
+        # this line, so a missing package surfaces as a configuration error
+        # on that one path rather than breaking module load for everyone.
+        from app.revise_workflow.runner import StagedRunner
+
+        return StagedRunner(settings)
     return DEFAULT_RUNNER
 
 
@@ -291,6 +308,69 @@ def _compare_url(
 # ---------------------------------------------------------------------------
 # Result handling
 # ---------------------------------------------------------------------------
+_CLARIFY_EXHAUSTED_VERDICT = "대상 미확인 — 재질문 한도 소진"
+
+_CLARIFY_CANDIDATE_LIMIT = 3
+
+
+def _clarify_count(conn: sqlite3.Connection, session_id: int) -> int:
+    """How many 되물음 rounds this session has already spent.
+
+    Counted off ``event_log`` (``kind='clarify'``) rather than a new column:
+    the schema is frozen this phase and event_log.kind carries no CHECK
+    constraint, so this needs no migration (docs/revise-workflow.html Part 2
+    "되물음 상한").
+    """
+
+    row = conn.execute(
+        "SELECT COUNT(*) AS n FROM event_log WHERE session_id = ? AND kind = 'clarify'",
+        (session_id,),
+    ).fetchone()
+    return int(row["n"]) if row is not None else 0
+
+
+def _clarify_render(
+    clarify: list[dict[str, Any]] | None, secrets: list[str]
+) -> list[dict[str, Any]]:
+    """Normalize a runner's ``clarify`` list into the shape Slack/DB consume.
+
+    Every string here was written by an LLM, so each one is masked with the
+    same 5-secret list ``app.git_workspace`` uses and capped at the Slack
+    exposure limit before it can reach either the DB or a channel. Entries
+    without a question are dropped (nothing to ask); candidates are capped at
+    three per the design.
+    """
+
+    rendered: list[dict[str, Any]] = []
+    for entry in clarify or []:
+        if not isinstance(entry, dict):
+            continue
+        question = entry.get("question")
+        if not isinstance(question, str) or not question.strip():
+            continue
+        candidates = [
+            _truncate_for_slack(git_workspace._redact(str(candidate), secrets))
+            for candidate in (entry.get("candidates") or [])[:_CLARIFY_CANDIDATE_LIMIT]
+            if str(candidate).strip()
+        ]
+        rendered.append(
+            {
+                "opinion_id": entry.get("opinion_id"),
+                "question": _truncate_for_slack(
+                    git_workspace._redact(question.strip(), secrets)
+                ),
+                "candidates": candidates,
+            }
+        )
+    return rendered
+
+
+def _clarify_lines(clarify: list[dict[str, Any]]) -> list[str]:
+    """One ``"<opinion_id>: <question>"`` line per clarify entry, for event_log."""
+
+    return [f"opinion {entry.get('opinion_id')}: {entry.get('question')}" for entry in clarify]
+
+
 def _handle_ok(
     conn: sqlite3.Connection,
     settings: Settings,
@@ -303,22 +383,48 @@ def _handle_ok(
     session_id = session["id"]
     unapplied_ids = {entry.get("opinion_id") for entry in result.unapplied}
     reason_by_id = {entry.get("opinion_id"): entry.get("reason") for entry in result.unapplied}
+    body_by_id = {opinion["id"]: (opinion.get("body") or "") for opinion in opinions}
+    secrets = git_workspace._redaction_secrets(settings)
     # Captured before any `review_session.mr_sha` write below — the pre-round sha.
     old_sha = session["mr_sha"]
 
     try:
         changed = git_workspace.has_changes(settings, workspace)
+        committed = False
         if changed:
-            git_workspace.commit_all(
-                settings, workspace, f"revise: MR !{session['mr_iid']} round {session['round']}"
-            )
-            git_workspace.push(settings, workspace, mr_full.get("source_branch") or "")
+            message = f"revise: MR !{session['mr_iid']} round {session['round']}"
+            if result.commit_paths:
+                # Path-scoped commit (docs/revise-workflow.html Part 4): the
+                # runner named the files its applied/partial opinions touched,
+                # so stage only those — an unrelated dirty file (a stray
+                # artifact, an edit belonging to an `unapplied` opinion) must
+                # not ride along on this round's commit. Intersected with the
+                # tree's actual dirty set first: a path the runner claims but
+                # that is in fact clean would make `git commit -- <path>` fail
+                # with "nothing to commit", turning a good round into a
+                # `kind=failed` retry.
+                dirty = set(git_workspace.changed_paths(settings, workspace))
+                staged = [
+                    path
+                    for path in git_workspace._normalize_paths(result.commit_paths)
+                    if path in dirty
+                ]
+                if staged:
+                    git_workspace.commit_paths(settings, workspace, message, staged)
+                    committed = True
+            else:
+                # No path list from the runner — the pre-existing whole-tree
+                # commit, byte-for-byte the old behavior.
+                git_workspace.commit_all(settings, workspace, message)
+                committed = True
+            if committed:
+                git_workspace.push(settings, workspace, mr_full.get("source_branch") or "")
     except Exception as error:
         _handle_failed(conn, settings, session, f"git commit/push failed: {type(error).__name__}")
         return
 
     new_sha = mr_full.get("sha")
-    if changed:
+    if committed:
         try:
             new_sha = git_workspace.current_sha(settings, workspace)
         except Exception:
@@ -358,14 +464,66 @@ def _handle_ok(
             )
     conn.commit()
 
-    new_round = advance_round_and_reset_attempts(conn, session_id)
+    # --- 되물음(clarify) accounting -------------------------------------
+    # A clarify entry means the machine could not locate what an opinion
+    # refers to at all, so it asks the human instead of guessing. Two rules
+    # (docs/revise-workflow.html Part 2 "라운드 회계 — 되물음"): asking must
+    # not spend one of the human's scarce rounds when the wheel produced no
+    # commit, and the asking itself is capped per session.
+    clarify = _clarify_render(result.clarify, secrets)
+    clarify_used = _clarify_count(conn, session_id)
+    clarify_exhausted = clarify_used >= settings.revise_clarify_limit
+
+    if clarify and clarify_exhausted:
+        # Budget spent — stop asking. Close each still-unlocated opinion out
+        # with an honest verdict and stamp applied_round so it leaves the
+        # unapplied queue instead of being re-asked every round; the round
+        # then advances normally.
+        for entry in clarify:
+            opinion_id = entry.get("opinion_id")
+            if opinion_id is None:
+                continue
+            conn.execute(
+                "UPDATE opinion SET last_verdict = ?, applied_round = ? WHERE id = ?",
+                (_CLARIFY_EXHAUSTED_VERDICT, current_round, opinion_id),
+            )
+        conn.commit()
+        conn.execute(
+            "INSERT INTO event_log (session_id, kind, detail) VALUES (?, 'clarify_exhausted', ?)",
+            (session_id, f"{_CLARIFY_EXHAUSTED_VERDICT} (limit={settings.revise_clarify_limit})"),
+        )
+        conn.commit()
+        clarify = []
+
+    asking = bool(clarify)
+    if asking:
+        conn.execute(
+            "INSERT INTO event_log (session_id, kind, detail) VALUES (?, 'clarify', ?)",
+            (session_id, _truncate_for_slack("; ".join(_clarify_lines(clarify)))),
+        )
+        conn.commit()
+
+    # Round held only when we are actually asking *and* the wheel produced no
+    # commit — a round that did commit is a real round and is consumed as
+    # usual even if some opinion also needs a follow-up question.
+    if asking and not committed:
+        new_round = reset_attempts_only(conn, session_id)
+    else:
+        new_round = advance_round_and_reset_attempts(conn, session_id)
 
     if new_sha:
         conn.execute("UPDATE review_session SET mr_sha = ? WHERE id = ?", (new_sha, session_id))
         conn.commit()
 
+    # 미반영 목록: reason alone does not say *which* opinion went unapplied —
+    # carry the opinion_id and the head of its body so the Slack list is
+    # readable (docs/revise-workflow.html Part 4 "미반영 목록 개선").
     unapplied_render = [
-        {"reason": reason_by_id.get(entry.get("opinion_id")) or "(사유 없음)"}
+        {
+            "opinion_id": entry.get("opinion_id"),
+            "reason": reason_by_id.get(entry.get("opinion_id")) or "(사유 없음)",
+            "body": body_by_id.get(entry.get("opinion_id")) or "",
+        }
         for entry in result.unapplied
     ]
 
@@ -397,6 +555,7 @@ def _handle_ok(
                 summary=summary,
                 diff_stat=stat_text,
                 compare_url=compare,
+                clarify=clarify,
             )
         )
     except Exception:
@@ -444,6 +603,7 @@ async def _notify_revise_success(
     summary: str | None = None,
     diff_stat: str | None = None,
     compare_url: str | None = None,
+    clarify: list[dict[str, Any]] | None = None,
 ) -> None:
     """Re-notify a completed revise round with a brand-new Slack message.
 
@@ -474,6 +634,7 @@ async def _notify_revise_success(
         summary=summary,
         diff_stat=diff_stat,
         compare_url=compare_url,
+        clarify=clarify,
     )
     new_ts = posted.get("ts") if isinstance(posted, dict) else None
     if new_ts:

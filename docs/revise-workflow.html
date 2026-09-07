@@ -1,0 +1,1014 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>*,*::before,*::after{box-sizing:border-box}body{margin:0}img,svg{max-width:100%}</style>
+<title>리바이스 루프 LLM 워크플로우 제안</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+KR:wght@300;400;500;600;700&display=swap">
+
+<style>
+:root{
+  --ground:#F5F5F8;
+  --surface:#FFFFFF;
+  --surface-2:#EFEFF4;
+  --ink:#16181F;
+  --ink-2:#3C4050;
+  --mute:#6E7385;
+  --line:#DBDBE4;
+  --line-soft:#E9E9F0;
+  --accent:#8A2D55;
+  --accent-soft:#F5E6EC;
+  --tool:#4B5468;
+  --tool-soft:#E7E9EF;
+  --block:#A81F27;
+  --review:#8F5D0C;
+  --pass:#24664A;
+  --shadow:0 1px 2px rgba(22,24,31,.06),0 8px 24px -16px rgba(22,24,31,.18);
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --ground:#11121A;
+    --surface:#191B24;
+    --surface-2:#212430;
+    --ink:#E9E9EF;
+    --ink-2:#BCBFCC;
+    --mute:#8A8FA2;
+    --line:#2C3040;
+    --line-soft:#242833;
+    --accent:#E48CAD;
+    --accent-soft:#331F29;
+    --tool:#A3ACC1;
+    --tool-soft:#242936;
+    --block:#F08A90;
+    --review:#DCA84A;
+    --pass:#6FC49B;
+    --shadow:0 1px 2px rgba(0,0,0,.4),0 10px 28px -18px rgba(0,0,0,.7);
+  }
+}
+:root[data-theme="dark"]{
+  --ground:#11121A;
+  --surface:#191B24;
+  --surface-2:#212430;
+  --ink:#E9E9EF;
+  --ink-2:#BCBFCC;
+  --mute:#8A8FA2;
+  --line:#2C3040;
+  --line-soft:#242833;
+  --accent:#E48CAD;
+  --accent-soft:#331F29;
+  --tool:#A3ACC1;
+  --tool-soft:#242936;
+  --block:#F08A90;
+  --review:#DCA84A;
+  --pass:#6FC49B;
+  --shadow:0 1px 2px rgba(0,0,0,.4),0 10px 28px -18px rgba(0,0,0,.7);
+}
+
+*{box-sizing:border-box}
+body{
+  margin:0;
+  background:var(--ground);
+  color:var(--ink);
+  font-family:"IBM Plex Sans KR","Malgun Gothic",system-ui,sans-serif;
+  font-weight:400;
+  font-size:15.5px;
+  line-height:1.72;
+  -webkit-font-smoothing:antialiased;
+}
+code,pre,.mono{font-family:"IBM Plex Mono",ui-monospace,Consolas,monospace}
+
+/* ---------- shell ---------- */
+.shell{max-width:1240px;margin:0 auto;padding:0 26px;display:grid;grid-template-columns:216px minmax(0,1fr);gap:52px;align-items:start}
+@media (max-width:940px){.shell{grid-template-columns:1fr;gap:0}}
+
+/* ---------- rail ---------- */
+.rail{position:sticky;top:0;padding:38px 0 60px;max-height:100vh;overflow-y:auto}
+@media (max-width:940px){.rail{position:static;max-height:none;padding:26px 0 0;border-bottom:1px solid var(--line);margin-bottom:26px}}
+.rail-brand{font-family:"IBM Plex Mono",monospace;font-size:13px;font-weight:600;letter-spacing:.02em;color:var(--accent);margin-bottom:4px}
+.rail-sub{font-size:11.5px;color:var(--mute);line-height:1.5;margin-bottom:24px}
+.rail nav{display:flex;flex-direction:column;gap:2px}
+.rail-part{font-family:"IBM Plex Mono",monospace;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--mute);margin:18px 0 6px}
+.rail a{display:block;color:var(--ink-2);text-decoration:none;font-size:12.5px;padding:2.5px 8px 2.5px 10px;border-left:2px solid transparent;border-radius:0 3px 3px 0}
+.rail a:hover{color:var(--ink);background:var(--surface-2)}
+.rail a.on{color:var(--accent);border-left-color:var(--accent);font-weight:500}
+.rail a:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.rail a .mono{font-size:11.5px;color:var(--mute);margin-right:5px}
+.rail a.on .mono{color:var(--accent)}
+
+/* ---------- masthead ---------- */
+main{padding:38px 0 120px;min-width:0}
+.masthead{border-bottom:1px solid var(--line);padding-bottom:30px;margin-bottom:46px}
+.eyebrow{font-family:"IBM Plex Mono",monospace;font-size:10.5px;letter-spacing:.16em;text-transform:uppercase;color:var(--mute)}
+h1{font-size:clamp(30px,4.4vw,44px);line-height:1.14;font-weight:700;letter-spacing:-.022em;margin:12px 0 14px;text-wrap:balance}
+.dek{font-size:16.5px;color:var(--ink-2);max-width:64ch;font-weight:300}
+.dek b{font-weight:600;color:var(--ink)}
+.meta{display:flex;flex-wrap:wrap;gap:8px 22px;margin-top:22px;font-family:"IBM Plex Mono",monospace;font-size:11.5px;color:var(--mute)}
+.meta span b{color:var(--ink-2);font-weight:500}
+
+/* ---------- sections ---------- */
+section{margin-bottom:76px;scroll-margin-top:24px}
+.part-head{display:flex;align-items:baseline;gap:14px;border-top:2px solid var(--ink);padding-top:12px;margin-bottom:8px}
+.part-num{font-family:"IBM Plex Mono",monospace;font-size:12px;font-weight:600;color:var(--accent)}
+h2{font-size:25px;font-weight:700;letter-spacing:-.018em;margin:0;text-wrap:balance}
+.part-note{font-size:14.5px;color:var(--mute);max-width:66ch;margin:0 0 34px}
+h3{font-size:17.5px;font-weight:600;letter-spacing:-.012em;margin:44px 0 12px;text-wrap:balance;scroll-margin-top:20px}
+h4{font-size:13px;font-weight:600;margin:26px 0 8px;letter-spacing:-.005em}
+p{margin:0 0 14px;max-width:70ch}
+.lede{max-width:68ch;color:var(--ink-2)}
+strong{font-weight:600}
+a.inline{color:var(--accent);text-decoration:none;border-bottom:1px solid color-mix(in srgb,var(--accent) 35%,transparent)}
+a.inline:hover{border-bottom-color:var(--accent)}
+
+/* ---------- chips / badges ---------- */
+.kind{font-family:"IBM Plex Mono",monospace;font-size:10px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;padding:2px 6px;border-radius:3px;white-space:nowrap;display:inline-block;line-height:1.5}
+.kind.tool{color:var(--tool);background:var(--tool-soft)}
+.kind.llm{color:var(--accent);background:var(--accent-soft)}
+.req{font-family:"IBM Plex Mono",monospace;font-size:10.5px;color:var(--mute);white-space:nowrap}
+.req.core{color:var(--ink-2);font-weight:600}
+.gate{font-family:"IBM Plex Mono",monospace;font-size:10.5px;font-weight:600;padding:2px 7px;border-radius:3px;letter-spacing:.05em}
+.gate.b{color:var(--block);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--block) 40%,transparent)}
+.gate.r{color:var(--review);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--review) 45%,transparent)}
+.gate.p{color:var(--pass);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--pass) 40%,transparent)}
+
+/* ---------- tables ---------- */
+.tw{overflow-x:auto;margin:0 0 22px;border:1px solid var(--line);border-radius:6px;background:var(--surface)}
+table{border-collapse:collapse;width:100%;font-size:13.5px;min-width:560px}
+th{text-align:left;font-family:"IBM Plex Mono",monospace;font-size:10px;letter-spacing:.11em;text-transform:uppercase;color:var(--mute);font-weight:500;padding:10px 14px;border-bottom:1px solid var(--line);white-space:nowrap;background:var(--surface-2)}
+td{padding:10px 14px;border-bottom:1px solid var(--line-soft);vertical-align:top;color:var(--ink-2)}
+tbody tr:last-child td{border-bottom:none}
+td.num{font-variant-numeric:tabular-nums;font-family:"IBM Plex Mono",monospace;color:var(--ink)}
+td code,p code,li code,.card code,dd code{font-size:.88em;background:var(--surface-2);padding:1px 4.5px;border-radius:3px;color:var(--ink)}
+td strong{color:var(--ink)}
+
+/* ---------- pipeline ---------- */
+.filters{display:flex;flex-wrap:wrap;gap:7px;margin-bottom:16px;align-items:center}
+.filters .lbl{font-family:"IBM Plex Mono",monospace;font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--mute);margin-right:5px}
+.filters button{font-family:"IBM Plex Mono",monospace;font-size:11.5px;color:var(--ink-2);background:var(--surface);border:1px solid var(--line);padding:4px 11px;border-radius:99px;cursor:pointer}
+.filters button:hover{border-color:var(--mute)}
+.filters button[aria-pressed="true"]{background:var(--ink);color:var(--ground);border-color:var(--ink)}
+.filters button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+table.pipe{min-width:720px}
+table.pipe td:first-child{font-family:"IBM Plex Mono",monospace;font-weight:600;color:var(--accent);white-space:nowrap;font-variant-numeric:tabular-nums}
+table.pipe .nm{font-family:"IBM Plex Mono",monospace;font-size:12.5px;color:var(--ink);font-weight:500;white-space:nowrap}
+table.pipe .out{font-family:"IBM Plex Mono",monospace;font-size:11.5px;white-space:nowrap}
+table.pipe .out a{color:var(--ink-2);text-decoration:none;border-bottom:1px dotted var(--mute)}
+table.pipe .out a:hover{color:var(--accent);border-bottom-color:var(--accent)}
+table.pipe tr[data-opt="1"] td:first-child{color:var(--mute)}
+table.pipe tr.hide{display:none}
+
+/* ---------- cards ---------- */
+.card{background:var(--surface);border:1px solid var(--line);border-radius:7px;padding:22px 24px;margin-bottom:20px;box-shadow:var(--shadow)}
+.card.opt{border-style:dashed}
+.card-top{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin-bottom:4px}
+.card-name{font-family:"IBM Plex Mono",monospace;font-size:16px;font-weight:600;letter-spacing:-.01em;color:var(--ink)}
+.card-ref{font-size:12px;color:var(--mute);margin-bottom:16px}
+.card-ref code{background:none;padding:0;color:var(--accent)}
+.fm{display:flex;flex-wrap:wrap;gap:0;border:1px solid var(--line-soft);border-radius:5px;overflow:hidden;margin-bottom:18px;background:var(--surface-2)}
+.fm div{padding:7px 13px;border-right:1px solid var(--line-soft);flex:1 1 auto;min-width:96px}
+.fm div:last-child{border-right:none}
+.fm dt{font-family:"IBM Plex Mono",monospace;font-size:9.5px;letter-spacing:.11em;text-transform:uppercase;color:var(--mute);margin:0 0 2px}
+.fm dd{margin:0;font-family:"IBM Plex Mono",monospace;font-size:12.5px;color:var(--ink);font-variant-numeric:tabular-nums}
+.fm dd.no{color:var(--mute);text-decoration:line-through}
+
+dl.io{margin:0 0 16px;display:grid;grid-template-columns:max-content minmax(0,1fr);gap:5px 16px;align-items:baseline}
+dl.io dt{font-family:"IBM Plex Mono",monospace;font-size:10px;letter-spacing:.11em;text-transform:uppercase;color:var(--mute);padding-top:3px}
+dl.io dd{margin:0;font-size:13.5px;color:var(--ink-2)}
+@media (max-width:600px){dl.io{grid-template-columns:1fr;gap:1px 0}dl.io dd{margin-bottom:9px}}
+
+ol.hl{margin:0;padding-left:1.35em;font-size:13.5px;color:var(--ink-2)}
+ol.hl li{margin-bottom:9px;padding-left:2px}
+ol.hl li::marker{font-family:"IBM Plex Mono",monospace;font-size:11.5px;color:var(--accent)}
+ol.hl b{color:var(--ink);font-weight:600}
+ol.hl .alt{display:block;color:var(--mute);font-size:12.5px}
+ol.hl .alt::before{content:"→ ";color:var(--accent)}
+
+ul.plain{margin:0 0 16px;padding-left:1.15em;font-size:14px;color:var(--ink-2)}
+ul.plain li{margin-bottom:7px}
+ul.plain b{color:var(--ink)}
+
+/* ---------- code ---------- */
+.codewrap{border:1px solid var(--line);border-radius:6px;background:var(--surface);margin:0 0 20px;overflow:hidden}
+.codewrap .bar{display:flex;flex-wrap:wrap;align-items:center;gap:10px;padding:8px 14px;border-bottom:1px solid var(--line);background:var(--surface-2)}
+.codewrap .bar .f{font-family:"IBM Plex Mono",monospace;font-size:12px;font-weight:600;color:var(--ink)}
+.codewrap .bar .flow{font-family:"IBM Plex Mono",monospace;font-size:10.5px;color:var(--mute)}
+pre{margin:0;padding:15px 16px;overflow-x:auto;font-size:12.3px;line-height:1.62;color:var(--ink-2);tab-size:2}
+pre b{color:var(--ink);font-weight:600}
+pre .c{color:var(--mute)}
+pre .k{color:var(--accent)}
+
+.note{border-left:2px solid var(--accent);padding:2px 0 2px 15px;margin:0 0 20px;font-size:13.5px;color:var(--ink-2);max-width:68ch}
+.note b{color:var(--ink)}
+.rule{border:none;border-top:1px solid var(--line);margin:40px 0}
+.fields{margin:0 0 22px;display:grid;grid-template-columns:max-content minmax(0,1fr);gap:6px 18px;font-size:13.5px}
+.fields dt{font-family:"IBM Plex Mono",monospace;font-size:12px;color:var(--accent);padding-top:2px;white-space:nowrap}
+.fields dd{margin:0;color:var(--ink-2)}
+@media (max-width:600px){.fields{grid-template-columns:1fr;gap:2px 0}.fields dd{margin-bottom:10px}}
+
+footer{border-top:1px solid var(--line);padding-top:20px;font-family:"IBM Plex Mono",monospace;font-size:11px;color:var(--mute);display:flex;flex-wrap:wrap;gap:8px 26px}
+@media (prefers-reduced-motion:no-preference){.rail a{transition:color .12s,border-color .12s,background .12s}.filters button{transition:background .14s,color .14s,border-color .14s}}
+</style>
+
+<div class="shell">
+<aside class="rail">
+  <div class="rail-brand">revise</div>
+  <div class="rail-sub">슬랙 [의견] → 문서 수정 커밋<br>v1 · 2026-09-04 · 구현 · 스모크 3/3</div>
+  <nav id="nav">
+    <div class="rail-part">Part 1</div>
+    <a href="#agents"><span class="mono">1</span>에이전트</a>
+    <div class="rail-part">Part 2</div>
+    <a href="#pipeline"><span class="mono">2</span>고정 DAG</a>
+    <a href="#consume"><span class="mono">2.1</span>산출물 소비 관계</a>
+    <a href="#mapping"><span class="mono">2.2</span>원안 8단계 매핑</a>
+    <a href="#gate"><span class="mono">2.3</span>결정론 게이트</a>
+    <a href="#rounds"><span class="mono">2.4</span>라운드 회계</a>
+    <a href="#reuse"><span class="mono">2.5</span>재사용 지점</a>
+    <a href="#limits"><span class="mono">2.6</span>구조적 제약</a>
+    <div class="rail-part">Part 3</div>
+    <a href="#templates"><span class="mono">3</span>산출물 템플릿</a>
+    <a href="#t00"><span class="mono">00</span>intent</a>
+    <a href="#t10"><span class="mono">10</span>anchor</a>
+    <a href="#t20"><span class="mono">20</span>impact</a>
+    <a href="#t30"><span class="mono">30</span>edit</a>
+    <a href="#t35"><span class="mono">35</span>gate</a>
+    <a href="#t40"><span class="mono">40</span>verify</a>
+    <a href="#t50"><span class="mono">50</span>summary</a>
+    <a href="#tledger"><span class="mono">--</span>ledger</a>
+    <div class="rail-part">Part 4</div>
+    <a href="#kickoff"><span class="mono">4</span>착수 조건</a>
+    <a href="#contract"><span class="mono">4.1</span>문서 계약 충돌</a>
+    <a href="#scope"><span class="mono">4.2</span>코드 변경 범위</a>
+    <a href="#config"><span class="mono">4.3</span>설정</a>
+    <a href="#verification"><span class="mono">4.4</span>검증</a>
+    <a href="#open"><span class="mono">4.5</span>미결 사항</a>
+  </nav>
+</aside>
+
+<main>
+<div class="masthead">
+  <div class="eyebrow">사내 docs-pipeline · revise 구간 설계</div>
+  <h1>리바이스 루프 LLM 워크플로우</h1>
+  <p class="dek">슬랙 [의견]이 관문을 통과하면 지금은 <b>헤드리스 <code>claude</code> 1회 호출</b>로 끝난다. 그 단발 구조에서는 사람이 말한 부분이 <b>실제로 있는지</b>, 같이 고쳐야 할 곳이 <b>있는지</b>, 「반영했다」는 보고가 <b>사실인지</b> 아무도 확인하지 않는다. 이 문서는 그 셋을 각각 단계로 세우되 <b>판단만 LLM에게 주고 검색 · 존재검사 · 대조는 결정론 도구가 하게</b> 만드는 설계다.</p>
+  <div class="meta">
+    <span><b>노드</b> 7 (LLM 3 · 툴 4)</span>
+    <span><b>LLM 호출</b> 3 + Python 오케스트레이터</span>
+    <span><b>재투입 예산</b> 라운드당 2</span>
+    <span><b>대상</b> .md / .mdx 전용</span>
+    <span><b>상태</b> 구현 · 스모크 3/3</span>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-top"><span class="card-name">왜 이 설계인가 — 근거</span><span class="kind tool">근거</span></div>
+  <div class="card-ref">현행 <code>app/ai_runner.py:161</code> · 실측 영수증 <code>.orchestration/reports/smoke-staged-runner.md</code></div>
+  <div class="tw">
+  <table>
+    <thead><tr><th>#</th><th>검증되지 않는 것</th><th>지금 일어나는 일</th></tr></thead>
+    <tbody>
+      <tr><td class="num">1</td><td>사람이 말한 「그 부분」이 문서에 <b>실제로 있는가</b></td><td>없으면 모델이 비슷한 곳을 고치거나 지어낸다</td></tr>
+      <tr><td class="num">2</td><td>같이 고쳐야 하는 곳(같은 버전 문자열, 그 절을 가리키는 링크)이 있는가</td><td>아무도 찾지 않는다</td></tr>
+      <tr><td class="num">3</td><td>「반영했다」는 보고가 <b>사실인가</b></td><td>보고를 쓴 모델 자신 말고 대조하는 주체가 없다</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <h4>확정된 전제</h4>
+  <dl class="fields">
+    <dt>대상 범위</dt><dd><b>문서(.md/.mdx) 전용</b></dd>
+    <dt>대상 못 찾음</dt><dd><b>라운드를 소모하지 않고 슬랙으로 되물음</b></dd>
+    <dt>LLM 호출 수</dt><dd><b>3회</b> — 구조화(3a) / 편집(3b) / 검증(3c)</dd>
+    <dt>부분 실패</dt><dd><b>성공분만 커밋</b>, 실패분은 3c 판정문을 사유로 남김</dd>
+  </dl>
+  <div class="note">「라운드 1 차감」은 <b><code>round</code>를 증가시키지 않는다</b>로 해석했다(음수 방지) — <a class="inline" href="#open">미결 1</a>.</div>
+</div>
+
+<hr class="rule">
+
+<section id="agents">
+  <div class="part-head"><span class="part-num">Part 1</span><h2>에이전트 — 누가 무엇을 쓰나</h2></div>
+  <p class="part-note">LLM 자리는 3개 — 구조화(3a) / 선별+편집(3b) / 대조 검증(3c). 세 자리는 각각 <strong>별도 headless 호출</strong>이고, 사이의 존재검사 · 역검색 · 게이트 · 추출은 Python 결정론 노드다. 도구 목록이 집행 수단이다 — 프롬프트로 금지하는 것과 도구를 안 주는 것은 다르다.</p>
+
+  <div class="tw">
+  <table>
+    <thead><tr><th>에이전트</th><th>실행</th><th>effort</th><th>tools</th><th>차단</th></tr></thead>
+    <tbody>
+      <tr><td><strong>오케스트레이터</strong> <code>StagedRunner</code></td><td class="num">Python</td><td class="num">—</td><td>headless <code>claude</code> ×3 · 결정론 노드 · git</td><td>LLM 아님 — 노드 루프 + 재투입 예산만</td></tr>
+      <tr><td><strong>3a INTENT</strong></td><td class="num">headless claude</td><td class="num">high</td><td>없음 — <code>--tools ""</code>, 텍스트 in/out</td><td>전부 (Read · Grep · Edit · Write · Bash)</td></tr>
+      <tr><td><strong>3b EDIT</strong></td><td class="num">headless claude</td><td class="num">high</td><td><code>--tools Read Edit Write</code> + <code>--permission-mode acceptEdits</code></td><td>Grep · Glob · Bash · Task. 지목 파일 밖 수정은 게이트가 되돌림</td></tr>
+      <tr><td><strong>3c VERIFY</strong></td><td class="num">headless claude</td><td class="num">high</td><td>없음 — <code>--tools ""</code>, diff 가 증거의 전부 <span class="gate p">실측 개정</span></td><td>전부 (Read 포함)</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <div class="note"><b><code>--setting-sources ""</code> 는 선택이 아니다 <span class="gate p">실측 추가</span></b> — 없으면 실행하는 사람의 사용자 · 플러그인 설정이 매 단계 시스템 프롬프트로 딸려 들어온다. 첫 스모크는 <b>「1+1」 수준의 프롬프트에서 예산 초과로 죽었고</b>, stderr 에는 플러그인 <code>SessionEnd</code> 훅 실패만 찍혀 원인을 가렸다. 격리 후 같은 프롬프트가 가장 작은 예산 안에서 끝나고 stderr 가 비었다. 프로덕션 레일은 <b>누구의 노트북에서 도느냐에 좌우돼선 안 된다.</b></div>
+
+  <div class="card">
+    <div class="card-top"><span class="card-name">StagedRunner</span><span class="kind tool">PYTHON</span></div>
+    <div class="card-ref"><code>app/revise_workflow/runner.py</code> — <code>AIRunner</code> 프로토콜 구현</div>
+    <dl class="fm">
+      <div><dt>실행</dt><dd>Python</dd></div><div><dt>판단</dt><dd class="no">없음</dd></div><div><dt>상태</dt><dd>파일 존재</dd></div><div><dt>산출</dt><dd>ledger.md</dd></div>
+    </dl>
+    <dl class="io">
+      <dt>입력</dt><dd>미반영 의견 목록 + 체크아웃된 워크스페이스 + 세션 컨텍스트</dd>
+      <dt>출력</dt><dd><code>ReviseResult{kind, unapplied, commit_paths, clarify}</code></dd>
+      <dt>루프</dt><dd><code>derive_state</code> → <code>runnable_nodes</code> → 노드 1개 실행 → 상태 재확인. 상태가 안 변하면 <b>no-progress abort</b></dd>
+    </dl>
+    <h4>HARD LIMITS</h4>
+    <ol class="hl">
+      <li><b>노드가 다음 노드를 고르지 않는다.</b><span class="alt">진행 상태는 산출물 파일의 존재로만 유도된다 — 분기 판단이 코드에 없다</span></li>
+      <li><b>산출물을 안 쓰고 성공을 반환한 노드는 abort 로 걸린다.</b><span class="alt">거짓 성공이 다음 노드를 의존성 없이 깨뜨리는 대신 즉시 멈춘다</span></li>
+      <li><b>의견 원문과 문서 전문을 직접 해석하지 않는다.</b><span class="alt">구조화 산출물과 영수증만 다룬다</span></li>
+    </ol>
+    <div class="note"><b>재개.</b> 벽시계 초과로 죽어도 재큐잉 시 끝난 노드는 건너뛴다(현재는 매번 처음부터 다시 돈다). <code>edit</code> 재실행 직전에는 <code>00-intent.md</code> frontmatter 의 <code>base_sha</code> 로 md 경로만 되돌려 항상 깨끗한 상태에서 시작한다.</div>
+  </div>
+
+  <div class="card">
+    <div class="card-top"><span class="card-name">3a INTENT</span><span class="kind llm">LLM</span></div>
+    <div class="card-ref">구조화 — 의견 원문을 검증 가능한 스펙으로 <code>app/revise_workflow/prompts.py</code></div>
+    <dl class="fm">
+      <div><dt>실행</dt><dd>headless claude</dd></div><div><dt>도구</dt><dd class="no">없음 (--tools "")</dd></div><div><dt>I/O</dt><dd>텍스트 in/out</dd></div><div><dt>출력</dt><dd>00-intent.md</dd></div>
+    </dl>
+    <dl class="io">
+      <dt>입력</dt><dd>의견 원문 + 변경 파일 목록 + <b>헤딩 목차만</b> (<code>markdown_tree.parse_sections</code> 로 생성). 문서 본문 · diff 전문은 주지 않는다</dd>
+      <dt>출력</dt><dd>의견별 <code>{opinion_id, 대상문서[], 범위: local|cross-doc, 대상주장, 수정방향, 근거, 통합[], 충돌해소, search_terms[]}</code></dd>
+    </dl>
+    <h4>HARD LIMITS</h4>
+    <ol class="hl">
+      <li><b>목차에 없는 파일을 지목하지 않는다.</b><span class="alt">컨텍스트 0이면 앵커를 지어낸다. 목차는 지어낼 여지를 막고 지시어(「이 부분」·「여기」)는 해석 가능하게 남긴다</span></li>
+      <li><b><code>search_terms</code>는 원문에 그대로 있을 문자열만.</b><span class="alt">자기가 지어낸 요약문 금지 — 이 문자열이 다음 단계에서 기계가 검증할 <b>유일한</b> 앵커다</span></li>
+      <li><b>수정 방법을 스스로 확장하지 않는다.</b><span class="alt">의견에 없는 개선은 쓰지 않는다</span></li>
+    </ol>
+    <div class="note">필드 8개는 <code>docs/mr-review-pipeline.html</code> §S4② 3a 의 기존 스펙을 그대로 유지하고 <code>search_terms</code>만 추가한 것이다.</div>
+  </div>
+
+  <div class="card">
+    <div class="card-top"><span class="card-name">3b EDIT</span><span class="kind llm">LLM</span></div>
+    <div class="card-ref">선별 + 동반 변경 + 편집 — 원안 4·5번을 한 호출로</div>
+    <dl class="fm">
+      <div><dt>실행</dt><dd>headless claude</dd></div><div><dt>도구</dt><dd>Read Edit Write</dd></div><div><dt>권한</dt><dd>acceptEdits</dd></div><div><dt>출력</dt><dd>30-edit.md</dd></div>
+    </dl>
+    <dl class="io">
+      <dt>입력</dt><dd><code>00-intent.md</code> + <code>10-anchor.md</code> + <code>20-impact.md</code> + 앵커 유닛의 <b>±20줄 창</b></dd>
+      <dt>출력</dt><dd><code>30-edit.md</code> 영수증 — 처리한 opinion_id / 못 한 것 + 사유 / 만진 파일 목록</dd>
+      <dt>부수효과</dt><dd>워크스페이스 md 파일 수정</dd>
+    </dl>
+    <h4>HARD LIMITS</h4>
+    <ol class="hl">
+      <li><b>앵커 · 동반 후보로 지목된 파일 밖을 수정하지 않는다.</b><span class="alt">프롬프트 금지에 의존하지 않는다 — <a class="inline" href="#gate">게이트</a>가 기계로 되돌린다</span></li>
+      <li><b>파일 통독 금지. 같은 파일 재Read 금지.</b><span class="alt">읽을 범위는 주어진 라인 창이 전부다</span></li>
+      <li><b>못 한 의견은 반드시 사유와 함께 남긴다.</b><span class="alt">침묵은 누락으로 처리된다</span></li>
+    </ol>
+    <div class="note"><b>Grep 을 주지 않는다 <span class="gate p">실측</span></b> — <code>acceptEdits</code> 만으로는 Grep · Glob · Bash · Task 가 열려 있다. 검색어 생성은 대조할 대상이 없어 검증이 불가능하므로 <b><code>--tools</code> 화이트리스트를 명시</b>한다.</div>
+  </div>
+
+  <div class="card">
+    <div class="card-top"><span class="card-name">3c VERIFY</span><span class="kind llm">LLM</span></div>
+    <div class="card-ref">대조 검증 — 고치지 않는다. 판정만 한다</div>
+    <dl class="fm">
+      <div><dt>실행</dt><dd>headless claude</dd></div><div><dt>도구</dt><dd class="no">없음 (--tools "")</dd></div><div><dt>판정 축</dt><dd>의견 원문</dd></div><div><dt>출력</dt><dd>40-verify.md</dd></div>
+    </dl>
+    <dl class="io">
+      <dt>입력</dt><dd>의견 <b>원문</b> + <code>00-intent.md</code> + <code>git diff</code>(md 경로 한정). <b><code>30-edit.md</code>는 주지 않는다</b></dd>
+      <dt>출력</dt><dd>의견별 <code>applied|partial|unapplied</code> + 근거(파일:라인) + 판정문</dd>
+    </dl>
+    <h4>HARD LIMITS</h4>
+    <ol class="hl">
+      <li><b><code>30-edit.md</code>를 주지 않는다 — 자기채점 방지.</b><span class="alt"><code>docs/mr-review-pipeline.html</code> v3.1 개정 이유가 정확히 이것이다: 「3c 검증을 독립 컨텍스트로 분리해 자기 채점 편향 제거」</span></li>
+      <li><b>판정 축은 의견 원문이다.</b><span class="alt">스펙(3a 산출)은 참고용 — 3a 가 원문을 잘못 옮긴 오역도 여기서 잡힌다</span></li>
+      <li><b>애매하면 partial 이나 unapplied 로 둔다.</b><span class="alt">확신 없는 applied 는 거짓 영수증이고, 부당한 통과 하나가 이 계층을 없앤다</span></li>
+      <li><b>판정마다 근거를 파일 · 라인 · before/after 로 지목한다.</b><span class="alt">지목할 diff 가 없으면 그 의견은 applied 가 아니다</span></li>
+    </ol>
+    <div class="note"><b>도구를 안 주는 것이 유일한 집행 수단이다 <span class="gate p">실측 개정</span></b> — 3c 는 「diff 가 증거의 전부」라고 자기 HARD LIMIT 에 적어 두고도 <code>Read</code> 를 들고 있었다. 같은 입력 실측: <code>Read</code> 有 <b>$1.2174 / 2턴</b>, 無 <b>$0.0287 / 1턴</b>, <b>판정은 동일</b>. 42배를 주고 산 것이 없었다.</div>
+    <div class="note">파이썬 오케스트레이터가 3c 판정과 3b 영수증을 대조하고 <b>불일치 시 3c를 신뢰</b>한다 — 워커의 「했다」는 주장이지 증거가 아니다.</div>
+  </div>
+
+  <h3 id="reinject">재투입 예산</h3>
+  <div class="tw">
+  <table>
+    <thead><tr><th>원인</th><th>재투입 대상</th></tr></thead>
+    <tbody>
+      <tr><td>구현 누락 (스펙은 맞는데 안 고침)</td><td><b>3b</b> — 3c 근거를 첨부해 재투입</td></tr>
+      <tr><td>스펙 모호 · 모순</td><td><b>3a</b> — 해당 의견만 재투입 후 갱신 스펙으로 3b 재실행</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <div class="note"><b>라운드당 합산 2회 한정, 사람 라운드는 소모하지 않는다.</b> 소진되면 정직 표기 후 전진 — 모든 경로가 「성공」 또는 「표기 후 진행」으로 끝나 무한 루프가 없다 (<code>docs/mr-review-pipeline.html</code> §S4② 수렴 규칙 그대로). 예산은 <b>ledger 에서 센다</b> — 재개해도 살아남는다.</div>
+  <div class="note"><b>앵커를 못 찾은 의견은 재투입 대상이 아니다 <span class="gate p">실측</span></b> — MISSING 은 <b>되물음</b>이지 구현 누락이 아니다. 재투입 대상은 <code>FOUND</code> 였던 의견으로만 한정한다.</div>
+</section>
+
+<hr class="rule">
+
+<section id="pipeline">
+  <div class="part-head"><span class="part-num">Part 2</span><h2>워크플로우 — 고정 DAG</h2></div>
+  <p class="part-note">7개 노드가 한 줄로 이어진 고정 사슬이다. 분기가 없고, 다음에 무엇이 도는지는 <strong>산출물 파일의 존재</strong>만으로 결정된다 (<code>app/mrdoc/dispatch.py:87 derive_state</code> 패턴의 축소판).</p>
+
+  <div class="filters">
+    <span class="lbl">필터</span>
+    <button data-f="all" aria-pressed="true">전체</button>
+    <button data-f="tool" aria-pressed="false">툴</button>
+    <button data-f="llm" aria-pressed="false">LLM</button>
+  </div>
+
+  <div class="tw">
+  <table class="pipe" id="pipe">
+    <thead><tr><th>#</th><th>노드</th><th>실행</th><th>산출물</th><th>하는 일</th></tr></thead>
+    <tbody>
+      <tr data-kind="llm" data-opt="0"><td>1</td><td class="nm">intent</td><td><span class="kind llm">LLM</span></td><td class="out"><a href="#t00">00-intent.md</a></td><td>의견 원문 + 목차 → 의견별 구조화 스펙. <code>search_terms</code> 를 뽑는다</td></tr>
+      <tr data-kind="tool" data-opt="0"><td>2</td><td class="nm">anchor</td><td><span class="kind tool">TOOL</span></td><td class="out"><a href="#t10">10-anchor.md</a></td><td><code>search_terms</code> 를 섹션 인덱스에서 검색 → (file, section_id, line). 0건이면 <b>MISSING + 근접 후보 3개</b></td></tr>
+      <tr data-kind="tool" data-opt="0"><td>3</td><td class="nm">impact</td><td><span class="kind tool">TOOL</span></td><td class="out"><a href="#t20">20-impact.md</a></td><td>앵커 유닛의 리터럴 · 링크를 head 트리 전체에서 <b>역검색</b> → 동반 변경 후보</td></tr>
+      <tr data-kind="llm" data-opt="0"><td>4</td><td class="nm">edit</td><td><span class="kind llm">LLM</span></td><td class="out"><a href="#t30">30-edit.md</a></td><td>후보 중 진짜 대상 <b>선별</b> → 동반 변경 채택/기각 → 파일 편집 → 영수증</td></tr>
+      <tr data-kind="tool" data-opt="0"><td>5</td><td class="nm">gate</td><td><span class="kind tool">TOOL</span></td><td class="out"><a href="#t35">35-gate.md</a></td><td>경로 화이트리스트 · 리터럴 실증 · 규모 상한 · 잔여물. <b>위반분을 되돌린다</b></td></tr>
+      <tr data-kind="llm" data-opt="0"><td>6</td><td class="nm">verify</td><td><span class="kind llm">LLM</span></td><td class="out"><a href="#t40">40-verify.md</a></td><td>의견 원문 대비 diff 를 대조해 <code>applied|partial|unapplied</code> 판정</td></tr>
+      <tr data-kind="tool" data-opt="0"><td>7</td><td class="nm">summary</td><td><span class="kind tool">TOOL</span></td><td class="out"><a href="#t50">50-summary.md</a></td><td>리포트 3슬롯 추출 + <b>커밋 대상 좁히기</b>(성공 의견이 만진 파일만)</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <div class="codewrap">
+    <div class="bar"><span class="f">산출물 루트</span><span class="flow">git 클론 <b>바깥</b>이어야 한다</span></div>
+<pre>&lt;workspace_root&gt;/.revise/&lt;project_id&gt;/&lt;mr_iid&gt;/r&lt;round&gt;/
+  00-intent.md     <span class="c">3a 산출 — 의견별 구조화 스펙</span>
+  10-anchor.md     <span class="c">기계 — 앵커 확정 / MISSING + 후보 3개</span>
+  20-impact.md     <span class="c">기계 — 동반 변경 후보 (리터럴 · 링크 근거)</span>
+  30-edit.md       <span class="c">3b 영수증</span>
+  35-gate.md       <span class="c">기계 게이트 결과</span>
+  40-verify.md     <span class="c">3c 판정</span>
+  50-summary.md    <span class="c">기계 — 리포트용 3슬롯</span>
+  ledger.md        <span class="c">append-only</span></pre>
+  </div>
+  <div class="note"><b><code>.revise/</code> 위치는 load-bearing 이다.</b> <code>git_workspace.commit_all</code> 이 <code>git add -A</code> 고정이라(<code>app/git_workspace.py:266</code>) 워크스페이스 안에 쓴 중간 파일은 그대로 MR 브랜치에 커밋 · 푸시된다. 워크스페이스가 <code>&lt;workspace_root&gt;/{project_id}/{mr_iid}</code> 이므로 <code>.revise/</code>는 그 <b>형제</b> 위치에 둔다.</div>
+
+
+  <h3 id="consume">산출물 소비 관계</h3>
+  <p class="lede">누가 무엇을 읽는지가 이 설계의 절반이다 — 특히 <b><code>30-edit.md</code> 를 3c 에게 주지 않는 것</b>이 자기채점을 막는 유일한 장치다.</p>
+  <div class="tw">
+  <table>
+    <thead><tr><th>산출물</th><th>쓰는 노드</th><th>읽는 곳</th></tr></thead>
+    <tbody>
+      <tr><td class="out">00-intent.md</td><td>3a</td><td>anchor · impact · edit · <b>verify(참고용)</b> · 재투입 시 3a 갱신 대상</td></tr>
+      <tr><td class="out">10-anchor.md</td><td>anchor</td><td>impact · edit(라인 창) · gate(화이트리스트) · 재투입 대상 판정</td></tr>
+      <tr><td class="out">20-impact.md</td><td>impact</td><td>edit(동반 후보) · gate(화이트리스트)</td></tr>
+      <tr><td class="out">30-edit.md</td><td>3b</td><td><b>오케스트레이터만</b> — 3c 에게 주지 않는다. 커밋 파일을 의견에 귀속시키는 데 쓴다</td></tr>
+      <tr><td class="out">35-gate.md</td><td>gate</td><td>summary · 오케스트레이터(되돌림 실행)</td></tr>
+      <tr><td class="out">40-verify.md</td><td>3c</td><td>summary · 실행기 반환(<code>unapplied</code>) · <code>applied_round</code> 기록 판단</td></tr>
+      <tr><td class="out">50-summary.md</td><td>summary</td><td><code>report.html</code> 3슬롯 · 경로 한정 커밋</td></tr>
+      <tr><td class="out">ledger.md</td><td>전 노드</td><td>사람 · <b>재투입 예산 카운트</b>(재개해도 살아남는다)</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <h3 id="mapping">원안 8단계 → 실제 실행 단위</h3>
+  <div class="tw">
+  <table>
+    <thead><tr><th>원안</th><th>평가</th><th>담당</th><th>산출물</th></tr></thead>
+    <tbody>
+      <tr><td>1. 의견 구조화 (코드 참고 X)</td><td>⚠️ 수정</td><td><b>LLM 3a</b> — 본문 대신 <b>목차</b></td><td>00-intent.md</td></tr>
+      <tr><td>2. 대상 존재 검사</td><td>⚠️ 담당 변경</td><td>LLM → <b>기계</b> (섹션 인덱스 + 문자열 검색)</td><td>10-anchor.md</td></tr>
+      <tr><td>3. 연관 부분 탐색</td><td>⚠️ 담당 변경</td><td>LLM → <b>기계</b> (리터럴 역검색 + 링크 추적)</td><td>20-impact.md</td></tr>
+      <tr><td>4. 동반 변경 판정</td><td>✅ 유지</td><td>3번 결과 중 <b>선별만</b> LLM. 5번과 한 호출</td><td>30-edit.md</td></tr>
+      <tr><td>5. 반영</td><td>✅ 유지</td><td><b>LLM 3b</b> — 앵커 ±20줄 창 한정</td><td>파일 수정</td></tr>
+      <tr><td>6. 반영 검사</td><td>❌ 그대로면 자기채점</td><td><b>기계 게이트 + 분리된 검증 호출</b> 2겹</td><td>35-gate.md · 40-verify.md</td></tr>
+      <tr><td>7. 변경분 추출 + 리포트</td><td>⚠️ 축소</td><td>추출은 mrdoc 방식, <b>렌더는 기존 것 재사용</b></td><td>50-summary.md · report.html</td></tr>
+      <tr><td>8. 슬랙 전달</td><td>✅ 유지</td><td>기존 경로 그대로 (수정 불필요)</td><td>—</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <div class="note"><b>왜 1번을 「코드 참고 X」로 두면 안 되는가.</b> 사람의 의견은 「이 부분」 · 「여기 좀」 · 「위에 있는 그거」처럼 지시어가 많다. 아무 컨텍스트 없이 구조화하면 모델이 대상을 <b>지어낸다.</b> 지어낸 대상은 2번 존재 검사에서 걸리지만, 그때는 이미 <b>무엇을 물어봐야 하는지조차</b> 알 수 없다.</div>
+  <div class="note"><b>왜 2 · 3 · 4번을 LLM 에게 주면 안 되는가.</b> 같은 결론이 <code>docs/mrdoc-pipeline.html</code> 에 이미 명문화돼 있다 — 「<b>경계는 하나다 — 두 문자열의 대조로 환원되면 툴이다.</b> 존재하나 · 개수 맞나 · 원문에 있나 · 공집합이냐 · 같냐」, 그리고 「<b>Grep 을 아무 위성에도 주지 않는다</b> — 검색은 툴이 리터럴로 한다. Grep 이 있으면 LLM 이 검색어를 짓기 시작하고, 검색어 생성은 대조할 대상이 없어 검증이 불가능하다」.</div>
+  <div class="note"><b>왜 8단계가 LLM 8회가 아닌가.</b> <code>ai_max_budget_usd</code>는 CLI 호출당 적용된다(8회 = 최대 $8/라운드) · <code>revise_wall_clock_seconds</code> 위에 스위퍼가 있다 · 단계마다 컨텍스트를 다시 실어 보내는 비용이 붙는다. <b>3회로 8단계를 전부 덮는다.</b></div>
+
+  <h3 id="gate">결정론 게이트 — 이 설계의 핵심</h3>
+  <p class="lede"><code>35-gate.md</code>가 LLM 보고를 믿지 않고 기계로 확인한다. 게이트는 <b>판정하고, 되돌린다</b> — 그 판정을 근거로 무엇을 커밋할지는 오케스트레이터가 정한다.</p>
+  <div class="tw">
+  <table>
+    <thead><tr><th>#</th><th>검사</th><th>방법</th><th>위반 시</th></tr></thead>
+    <tbody>
+      <tr><td class="num">1</td><td><b>경로 화이트리스트</b></td><td><code>git diff --name-only</code> 가 전부 <code>.md/.mdx</code> 이고 전부 앵커/동반 후보 파일 집합 안인가</td><td><span class="gate r">부분</span> 벗어난 <b>그 파일만</b> 되돌린다</td></tr>
+      <tr><td class="num">2</td><td><b>리터럴 실증</b></td><td>의견이 「A → B」 치환을 요구했다면 <code>extract_literals</code> 로 차집합 확인</td><td><span class="gate r">부분</span> 해당 의견을 <code>failed_opinion_ids</code> 로</td></tr>
+      <tr><td class="num">3</td><td><b>규모 상한</b></td><td>변경 파일 수 / 라인 수 상한 초과</td><td><span class="gate b">전량</span> 전량 되돌리고 <code>kind=failed</code></td></tr>
+      <tr><td class="num">4</td><td><b>잔여물 검사</b></td><td>워크스페이스에 untracked 파일이 생겼는가</td><td><span class="gate r">부분</span> 삭제. <code>checkout -B</code> 는 untracked 를 지우지 않는다</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <div class="codewrap">
+    <div class="bar"><span class="f">리터럴 실증</span><span class="flow">세 항의 차집합을 직접 조립한다</span></div>
+<pre>A <span class="k">∈</span> literals(base 유닛)   <span class="c"># 옛 값이 있었고</span>
+A <span class="k">∉</span> literals(head 유닛)   <span class="c"># 사라졌고</span>
+B <span class="k">∈</span> literals(head 유닛)   <span class="c"># 새 값이 생겼다</span></pre>
+  </div>
+
+  <div class="note"><b>⚠️ 함정 1 — 출현 횟수가 사라진다.</b> <code>extract_literals</code> 는 <code>(kind, key, value)</code> 로 <b>완전 dedup</b> 한다. 「3곳 중 3곳 다 치환됐나」는 판정 불가 — <b>「그 값이 head 유닛에 더는 없다」까지만</b> 말할 수 있다. 템플릿의 <code>occurrences</code> 가 <code>unavailable</code> 인 이유다.</div>
+  <div class="note"><b>⚠️ 함정 2 — 평문 용어 교체는 안 걸린다.</b> 리터럴 5종(kv/unit/bool/code/link) <b>밖</b>의 평문 교체는 아예 잡히지 않는다 → <code>markdown_tree.section_text</code> + 문자열 <code>in</code> 검사를 <b>병행</b>해야 한다. 템플릿의 <code>text</code> 슬롯이 그것이다.</div>
+  <div class="note"><b>⚠️ <code>UnitLiterals.changed</code> 를 믿지 말 것.</b> 같은 키의 값이 여러 개일 때 정렬 후 위치로 zip 해 from→to 를 만들기 때문에 <b>매핑이 어긋날 수 있다.</b> 단일 치환 검증에는 위 3항 차집합을 직접 조립한다.</div>
+
+  <h3 id="rounds">라운드 회계 — 되물음</h3>
+  <div class="tw">
+  <table>
+    <thead><tr><th>상황</th><th>처리</th></tr></thead>
+    <tbody>
+      <tr><td>전부 MISSING + 커밋 없음</td><td><code>round</code> <b>증가 없이</b> <code>revising→reviewing</code> CAS, 재알림에 질문 + 후보 3개</td></tr>
+      <tr><td>일부만 MISSING</td><td>커밋이 났으므로 라운드 정상 소모. 못 찾은 의견은 unapplied + 질문 첨부</td></tr>
+      <tr><td>되물음 상한</td><td><code>event_log</code> 에 <code>kind='clarify'</code> 를 남기고 <b>세션당 2회</b>. 초과 시 그 의견만 <code>last_verdict="대상 미확인 — 재질문 한도 소진"</code> 으로 마감하고 라운드 정상 진행</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <div class="note"><b>새 상태를 만들지 않는다.</b> 되물음은 「라운드를 소모하지 않은 재알림 + 질문 문안」일 뿐이고, 사람은 <b>[의견]을 다시 눌러 답한다.</b> 기존 레일을 그대로 타므로 상태기계 · 스위퍼 · 웹훅 분기를 건드릴 필요가 없다.</div>
+  <div class="note">사람의 답변은 새 <code>opinion</code> 행이 되고, <code>unapplied_opinions</code> 의 <code>created_at &lt;= locked_at</code> 컷오프(<code>app/db.py:137</code>) 때문에 자동으로 다음 라운드 몫이 된다 — <b>의도한 동작이다.</b></div>
+
+  <h3 id="reuse">재사용 지점</h3>
+  <p class="lede">mrdoc 의 결정론 모듈은 <b>전역 상태 · 설정 · 파일시스템 의존이 없는 순수 함수</b>라 rail 없이 그대로 쓸 수 있다.</p>
+  <div class="tw">
+  <table>
+    <thead><tr><th>쓸 것</th><th>위치</th><th>용도</th></tr></thead>
+    <tbody>
+      <tr><td><code>parse_sections(text)</code></td><td><code>app/mrdoc/markdown_tree.py:54</code></td><td>헤딩 트리 → 3a 목차, 앵커 인덱스</td></tr>
+      <tr><td><code>section_text</code> / <code>section_lines</code></td><td><code>app/mrdoc/markdown_tree.py:147</code></td><td>±20줄 창, 평문 검색</td></tr>
+      <tr><td><code>extract_literals(text)</code></td><td><code>app/mrdoc/literals.py:74</code></td><td>리터럴 실증 (순수 함수)</td></tr>
+      <tr><td><code>section_id</code> / <code>unit_id</code></td><td><code>app/mrdoc/ids.py:38</code></td><td>안정적 id — section_id 에서 unit_id 계산 가능</td></tr>
+      <tr><td><code>parse_frontmatter</code> / <code>render_frontmatter</code></td><td><code>app/mrdoc/frontmatter.py</code></td><td>산출물 헤더</td></tr>
+      <tr><td><code>derive_state</code> 패턴</td><td><code>app/mrdoc/dispatch.py:87</code></td><td>파일 존재 기반 재개</td></tr>
+      <tr><td><code>render_review_report</code></td><td><code>app/report_html.py:72</code></td><td><b>3슬롯 덕타이핑</b> — 리포트 렌더</td></tr>
+      <tr><td><code>_deliver_review_report</code></td><td><code>app/ingest.py:338</code></td><td>로컬 아카이브 + 슬랙 스레드 업로드</td></tr>
+      <tr><td><code>post_revise_result</code></td><td><code>app/slack_client.py:302</code></td><td>새 라운드 알림</td></tr>
+      <tr><td><code>_redact</code> / <code>_redaction_secrets</code></td><td><code>app/git_workspace.py:125</code></td><td>LLM 산출 텍스트 마스킹</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <div class="note"><b>7번(리포트)을 새로 만들지 않는 이유</b> — <code>render_review_report</code> 는 <code>review.summary</code> / <code>review.key_changes</code> / <code>review.points_to_watch</code> 세 속성만 읽는 덕타이핑이고, <code>app/revise_executor.py:504</code> 가 이미 <code>SimpleNamespace</code> 로 이 경로를 쓰고 있다. <code>50-summary.md</code> 가 그 3슬롯을 채우면 된다.</div>
+  <ul class="plain">
+    <li><b>summary</b> ← 3c 요약</li>
+    <li><b>key_changes</b> ← <b>리터럴 차집합에서 기계 생성</b> (원안 「mrdoc 와 유사 방법으로 추려낸다」에 해당)</li>
+    <li><b>points_to_watch</b> ← 3c 미반영/부분 판정문</li>
+  </ul>
+  <div class="note">mrdoc 의 <code>render_report_html</code> 로 갈아끼우는 것도 나중에 가능하다 — 합성 frontmatter(<code>verdict</code> 만 collect 와 일치)로 reporter 위성 없이 동작한다.</div>
+
+  <h3 id="limits">구조적 제약 (반드시 지킬 것)</h3>
+  <div class="tw">
+  <table>
+    <thead><tr><th>#</th><th>제약</th><th>근거</th></tr></thead>
+    <tbody>
+      <tr><td class="num">1</td><td>중간 산출물은 <b>클론 바깥</b>에</td><td><code>commit_all</code> 이 <code>git add -A</code> 고정 (<code>app/git_workspace.py:266</code>)</td></tr>
+      <tr><td class="num">2</td><td><b>새 세션 상태를 만들지 않는다</b></td><td><code>review_session.status</code> 에 <code>CHECK</code> 제약(<code>app/db.py:41</code>) + 마이그레이션 코드 부재 → 테이블 재생성 필요</td></tr>
+      <tr><td class="num">3</td><td><b>DB 컬럼을 추가하지 않는다</b></td><td>같은 이유. <code>question_refs</code> · <code>last_verdict</code> 는 이미 있고 비어 있으니 그것을 쓴다</td></tr>
+      <tr><td class="num">4</td><td>실행기 반환 계약 유지</td><td><code>{kind: ok|failed, unapplied: [{opinion_id, reason}]}</code> — 코어가 이 모양에 의존</td></tr>
+      <tr><td class="num">5</td><td><code>applied_round</code> 는 3c 「반영」 판정에만 기록</td><td>NULL = 다음 라운드 자동 재포함 (재제출 불필요)</td></tr>
+      <tr><td class="num">6</td><td>타이머 불변식 유지</td><td>큐 대기 &lt; 세션 벽시계 &lt; 스위퍼 임계값. 단계를 늘리면 <b>셋 다</b> 올려야 한다</td></tr>
+      <tr><td class="num">7</td><td>LLM 산출 텍스트는 DB/슬랙 전에 마스킹</td><td><code>_redact(text, _redaction_secrets(settings))</code> + 슬랙 노출 300자 캡</td></tr>
+      <tr><td class="num">8</td><td>프롬프트에 넘기는 경로는 <code>Path.as_posix()</code></td><td>Windows 백슬래시가 JSON 파싱을 깨뜨린 실측 있음</td></tr>
+    </tbody>
+  </table>
+  </div>
+</section>
+
+<hr class="rule">
+
+<section id="templates">
+  <div class="part-head"><span class="part-num">Part 3</span><h2>노드별 출력물 템플릿</h2></div>
+  <p class="part-note">예시는 하나의 MR 로 통일했다 — <strong>product-common !11</strong>, 의견 1건 「설치 절차의 3.2 버전 표기를 4.0으로」(<code>opinion_id 41</code>). frontmatter 는 YAML 이고 필수 필드 4개를 반드시 포함한다.</p>
+
+  <h4>템플릿 공통 규약</h4>
+  <ol class="hl">
+    <li><b>템플릿 문자열을 손으로 쓰지 않고 파서 모듈의 render 함수로 만든다.</b><span class="alt">프롬프트와 파서가 한 소스를 공유해야 드리프트가 물리적으로 불가능해진다</span></li>
+    <li><b>필수 필드 <code>STATUS / UNCOVERED / UNCERTAIN / CONFIDENCE</code> 를 생략 불가로 둔다.</b><span class="alt">optional 로 두면 「해당 없음」과 「안 함」이 구분되지 않는다</span></li>
+    <li><b>Grep 을 주지 않는다.</b><span class="alt">검색은 기계가 한다</span></li>
+    <li><b>리스트-객체는 한 줄 flow(<code>key: [{a: 1}]</code>)로 <em>렌더</em>한다.</b><span class="alt"><span class="gate p">실측 개정</span> 단, 파서는 블록 시퀀스도 <b>받는다</b> — 같은 데이터이고 프롬프트로 표기법을 강제할 수 없다. 거부했더니 편집이 이미 성공한 라운드가 verify 에서 죽었다. 키 없는 <code>- item</code> 만 거부한다</span></li>
+    <li><b>식별자 필드(<code>mr_iid</code> · <code>round</code> · <code>project_id</code> · <code>base_sha</code>)는 placeholder 로 두지 않는다.</b><span class="alt"><span class="gate p">실측 개정</span> 3b 가 <b>project id 를 <code>mr_iid</code> 에</b> 써 넣었고, 3c 는 <code>&lt;mr_iid&gt;</code> 를 <b>그대로 복사</b>해 int 변환에서 죽었다. Python 이 아는 값은 템플릿에 <b>이미 채워서</b> 넘기고, 파싱 후 다시 덮어쓴다</span></li>
+  </ol>
+
+  <div class="codewrap" id="t00">
+    <div class="bar"><span class="f">00-intent.md</span><span class="flow">3a LLM → 기계</span><span class="kind llm">LLM 산출</span></div>
+<pre>---
+mr_iid: 11
+project_id: "1009"
+round: 1
+base_sha: <span class="k">a1b2c3d</span>
+STATUS: "OK"
+UNCOVERED: "none"
+UNCERTAIN: "none"
+CONFIDENCE: "high — 목차에서 대상 절 확인"
+---
+
+## OPINION 41
+
+```yaml
+opinion_id: 41
+대상문서: [docs/install.md]
+범위: local
+대상주장: "설치 절차가 런타임 3.2 를 요구한다고 서술"
+수정방향: "3.2 → 4.0"
+근거: "설치 절차의 3.2 버전 표기를 4.0으로 고쳐 주세요"
+통합: []
+충돌해소: none
+search_terms: ["3.2", "설치 절차"]
+```</pre>
+  </div>
+  <dl class="fields">
+    <dt>수정방향</dt><dd><b><code>A → B</code> 정확히 이 형태.</b> 게이트의 리터럴 실증이 이 문자열을 파싱해 차집합을 만든다</dd>
+    <dt>범위</dt><dd><code>local</code> | <code>cross-doc</code> 둘 중 하나</dd>
+    <dt>search_terms</dt><dd><b>원문에 그대로 있을 문자열만.</b> 다음 노드가 이것으로 앵커를 찾는다</dd>
+    <dt>통합</dt><dd>중복 의견 id 배열. 없으면 <code>[]</code></dd>
+  </dl>
+
+  <div class="codewrap" id="t10">
+    <div class="bar"><span class="f">10-anchor.md</span><span class="flow">기계 — 검색만</span><span class="kind tool">TOOL 산출</span></div>
+<pre>---
+mr_iid: 11
+round: 1
+found: 1
+missing: 0
+STATUS: OK
+UNCOVERED: none
+UNCERTAIN: none
+CONFIDENCE: "high — 섹션 인덱스 대조만 사용"
+---
+
+## ANCHOR 41
+
+```yaml
+opinion_id: 41
+status: FOUND
+unit_id: u-45361e55
+hits: [{term: "3.2", file: docs/install.md, section_id: s-3e7a, line: 31}]
+window: {file: docs/install.md, start: 11, end: 51}
+candidates: []
+```</pre>
+  </div>
+  <dl class="fields">
+    <dt>status</dt><dd><code>FOUND</code> | <code>MISSING</code>. <code>MISSING</code> 이면 <b>되물음</b>으로 가고 편집 대상에서 빠진다</dd>
+    <dt>candidates</dt><dd><code>MISSING</code> 일 때만 채운다 — <b>근접 후보 3개</b>. 슬랙 되물음에 그대로 실린다</dd>
+    <dt>window</dt><dd>3b 에게 줄 <b>±20줄 창</b>. 이 범위가 3b 가 읽을 수 있는 전부다</dd>
+  </dl>
+
+  <div class="codewrap" id="t20">
+    <div class="bar"><span class="f">20-impact.md</span><span class="flow">기계 — 역검색만</span><span class="kind tool">TOOL 산출</span></div>
+<pre>---
+mr_iid: 11
+round: 1
+candidates: 2
+STATUS: OK
+UNCOVERED: none
+UNCERTAIN: none
+CONFIDENCE: "high — 리터럴 역검색 + 링크 추적"
+---
+
+## IMPACT 41
+
+```yaml
+opinion_id: 41
+candidates: [{file: docs/ops.md, line: 5, unit_id: u-9c1a2b30, via: literal, match: "3.2"}, {file: docs/index.md, line: 3, unit_id: u-77de01f4, via: link, match: "install.md"}]
+```</pre>
+  </div>
+  <dl class="fields">
+    <dt>via</dt><dd><code>literal</code>(같은 값이 다른 문서에 있음) | <code>link</code>(그 절을 가리키는 링크)</dd>
+    <dt>match</dt><dd><b>근거 문자열.</b> 후보마다 붙는다 — 근거 없는 후보는 만들지 않는다</dd>
+  </dl>
+  <div class="note"><b>이것이 원안 3번을 기계로 옮긴 값이다 <span class="gate p">실측</span></b> — 스모크에서 아무도 3b 에게 <code>docs/ops.md</code> 도 <code>3.2</code> 라고 말해주지 않았다. 이 노드가 리터럴 역검색으로 찾아냈고(<code>candidates=2</code>), 3b 가 채택했고, 게이트가 기계로 증명했다.</div>
+
+  <div class="codewrap" id="t30">
+    <div class="bar"><span class="f">30-edit.md</span><span class="flow">3b LLM → 기계</span><span class="kind llm">LLM 산출</span></div>
+<pre>---
+mr_iid: 11
+round: 1
+processed: [41]
+unprocessed: []
+files_touched: [docs/install.md, docs/ops.md]
+STATUS: "OK"
+UNCOVERED: "none"
+UNCERTAIN: "none"
+CONFIDENCE: "high — 라인 창 안에서 동일 리터럴 확인 후 치환"
+---
+
+## EDIT 41
+
+```yaml
+opinion_id: 41
+result: "applied"
+reason: ""
+edits: [{file: "docs/install.md", line: "31", from: "버전 3.2", to: "버전 4.0"}, {file: "docs/ops.md", line: "5", from: "런타임 3.2", to: "런타임 4.0"}]
+selected: [{file: "docs/ops.md", line: "5", via: "literal", decision: "apply", reason: "다른 문서의 동일 런타임 표기 — cross-doc 일괄 정정 대상"}]
+```</pre>
+  </div>
+  <dl class="fields">
+    <dt>result</dt><dd><code>applied</code> | <code>unapplied</code>. <b>3b 의 주장이다</b> — 게이트와 3c 가 별도로 검증한다</dd>
+    <dt>reason</dt><dd><code>unapplied</code> 면 필수. <b>침묵은 누락으로 처리된다</b></dd>
+    <dt>selected</dt><dd>동반 후보의 <b>채택/기각 결정과 사유</b>. 기각도 남긴다</dd>
+    <dt>edits</dt><dd><b>실제로 한 편집만.</b> 하려던 것을 쓰는 칸이 아니다</dd>
+  </dl>
+  <div class="note"><b>이 영수증은 3c 에게 전달되지 않는다.</b> 오케스트레이터만 읽어 3c 판정과 대조하고, <b>불일치 시 3c 를 신뢰한다.</b></div>
+
+  <div class="codewrap" id="t35">
+    <div class="bar"><span class="f">35-gate.md</span><span class="flow">기계 — 4종 검사</span><span class="kind tool">TOOL 산출</span></div>
+<pre>---
+mr_iid: 11
+round: 1
+changed_files: 2
+changed_lines: 6
+limits: {max_changed_files: 10, max_changed_lines: 400}
+reverted: []
+revert_all: false
+failed_opinion_ids: []
+kind: ok
+STATUS: OK
+UNCOVERED: none
+UNCERTAIN: none
+CONFIDENCE: "high — changed_paths 와 base/head 유닛 대조만 사용"
+---
+
+## PATHS
+
+```yaml
+changed: [docs/install.md, docs/ops.md]
+allowed: [docs/install.md, docs/ops.md]
+non_md: []
+outside: []
+reverted: []
+result: pass
+```
+
+## LITERAL u-45361e55
+
+```yaml
+opinion_id: 41
+from: 3.2
+to: 4.0
+sets: {a_in_base: true, a_not_in_head: true, b_in_head: true}
+text: {a_in_head_text: false, b_in_head_text: true}
+occurrences: unavailable
+result: pass
+```
+
+## SIZE
+
+```yaml
+files: "2 / 10"
+lines: "6 / 400"
+result: pass
+```
+
+## RESIDUE
+
+```yaml
+untracked: []
+result: pass
+```</pre>
+  </div>
+  <dl class="fields">
+    <dt>kind</dt><dd><code>ok</code> | <code>failed</code>. <code>failed</code> 는 <b>규모 상한 초과(전량 되돌림)</b>일 때만</dd>
+    <dt>sets</dt><dd>리터럴 3항 차집합. <b>이 세 값이 게이트의 본체다</b></dd>
+    <dt>text</dt><dd>평문 <code>in</code> 검사 — 리터럴 5종 밖의 교체를 잡는 <b>병행 검사</b>(함정 2)</dd>
+    <dt>occurrences</dt><dd>항상 <code>unavailable</code> — <code>extract_literals</code> 의 완전 dedup 때문(함정 1)</dd>
+    <dt>reverted</dt><dd>되돌린 파일 목록. <b>게이트는 판정하고 되돌리며, 커밋 결정은 하지 않는다</b></dd>
+  </dl>
+
+  <div class="codewrap" id="t40">
+    <div class="bar"><span class="f">40-verify.md</span><span class="flow">3c LLM → 기계</span><span class="kind llm">LLM 산출</span></div>
+<pre>---
+mr_iid: 11
+round: 1
+summary: "의견 1건 중 1건 반영"
+STATUS: "OK"
+UNCOVERED: "none"
+UNCERTAIN: "none"
+CONFIDENCE: "high — diff 에서 before/after 직접 확인"
+---
+
+## VERDICT 41
+
+```yaml
+opinion_id: 41
+verdict: "applied"
+evidence: [{file: "docs/install.md", line: "31", before: "버전 3.2", after: "버전 4.0"}, {file: "docs/ops.md", line: "5", before: "런타임 3.2", after: "런타임 4.0"}]
+```
+
+**판정문** install.md 사전 요구사항 · 설치 명령과 ops.md 의 3.2 표기가 모두 4.0 으로 변경되어 applied.
+
+## SUMMARY
+
+```yaml
+applied: 1
+partial: 0
+unapplied: 0
+```</pre>
+  </div>
+  <dl class="fields">
+    <dt>verdict</dt><dd><code>applied</code> | <code>partial</code> | <code>unapplied</code>. <b>이 판정이 <code>applied_round</code> 기록을 좌우한다</b></dd>
+    <dt>evidence</dt><dd>파일 · 라인 · before/after. <b>지목할 diff 가 없으면 applied 가 아니다</b></dd>
+    <dt>판정문</dt><dd>사람이 읽는 한 문장. <code>unapplied</code>/<code>partial</code> 이면 <b>리포트의 points_to_watch 로 그대로 간다</b></dd>
+  </dl>
+
+  <div class="codewrap" id="t50">
+    <div class="bar"><span class="f">50-summary.md</span><span class="flow">기계 — 3슬롯 추출</span><span class="kind tool">TOOL 산출</span></div>
+<pre>---
+mr_iid: 11
+round: 1
+commit_paths: [docs/install.md, docs/ops.md]
+STATUS: OK
+UNCOVERED: none
+UNCERTAIN: none
+CONFIDENCE: "high — verify 판정과 리터럴 차집합만 사용"
+---
+
+## SUMMARY
+
+```yaml
+summary: "의견 1건 중 1건 반영 — 런타임 버전 표기 3.2 → 4.0"
+```
+
+## KEY_CHANGES
+
+```yaml
+items: [{file: docs/install.md, change: "런타임 버전 요구 3.2 → 4.0"}, {file: docs/ops.md, change: "배포 전 확인 런타임 3.2 → 4.0"}]
+```
+
+## POINTS_TO_WATCH
+
+```yaml
+items: []
+```</pre>
+  </div>
+  <dl class="fields">
+    <dt>commit_paths</dt><dd><b>성공 의견이 만진 파일만.</b> 게이트의 <code>changed</code> 에서 되돌린 것을 빼고, 다시 <b>3c 가 applied/partial 로 본 의견의 편집 파일</b>로 좁힌다</dd>
+    <dt>KEY_CHANGES</dt><dd><b>리터럴 차집합에서 기계 생성</b> — LLM 이 쓰지 않는다</dd>
+    <dt>POINTS_TO_WATCH</dt><dd>3c 미반영/부분 <b>판정문</b>을 그대로</dd>
+  </dl>
+  <div class="note"><b>커밋 대상 좁히기는 게이트가 아니라 여기서 한다 <span class="gate p">실측</span></b> — <code>build_summary</code> 는 verdict 를 보지 않으므로, 전부 미반영인 라운드도 게이트만 통과하면 커밋될 수 있었다. 오케스트레이터가 <b>편집 영수증으로 파일을 의견에 귀속</b>시켜 좁히고, 빠진 파일은 <code>restore_paths</code> 로 되돌린다.</div>
+
+  <div class="codewrap" id="tledger">
+    <div class="bar"><span class="f">ledger.md</span><span class="flow">append-only · 타임스탬프 없음</span><span class="kind tool">TOOL 산출</span></div>
+<pre><span class="c"># 실제 스모크 라운드의 ledger</span>
+intent done (opinions=1)
+anchor done (found=1 missing=0)
+impact done (candidates=2)
+edit done (processed=1 touched=2)
+gate done (kind=ok reverted=0 literal_fail=0)
+verify done (applied=1 partial=0 unapplied=0)
+summary done (commit_paths=2)
+pipeline complete</pre>
+  </div>
+  <dl class="fields">
+    <dt>용도</dt><dd>사람이 읽는 진행 기록. <b>재투입 예산을 여기서 센다</b> — 재개해도 살아남는다</dd>
+    <dt>타임스탬프</dt><dd>넣지 않는다 — 산출물 diff 가 시간에 흔들리면 재개 판정이 불안정해진다</dd>
+    <dt>실패 표기</dt><dd><code>abort: stage &lt;name&gt; ...</code> — <b>단계 이름이 반드시 붙는다</b> <span class="gate p">실측 개정</span></dd>
+  </dl>
+  <div class="note"><b>파싱 실패도 단계에 귀속시킨다 <span class="gate p">실측 개정</span></b> — 코덱의 <code>ValueError</code> 가 그대로 올라가면 ledger 에 <code>abort: ValueError</code> 만 남아 <b>어느 단계인지도, 무엇이 문제였는지도</b> 알 수 없었다. 코덱에서 죽은 두 라운드를 드라이버 traceback 으로 추적해야 했는데, 그건 이 기록이 존재하는 이유 자체를 무너뜨린다.</div>
+</section>
+
+<hr class="rule">
+
+<section id="kickoff">
+  <div class="part-head"><span class="part-num">Part 4</span><h2>착수 조건</h2></div>
+  <p class="part-note">이 설계는 기존 문서 결정 하나를 정면으로 뒤집는다. 코드만 바꾸면 문서와 구현이 갈라지므로, 문서 개정과 영수증을 <strong>착수와 같은 단위로</strong> 묶는다.</p>
+
+  <h3 id="contract">문서 계약 충돌</h3>
+  <p class="lede"><code>docs/mr-review-pipeline.html:554</code> 가 v3.1 결정으로 못 박고 있다:</p>
+  <div class="note"><b>CLAUDE 단일 세션(호출 1회)</b> — 최상위는 오케스트레이터. 3a · 3b · 3c 는 각각 독립 컨텍스트의 서브에이전트로 수행. <b>단계별 별도 CLI 호출 금지.</b> 오케스트레이터는 의견 원문 · 문서 전문을 직접 읽지 않고 구조화 산출물과 영수증만 다룬다</div>
+  <p class="lede"><b>3회 별도 호출은 이 문장을 정면으로 뒤집는다.</b> 뒤집을 근거는 둘 있다.</p>
+  <ol class="hl">
+    <li><b>실측</b> — headless <code>claude -p</code> 에서 <code>--safe-mode</code> 가 <code>--agents</code> 를 무력화하고, <code>run_in_background</code> 기본값 탓에 서브에이전트 결과 회수가 <b>종료 코드 0인 채 조용히 실패</b>한다 (스파이크 3회 + 격리 프로브 4조합, 실호출 $2 소요).<span class="alt">단일 세션 오케스트레이션은 <b>실패가 관측되지 않는 구조</b>다</span></li>
+    <li><b>선례</b> — 나중에 설계된 mrdoc 이 이미 노드별 개별 <code>codex exec</code> 호출 + 산출물 파일 존재 검증으로 갔고(<code>app/mrdoc/satellites.py</code>), 그 판단이 <code>docs/mrdoc-pipeline.html</code> 에 문서화돼 있다.<span class="alt"><code>docs/mrdoc-migration-plan.md</code> §3-A2 도 「멀티턴이 불안정하면 <b>컨텍스트를 파일로 주입하는 단발 호출로 강등 가능</b>」이라고 이미 열어 뒀다</span></li>
+  </ol>
+  <div class="note">또한 <code>docs/mrdoc-migration-plan.md</code> §2 가 revise 루프를 <b>「변경 없이 유지」</b> 대상으로 명시했으므로 이 역시 뒤집어야 한다.</div>
+  <div class="note"><b>판단: 뒤집는 것이 맞다.</b> 다만 이 저장소는 개정 이력(<code>[n] ... v4.x 개정</code>)과 <code>.orchestration/reports/</code> 영수증을 남기는 관행이 확립돼 있으므로, <b>v4.3 개정 + 영수증</b>을 착수와 같은 단위로 묶는다. 스모크 영수증은 <code>.orchestration/reports/smoke-staged-runner.md</code> 에 있다.</div>
+
+  <h3 id="scope">코드 변경 범위</h3>
+  <h4>신규 패키지 <code>app/revise_workflow/</code></h4>
+  <p class="lede">워크플로우를 <code>AIRunner</code> 구현체 하나로 캡슐화해 실행기 변경을 최소화한다.</p>
+  <div class="tw">
+  <table>
+    <thead><tr><th>파일</th><th>역할</th></tr></thead>
+    <tbody>
+      <tr><td><code>runner.py</code></td><td><code>StagedRunner</code> (<code>AIRunner</code> 프로토콜 구현) — 노드 루프 + 재투입 예산</td></tr>
+      <tr><td><code>nodes.py</code></td><td>결정론 노드: anchor / impact / gate / summary-extract</td></tr>
+      <tr><td><code>schema.py</code></td><td>3a · 3b · 3c 산출물의 파서 + 렌더러 (프롬프트와 한 소스)</td></tr>
+      <tr><td><code>prompts.py</code></td><td>세 시스템 프롬프트 + HARD LIMITS</td></tr>
+      <tr><td><code>workspace.py</code></td><td>아티팩트 경로 규칙 + 파일 존재 기반 상태 유도</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <h4>기존 파일 수정 (전부 가산적, 기본값은 현행 유지)</h4>
+  <div class="tw">
+  <table>
+    <thead><tr><th>파일</th><th>변경</th></tr></thead>
+    <tbody>
+      <tr><td><code>app/ai_runner.py</code></td><td><code>ReviseResult</code> 에 선택 필드 2개 (<code>commit_paths</code>, <code>clarify</code>). <code>_select_runner</code>(<code>:67</code>)에 <code>"staged"</code> 분기</td></tr>
+      <tr><td><code>app/git_workspace.py</code></td><td><code>_git</code>(<code>:167</code>)을 감싼 <code>commit_paths</code> / <code>restore_paths</code> / <code>changed_paths</code> 추가. <code>commit_all</code> 은 그대로</td></tr>
+      <tr><td><code>app/revise_executor.py</code></td><td><code>_handle_ok</code>(<code>:300</code>)에서 경로 한정 커밋, clarify 라운드 회계</td></tr>
+      <tr><td><code>app/state_machine.py</code></td><td><code>reset_attempts_only</code> 추가 (round 증가만 뺀 것). <b>상태 추가 없음</b></td></tr>
+      <tr><td><code>app/slack_client.py</code></td><td>되물음 블록(질문 + 후보 3개). 미반영 목록에 <code>opinion_id</code>/본문 머리말 추가</td></tr>
+      <tr><td><code>app/config.py</code></td><td><a class="inline" href="#config">설정</a> 참조</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <div class="note"><b>미반영 목록 개선은 별건이지만 값싸다</b> — 현재 <code>_revise_result_payload</code> 가 <code>reason</code> 만 렌더해 <b>어떤 의견이 왜 미반영인지 알 수 없다.</b></div>
+
+  <h3 id="config">설정</h3>
+  <div class="codewrap">
+    <div class="bar"><span class="f">app/config.py</span><span class="flow">기본값 유지 → 무회귀</span></div>
+<pre>ai_runner                        "stub" | "claude" | "staged"   <span class="c"># 기본값 유지 → 무회귀</span>
+revise_stage_timeout_seconds     600     <span class="c"># 단계 1회 상한</span>
+revise_stage_budget_usd          1.5     <span class="c"># 실측 $0.247(3b) 의 ~6배 — 아래 주의 참조</span>
+revise_wall_clock_seconds        900  → 2400
+revising_timeout                 1200 → 3000    <span class="c"># 불변식: 스위퍼 &gt; 벽시계 + 여유</span>
+revise_max_changed_files         10      <span class="c"># 게이트 규모 상한</span>
+revise_max_changed_lines         400
+revise_clarify_limit             2</pre>
+  </div>
+  <div class="note"><b><code>ai_max_budget_usd</code> 는 단계별이 아니라 CLI 호출당 적용된다.</b> 그대로 두면 실질 상한이 3배가 되므로 단계별 <code>revise_stage_budget_usd</code> 를 따로 뒀다 — <a class="inline" href="#open">미결 5</a>.</div>
+  <div class="note"><b>상한은 폭주를 막는 장치이고, 정상 작업을 떨어뜨리는 장치가 아니다 <span class="gate p">실측 개정</span></b> — 같은 입력에서 턴 수가 약 <b>2배까지 흔들린다</b>. $0.5 는 실측 $0.247 짜리 단계를 떨어뜨렸다. 실측의 ~6배인 <b>1.5</b>로 둔다. 한 라운드 실관측 지출은 약 <b>$0.3</b> 으로, 대체 대상인 단발 러너의 $0.42 와 비슷하다.</div>
+  <div class="note"><b>타이머 불변식.</b> 큐 대기 &lt; 세션 벽시계 &lt; 스위퍼 임계값. 단계를 늘리면 <b>셋 다</b> 올려야 한다.</div>
+
+  <h3 id="verification">검증</h3>
+  <h4>단위 테스트 (관행 준수)</h4>
+  <p class="lede">LLM 대역은 <code>monkeypatch.setattr("&lt;module&gt;.subprocess.run", fake_run)</code> 으로 argv/env/cwd/stdin 을 전량 캡처한다 (<code>tests/test_ai_runner.py</code> 패턴).</p>
+  <div class="tw">
+  <table>
+    <thead><tr><th>파일</th><th>검증</th></tr></thead>
+    <tbody>
+      <tr><td><code>tests/test_revise_workflow_nodes.py</code></td><td>anchor/impact/gate 를 <b>LLM 없이</b> — 화이트리스트 밖 파일 되돌림, 리터럴 미치환 적발, 규모 초과 전량 되돌림</td></tr>
+      <tr><td><code>tests/test_revise_workflow_schema.py</code></td><td>일곱 산출물 <code>parse(render(x)) == x</code>. 블록 시퀀스와 flow 가 <b>같은 값으로 파싱</b>되는지, 키 없는 항목 거부, 필수 필드 누락 거부</td></tr>
+      <tr><td><code>tests/test_revise_workflow_runner.py</code></td><td>스키마 유효 산출물을 쓰는 fake agent 로 완주. <b>거짓말 agent(성공 반환 + 산출물 없음)가 no-progress abort 에 걸리는지.</b> 재개(중간 아티팩트 존재 시 앞 노드 건너뜀)</td></tr>
+      <tr><td><code>tests/test_revise_executor.py</code> (확장)</td><td>경로 한정 커밋, clarify 라운드에서 <code>round</code> 불변</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <ul class="plain">
+    <li><b>각 LLM 경계마다 실패 4종 필수</b> — non-zero exit / timeout / 파싱 실패 / <b>거짓말</b></li>
+    <li><b>시크릿 단정 필수</b> — 자식 env 에 앱 시크릿 부재, 산출 문자열에 <code>_redact</code> 적용, 슬랙 노출 300자 캡</li>
+    <li>fake agent 는 문자열을 하드코딩하지 말고 <b>프로덕션 파서/렌더러를 그대로 호출</b>한다 — 「템플릿은 렌더러가」 규약을 테스트에서도 강제하기 위함이다</li>
+  </ul>
+
+  <h4>회귀</h4>
+  <div class="note"><code>uv run pytest</code> 전체 — <b>489 passed</b>. 명시된 기준선은 <code>192 passed</code>(2026-08-11)였고, 증가분은 mrdoc · revise_workflow 스위트다. <code>AI_RUNNER</code> 기본값이 그대로이므로 <code>stub</code> / <code>claude</code> 경로는 무영향이다.</div>
+
+  <h4>스모크 (완료)</h4>
+  <div class="note"><b>3/3 통과 <span class="gate p">완료</span></b> — 원격 없는 스크래치 저장소에서 실 CLI · 실 git 으로 러너만 구동했다. 시나리오 1(앵커 있음) CLI 3회 · 아티팩트 8개 · 커밋 대상 2파일, 시나리오 2(대상 없음) CLI 1회 · 되물음 · 커밋 없음, 시나리오 3(재개) <b>CLI 0회</b>. 이 과정에서 프로덕션 결함 6건을 찾아 고쳤다 — <code>.orchestration/reports/smoke-staged-runner.md</code>.</div>
+  <div class="note"><b>스모크가 덮지 <em>못한</em> 것.</b> 게이트의 되돌림 경로(위반이 발생하지 않았다) · 재투입 예산(3c 가 매번 applied 였다) · 부분 실패 라운드의 <code>restore_paths</code> · 다중 의견 · 되물음 한도 소진. 전부 단위 테스트로만 덮여 있고 <b>실행된 적은 없다.</b></div>
+
+  <h4>실검증 (남음)</h4>
+  <div class="note"><code>AI_RUNNER=staged</code> 로 <b>product-common !11</b> 에 의견 1건 제출 → <code>.revise/.../r*/</code> 아티팩트 8개 생성 확인 → 커밋이 md 만 건드렸는지 → 슬랙 재알림 · 리포트 확인. 대상 없는 의견(「존재하지 않는 절을 고쳐라」)을 넣어 <b>되물음 + <code>round</code> 불변</b>까지 확인.</div>
+
+  <h3 id="open">미결 사항</h3>
+  <ol class="hl">
+    <li><b>「라운드 1 차감」의 정확한 의미.</b> <code>round</code> 미증가로 해석했다. <span class="alt"><code>round - 1</code>을 의도했다면 0에서 음수가 되는 경우의 가드가 별도로 필요하다</span></li>
+    <li><b>같은 파일에 성공 의견과 실패 의견의 편집이 섞였을 때.</b> 파일 단위로만 분리 가능하다. <span class="alt">현재 구현은 「성공 의견이 만진 파일만 커밋」이고 그 귀속은 <b>편집 영수증</b>으로 한다. 더 엄격하게 가려면 편집을 의견 단위로 직렬화해야 하는데 호출 수가 늘어난다</span></li>
+    <li><b>대상 문서가 많을 때의 3b fan-out.</b> 호출 3회 결정을 유지하면 배치 분할이 필요하다. <span class="alt">mrdoc 의 <code>fanout</code>(기본 5) 패턴을 그대로 쓸 수 있으나 이는 단계 수가 아닌 <b>같은 단계의 병렬 배치</b>다</span></li>
+    <li><b>「커밋 없는 라운드」의 처리 규칙이 문서에 없다.</b> 테스트(<code>test_no_commit_round_sends_none_diff_stat_and_compare_url</code>)로만 굳어져 있다. <span class="alt">이번 개정에서 같이 명문화하는 것이 좋다</span></li>
+    <li><b><s><code>ai_max_budget_usd</code>를 단계별로 쪼갤지 호출당 그대로 둘지</s> — 정리됨. 단계별 <code>revise_stage_budget_usd</code> 를 둔다.</b> <span class="alt">값도 실측으로 정했다: 3b $0.247(5턴), 3c 무도구 $0.0287(1턴). 같은 입력에서 턴 수가 약 2배까지 흔들려 $0.5 는 실측 $0.247 짜리 단계를 떨어뜨렸다 — 상한은 폭주를 막는 장치이므로 실측의 ~6배인 <b>1.5</b>로 둔다</span></li>
+  </ol>
+</section>
+
+<footer>
+  <span>상태 v1 · 구현 완료 · 스모크 3/3 통과 — 2026-09-04</span>
+  <span>원천 docs/revise-workflow-proposal.md · 영수증 .orchestration/reports/smoke-staged-runner.md</span>
+  <span>개정 필요 문서 2 — docs/mr-review-pipeline.html (:554 단일 세션 결정 → v4.3) · docs/mrdoc-migration-plan.md (§2 revise 「변경 없이 유지」)</span>
+</footer>
+</main>
+</div>
+
+<script>
+(function(){
+  // pipeline filter
+  var pipe = document.getElementById('pipe');
+  var btns = Array.prototype.slice.call(document.querySelectorAll('.filters button'));
+  var rows = pipe ? Array.prototype.slice.call(pipe.querySelectorAll('tbody tr')) : [];
+  function apply(f){
+    rows.forEach(function(r){
+      var show = f === 'all'
+        || (f === 'core' && r.dataset.opt === '0')
+        || (f === 'tool' && r.dataset.kind === 'tool')
+        || (f === 'llm'  && r.dataset.kind === 'llm');
+      r.classList.toggle('hide', !show);
+    });
+  }
+  btns.forEach(function(b){
+    b.addEventListener('click', function(){
+      btns.forEach(function(o){ o.setAttribute('aria-pressed', String(o === b)); });
+      apply(b.dataset.f);
+    });
+  });
+
+  // scroll spy
+  var links = Array.prototype.slice.call(document.querySelectorAll('#nav a'));
+  var targets = links.map(function(a){ return document.getElementById(a.getAttribute('href').slice(1)); });
+  function spy(){
+    var best = -1, bestTop = -Infinity;
+    for (var i = 0; i < targets.length; i++){
+      var t = targets[i];
+      if (!t) continue;
+      var top = t.getBoundingClientRect().top - 90;
+      if (top <= 0 && top > bestTop){ bestTop = top; best = i; }
+    }
+    links.forEach(function(a, i){ a.classList.toggle('on', i === best); });
+  }
+  var queued = false;
+  window.addEventListener('scroll', function(){
+    if (queued) return;
+    queued = true;
+    requestAnimationFrame(function(){ queued = false; spy(); });
+  }, {passive:true});
+  spy();
+})();
+</script>
+</html>

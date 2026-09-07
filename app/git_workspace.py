@@ -18,7 +18,7 @@ import logging
 import os
 import stat
 import subprocess
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from urllib.parse import urlsplit
 
 from app.config import Settings, secret_value
@@ -271,6 +271,134 @@ def commit_all(settings: Settings, workspace: Path, message: str) -> None:
         cwd=workspace,
         settings=settings,
     )
+
+
+def _normalize_paths(paths: list[str]) -> list[str]:
+    """Drop blanks and normalize every entry to a posix-separator path.
+
+    git accepts forward slashes as pathspecs on every platform (including
+    Windows), so normalizing here means callers can hand over either
+    ``Path`` -derived strings or values that round-tripped through git's own
+    output without either side worrying about separators. Order is preserved
+    and duplicates are collapsed so a pathspec list stays stable/minimal.
+    """
+
+    seen: set[str] = set()
+    normalized: list[str] = []
+    for raw in paths:
+        text = str(raw).strip()
+        if not text:
+            continue
+        candidate = PurePosixPath(text.replace("\\", "/")).as_posix()
+        if not candidate or candidate in seen:
+            continue
+        seen.add(candidate)
+        normalized.append(candidate)
+    return normalized
+
+
+def untracked_paths(settings: Settings, workspace: Path) -> list[str]:
+    """Return the workspace's untracked, non-ignored files as posix paths.
+
+    ``git ls-files --others --exclude-standard`` — the untracked half of what
+    ``has_changes`` reports via ``status --porcelain``, split out so callers
+    that need to *restore* a path set can tell "revert this tracked file"
+    from "delete this file that did not exist before".
+    """
+
+    proc = _git(
+        ["ls-files", "--others", "--exclude-standard"], cwd=workspace, settings=settings
+    )
+    return _normalize_paths(proc.stdout.splitlines())
+
+
+def changed_paths(settings: Settings, workspace: Path) -> list[str]:
+    """Every path the working tree has touched: modified/deleted + untracked.
+
+    ``git diff --name-only HEAD`` (tracked changes, staged or not) unioned
+    with ``untracked_paths``. Returned as posix paths, deduplicated, tracked
+    entries first. This is the read side of the path-scoped commit flow:
+    the caller intersects it with the paths a runner claims to have edited
+    so ``commit_paths`` only ever stages what was actually asked for.
+    """
+
+    proc = _git(["diff", "--name-only", "HEAD"], cwd=workspace, settings=settings)
+    tracked = _normalize_paths(proc.stdout.splitlines())
+    return _normalize_paths([*tracked, *untracked_paths(settings, workspace)])
+
+
+def commit_paths(
+    settings: Settings, workspace: Path, message: str, paths: list[str]
+) -> None:
+    """Stage *only* ``paths`` and commit them under the bot's git identity.
+
+    The path-scoped counterpart of ``commit_all``: it stages with
+    ``git add -- <paths...>`` rather than ``git add -A``, so any other dirty
+    file in the workspace (a stray artifact, an edit the gate reverted but
+    could not delete, a file belonging to an opinion whose 3c verdict was
+    ``unapplied``) stays out of the commit. ``paths`` empty is a no-op — no
+    add, no commit, no empty-commit error — so callers can pass a runner's
+    ``commit_paths`` straight through without a guard of their own.
+
+    Uses the exact same ``-c user.name=`` / ``-c user.email=`` identity
+    resolution as ``commit_all``, and like every call in this module puts
+    nothing secret on argv (a ``TimeoutExpired``/``CalledProcessError`` str()
+    carries the whole argv into logs).
+    """
+
+    normalized = _normalize_paths(paths)
+    if not normalized:
+        return
+
+    _git(["add", "--", *normalized], cwd=workspace, settings=settings)
+    name = settings.bot_git_name or settings.bot_username or "mr-review-bot"
+    email = settings.bot_git_email or settings.bot_email or "mr-review-bot@localhost"
+    _git(
+        [
+            "-c",
+            f"user.name={name}",
+            "-c",
+            f"user.email={email}",
+            "commit",
+            "-m",
+            message,
+            "--",
+            *normalized,
+        ],
+        cwd=workspace,
+        settings=settings,
+    )
+
+
+def restore_paths(settings: Settings, workspace: Path, paths: list[str]) -> None:
+    """Undo working-tree edits under ``paths``: revert tracked, delete untracked.
+
+    ``git checkout -- <paths...>`` restores tracked files to HEAD, but says
+    nothing about files that did not exist at HEAD — those are removed with a
+    **path-scoped** ``git clean -f -- <paths...>``. The path scoping is not
+    optional: an unscoped ``git clean -f`` in a checked-out MR workspace would
+    delete every untracked file in the tree, including ones no runner ever
+    touched. ``paths`` empty is a no-op (an unscoped clean is exactly what
+    dropping the guard would produce).
+
+    Tracked-vs-untracked is decided by ``untracked_paths`` before either call,
+    so a path set that is entirely untracked skips the checkout (which would
+    fail with "did not match any file(s) known to git") and one that is
+    entirely tracked skips the clean.
+    """
+
+    normalized = _normalize_paths(paths)
+    if not normalized:
+        return
+
+    untracked = set(untracked_paths(settings, workspace))
+    tracked = [path for path in normalized if path not in untracked]
+    to_clean = [path for path in normalized if path in untracked]
+
+    if tracked:
+        _git(["checkout", "--", *tracked], cwd=workspace, settings=settings)
+    if to_clean:
+        _git(["clean", "-f", "--", *to_clean], cwd=workspace, settings=settings)
 
 
 def push(settings: Settings, workspace: Path, branch: str) -> None:
