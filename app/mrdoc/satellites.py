@@ -259,10 +259,10 @@ _VERIFIER_TEMPLATE = render_verifier(
         ),
         counts=(
             CountsCheck(
-                file_id="f-zzzzzzzz",
+                file_id="zzzzzzzz",
                 mismatches=(
                     CountMismatch(
-                        target="f-zzzzzzzz",
+                        target="zzzzzzzz",
                         stated="<FILE_SUMMARY 가 말한 카운트>",
                         inventory="<원자 집계가 잰 카운트>",
                     ),
@@ -279,7 +279,7 @@ _VERIFIER_TEMPLATE = render_verifier(
             ),
             Fix(
                 fix_id="r-02",
-                target="f-zzzzzzzz",
+                target="zzzzzzzz",
                 field="FILE_SUMMARY",
                 reason="counts_mismatch",
             ),
@@ -454,7 +454,19 @@ def _fix_mission(
         unit: fid for fid, units in units_by_file.items() for unit in units
     }
     paths = {entry.fid: entry.path for entry in changeset.files}
+
+    def _known(target: str) -> str:
+        # doc-verifier sometimes prefixes file ids with 'f-' — its template
+        # once showed them that way. Exact match wins; the stripped form is
+        # only taken when it names a real file of this changeset.
+        if target in paths or target in owner:
+            return target
+        if target.startswith("f-") and target[2:] in paths:
+            return target[2:]
+        return target
+
     reasons = _fix_reasons(work_dir)
+    targets = tuple(_known(target) for target in targets)
     # counts_mismatch FIX targets are file_ids — the FILE_SUMMARY is the
     # field being rewritten, so they ride along their file's mission.
     file_targets = tuple(dict.fromkeys(t for t in targets if t in paths))

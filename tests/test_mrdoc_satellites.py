@@ -427,6 +427,29 @@ def test_fix_prompt_rewrites_a_file_summary_on_counts_mismatch(tmp_path) -> None
     assert plan.expected == (tmp_path / "20-analysis" / f"{_fid}.md",)
 
 
+def test_fix_prompt_accepts_f_prefixed_file_target(tmp_path) -> None:
+    """doc-verifier 가 f- 접두 file_id 를 내놓아도 파일 타깃으로 받는다."""
+
+    _fid, _units = _two_unit_workspace(tmp_path)
+    (tmp_path / "40-verifier.md").write_text(
+        render_verifier(
+            Verifier(
+                mr_iid=17,
+                fixes=(
+                    Fix("r-02", f"f-{_fid}", "FILE_SUMMARY", "counts_mismatch"),
+                ),
+            )
+        ),
+        encoding="utf-8",
+    )
+    mission = parse_spec(
+        _spec("analyzer", tmp_path / "20-analysis", scope=f"units f-{_fid}")
+    )
+    plan = satellites._analyzer_mission(mission, tmp_path)
+    assert "FILE_SUMMARY" in plan.prompt
+    assert plan.expected == (tmp_path / "20-analysis" / f"{_fid}.md",)
+
+
 def test_fix_scope_pointing_at_nothing_is_refused(tmp_path) -> None:
     _two_unit_workspace(tmp_path)
     mission = parse_spec(

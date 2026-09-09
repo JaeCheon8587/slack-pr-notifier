@@ -154,7 +154,7 @@ def test_prompt_template_is_what_the_parser_reads() -> None:
     assert parsed.required_fixes == 2
     assert parsed.fixes[0].reason == "fidelity_invented"
     assert parsed.fixes[1].reason == "counts_mismatch"
-    assert parsed.counts[0].file_id == "f-zzzzzzzz"
+    assert parsed.counts[0].file_id == "zzzzzzzz"
     assert render_verifier(parsed) == template
 
 
