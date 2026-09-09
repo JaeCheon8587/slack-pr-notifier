@@ -443,7 +443,7 @@ def _unit_html(
     note_html = f' <span class="tag">{_e(note)}</span>' if note else ""
     parts = [
         '<div class="unit">',
-        f'<p class="uid">{_e(unit.unit_id)} '
+        f'<p class="uid">'
         f'<span class="tag">[{_e(" · ".join(unit.axes) or unit.klass)}]</span>'
         f'{note_html}'
         f' · <span class="sec">{_e(unit.section)}</span></p>',
