@@ -7,6 +7,7 @@ returns None without side effects.
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from typing import Any
 
@@ -169,3 +170,104 @@ def test_uploadable_report_returns_real_content(tmp_path: Path) -> None:
 
 def test_uploadable_report_missing_file(tmp_path: Path) -> None:
     assert rail._uploadable_report(tmp_path) is None
+
+
+class _RecordingSlack:
+    """Fake SlackClient capturing chat calls and file uploads separately."""
+
+    def __init__(self, token: str) -> None:
+        self.calls: list[dict[str, Any]] = []
+        self.uploads: list[dict[str, Any]] = []
+
+    async def call(self, method: str, payload: dict[str, Any]) -> dict[str, Any]:
+        self.calls.append({"method": method, "payload": payload})
+        return {"ok": True}
+
+    async def upload_report_file(
+        self, channel, thread_ts, filename, content, *, initial_comment=None
+    ):  # noqa: ANN001
+        self.uploads.append(
+            {
+                "channel": channel,
+                "thread_ts": thread_ts,
+                "filename": filename,
+                "content": content,
+                "initial_comment": initial_comment,
+            }
+        )
+        return {"ok": True}
+
+
+class _ExplodingUploadSlack(_RecordingSlack):
+    async def upload_report_file(
+        self, channel, thread_ts, filename, content, *, initial_comment=None
+    ):  # noqa: ANN001
+        raise RuntimeError("upload boom")
+
+
+def _delivery_settings(monkeypatch) -> Any:
+    settings = get_settings()
+    monkeypatch.setattr(settings, "slack_bot_token", "xoxb-test")
+    return settings
+
+
+def test_post_summary_single_message_when_report_exists(monkeypatch, tmp_path: Path) -> None:
+    """요약 텍스트와 report.html가 슬랙 메시지 하나(initial_comment)로 합쳐진다."""
+    settings = _delivery_settings(monkeypatch)
+    recorder = _RecordingSlack("xoxb-test")
+    monkeypatch.setattr(rail, "SlackClient", lambda token: recorder)
+    (tmp_path / "report.html").write_text("<html>real content</html>", encoding="utf-8")
+
+    asyncio.run(
+        rail._post_summary(settings, {"channel": "C1", "ts": "111.222"}, 31, tmp_path, 4)
+    )
+
+    assert recorder.calls == [], "no separate text message may be posted"
+    (upload,) = recorder.uploads
+    assert upload["filename"] == "mrdoc-report.html"
+    assert upload["thread_ts"] == "111.222"
+    assert upload["initial_comment"] is not None
+    assert "mrdoc 문서 변경 리포트 -- MR !31" in upload["initial_comment"]
+    assert "exit=4" in upload["initial_comment"]
+
+
+def test_post_summary_text_only_without_report(monkeypatch, tmp_path: Path) -> None:
+    settings = _delivery_settings(monkeypatch)
+    recorder = _RecordingSlack("xoxb-test")
+    monkeypatch.setattr(rail, "SlackClient", lambda token: recorder)
+
+    asyncio.run(
+        rail._post_summary(settings, {"channel": "C1", "ts": "111.222"}, 31, tmp_path, 4)
+    )
+
+    assert recorder.uploads == []
+    (call,) = recorder.calls
+    assert call["method"] == "chat.postMessage"
+    assert call["payload"]["thread_ts"] == "111.222"
+    assert "MR !31" in call["payload"]["text"]
+
+
+def test_post_summary_falls_back_to_text_when_upload_fails(monkeypatch, tmp_path: Path) -> None:
+    """업로드 실패 시에도 요약 텍스트는 반드시 도착한다."""
+    settings = _delivery_settings(monkeypatch)
+    recorder = _ExplodingUploadSlack("xoxb-test")
+    monkeypatch.setattr(rail, "SlackClient", lambda token: recorder)
+    (tmp_path / "report.html").write_text("<html>real content</html>", encoding="utf-8")
+
+    asyncio.run(
+        rail._post_summary(settings, {"channel": "C1", "ts": "111.222"}, 31, tmp_path, 4)
+    )
+
+    (call,) = recorder.calls
+    assert call["method"] == "chat.postMessage"
+    assert "MR !31" in call["payload"]["text"]
+
+
+def test_post_summary_without_slack_target_posts_nothing(monkeypatch, tmp_path: Path) -> None:
+    settings = _delivery_settings(monkeypatch)
+    recorder = _RecordingSlack("xoxb-test")
+    monkeypatch.setattr(rail, "SlackClient", lambda token: recorder)
+
+    asyncio.run(rail._post_summary(settings, None, 31, tmp_path, 4))
+
+    assert recorder.calls == [] and recorder.uploads == []

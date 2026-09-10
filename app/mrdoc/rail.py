@@ -285,6 +285,15 @@ async def _post_summary(
     directory: Path,
     exit_code: int,
 ) -> None:
+    """Deliver the finished run as ONE Slack thread message.
+
+    The summary text rides the file share's initial_comment, so a completed
+    run lands as a single item (요약 + report.html together) instead of a
+    text message followed by a separate file-share message. Plain-text
+    posting is reserved for runs without an uploadable report and as the
+    fallback when the upload fails -- the summary itself must always arrive.
+    """
+
     text = _summarize(directory, exit_code, mr_iid)
     channel = posted.get("channel") if isinstance(posted, dict) else None
     thread_ts = posted.get("ts") if isinstance(posted, dict) else None
@@ -293,17 +302,16 @@ async def _post_summary(
             "mrdoc rail: no Slack target for !%s -- summary follows\n%s", mr_iid, text
         )
         return
-    try:
-        client = SlackClient(secret_value(settings.slack_bot_token))
-        await client.call(
-            "chat.postMessage",
-            {"channel": channel, "thread_ts": thread_ts, "text": text},
-        )
-    except Exception:
-        logger.exception("mrdoc rail: summary post failed for !%s", mr_iid)
-        return
+    client = SlackClient(secret_value(settings.slack_bot_token))
     html = _uploadable_report(directory)
     if html is None:
+        try:
+            await client.call(
+                "chat.postMessage",
+                {"channel": channel, "thread_ts": thread_ts, "text": text},
+            )
+        except Exception:
+            logger.exception("mrdoc rail: summary post failed for !%s", mr_iid)
         return
     try:
         await client.upload_report_file(
@@ -311,10 +319,21 @@ async def _post_summary(
             str(thread_ts),
             "mrdoc-report.html",
             html,
-            initial_comment="📄 mrdoc 리포트 (report.html)",
+            initial_comment=text,
         )
     except Exception:
-        logger.exception("mrdoc rail: report upload failed for !%s", mr_iid)
+        logger.exception(
+            "mrdoc rail: report upload failed for !%s -- falling back to summary-only post",
+            mr_iid,
+        )
+        try:
+            await client.call(
+                "chat.postMessage",
+                {"channel": channel, "thread_ts": thread_ts, "text": text},
+            )
+        except Exception:
+            logger.exception("mrdoc rail: summary fallback post failed for !%s", mr_iid)
+        return
 
 
 def _uploadable_report(directory: Path) -> str | None:
