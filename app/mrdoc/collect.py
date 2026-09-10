@@ -16,6 +16,7 @@ text, literal values and the tool-determined 성질 all still render.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from dataclasses import replace
 
 from . import classes
 from .analysis import FileAnalysis, _bold_lines, _split_blocks
@@ -31,6 +32,7 @@ from .frontmatter import (
 from .levelcheck import LevelCheck
 from .literals import ChangedValue, Literals
 from .structure import Structure
+from .themes import Theme, parse_themes
 from .verifier import verify_summary
 
 #: What a prose field says when the analyzer produced nothing usable for it.
@@ -100,6 +102,11 @@ class Collect:
     refs_dropped: int
     file_blocks: tuple[CollectedFile, ...]
     units: tuple[CollectedUnit, ...]
+    #: The themes satellite's grouped output, gated here: members must be
+    #: known units and a surviving theme holds at least two of them.
+    themes: tuple[Theme, ...] = ()
+    themes_dropped: int = 0
+    themes_failed: bool = False
 
     def valid_ids(self) -> frozenset[str]:
         """Every id a block may point at — render's one gate."""
@@ -135,6 +142,7 @@ def build_collect(
     changeset: Changeset,
     excerpts: Excerpts,
     verifier_text: str,
+    themes_text: str = "",
 ) -> Collect:
     """Run the design's six steps over parsed artifacts — no LLM anywhere."""
 
@@ -229,6 +237,25 @@ def build_collect(
         if head in confidence_dist:
             confidence_dist[head] += 1
 
+    themes: tuple[Theme, ...] = ()
+    themes_dropped = 0
+    themes_failed = False
+    if themes_text:
+        try:
+            parsed = parse_themes(themes_text)
+        except ValueError:
+            parsed = None
+            themes_failed = True  # shown in 분석 상태, the report still renders
+        if parsed is not None:
+            kept: list[Theme] = []
+            for theme in parsed.themes:
+                members = tuple(u for u in theme.units if u in known)
+                if len(members) < 2:
+                    themes_dropped += 1
+                    continue
+                kept.append(replace(theme, units=members))
+            themes = tuple(kept)
+
     return Collect(
         mr_iid=mr_iid,
         files={
@@ -252,6 +279,9 @@ def build_collect(
         refs_dropped=refs_dropped,
         file_blocks=file_blocks,
         units=ordered_units,
+        themes=themes,
+        themes_dropped=themes_dropped,
+        themes_failed=themes_failed,
     )
 
 
@@ -272,6 +302,8 @@ def render_collect(collect: Collect) -> str:
                 "uncertain": list(collect.uncertain),
                 "failed_files": list(collect.failed_files),
                 "refs_dropped": collect.refs_dropped,
+                "themes_dropped": collect.themes_dropped,
+                "themes_failed": collect.themes_failed,
             }
         ),
     ]
@@ -317,6 +349,16 @@ def render_collect(collect: Collect) -> str:
             parts.append("")
             parts.append(render_section("UNIT", unit.unit_id, fields))
             parts.append("**설명** " + unit.explanation)
+    for theme in collect.themes:
+        parts.append("")
+        parts.append(
+            render_section(
+                "THEME",
+                theme.theme_id,
+                {"title": theme.title, "units": list(theme.units)},
+            )
+        )
+        parts.append("**한 줄** " + theme.line)
     return "\n".join(parts) + "\n"
 
 
@@ -356,6 +398,7 @@ def parse_collect(text: str) -> Collect:
 
     file_blocks: list[CollectedFile] = []
     units: list[CollectedUnit] = []
+    themes: list[Theme] = []
     for header, block_lines in _split_blocks(text):
         bold = _bold_lines(block_lines)
         fields = sections.get(header[1], {})
@@ -409,6 +452,16 @@ def parse_collect(text: str) -> Collect:
                     ),
                 )
             )
+        elif header[0] == "THEME":
+            raw_units = fields.get("units")
+            themes.append(
+                Theme(
+                    theme_id=header[1],
+                    title=str(fields.get("title") or ""),
+                    line=bold.get("한 줄", ""),
+                    units=tuple(str(u) for u in raw_units or []),
+                )
+            )
 
     return Collect(
         mr_iid=_as_int(meta.get("mr_iid")),
@@ -424,4 +477,7 @@ def parse_collect(text: str) -> Collect:
         refs_dropped=_as_int(meta.get("refs_dropped")),
         file_blocks=tuple(file_blocks),
         units=tuple(units),
+        themes=tuple(themes),
+        themes_dropped=_as_int(meta.get("themes_dropped")),
+        themes_failed=bool(meta.get("themes_failed")),
     )

@@ -28,6 +28,7 @@ from app.mrdoc.frontmatter import parse_frontmatter, parse_sections
 from app.mrdoc.levelcheck import build_levelcheck
 from app.mrdoc.literals import build_literals
 from app.mrdoc.structure import build_structure
+from app.mrdoc.themes import Theme, Themes, render_themes
 
 _BASE = {"docs/p-a/auth.md": "# 개요\n권장 Python 3.12.4\n\n## 정책\n만료 60분\n"}
 _HEAD = {
@@ -84,7 +85,7 @@ def _analysis(structure, changeset, **overrides) -> FileAnalysis:
     return FileAnalysis(**fields)
 
 
-def _collect(analyses: list[FileAnalysis], *, failed=()):
+def _collect(analyses: list[FileAnalysis], *, failed=(), themes_text: str = ""):
     changeset, structure, literals, excerpts = _inputs()
     levelcheck = build_levelcheck(18, literals, analyses, structure)
     return build_collect(
@@ -97,6 +98,7 @@ def _collect(analyses: list[FileAnalysis], *, failed=()):
         changeset=changeset,
         excerpts=excerpts,
         verifier_text="",
+        themes_text=themes_text,
     )
 
 
@@ -251,6 +253,8 @@ def test_artifact_carries_exactly_the_declared_fields() -> None:
         "uncertain",
         "failed_files",
         "refs_dropped",
+        "themes_dropped",
+        "themes_failed",
     ]
     blocks = parse_sections(text)
     assert list(blocks[_unit(collect, "개요").unit_id]) == [
@@ -278,3 +282,40 @@ def test_artifact_carries_exactly_the_declared_fields() -> None:
     markers = [line.split("**")[1] for line in text.splitlines() if line[:2] == "**"]
     assert sorted(set(markers)) == ["FILE_SUMMARY", "설명"]
     assert len(markers) == len(collect.units) + len(collect.file_blocks)
+
+
+def test_themes_gate_keeps_only_two_member_themes() -> None:
+    """Members are measured against this collect — prose counts for nothing."""
+
+    changeset, structure, _literals, _excerpts = _inputs()
+    base = _collect([_analysis(structure, changeset)])
+    known = [unit.unit_id for unit in base.units]
+    text = render_themes(
+        Themes(
+            mr_iid=18,
+            themes=(
+                Theme("t-01", "버전 정책", "버전 값이 함께 바뀌었다.", tuple(known[:2])),
+                Theme("t-02", "고아 주제", "존재하지 않는 유닛만 가리킨다.", ("u-00000000",)),
+                Theme("t-03", "외톨이", "멤버가 하나뿐이다.", (known[0], "u-00000000")),
+            ),
+        )
+    )
+    gated = _collect([_analysis(structure, changeset)], themes_text=text)
+    assert [theme.theme_id for theme in gated.themes] == ["t-01"]
+    assert gated.themes[0].units == tuple(known[:2])
+    assert gated.themes_dropped == 2
+    assert gated.themes_failed is False
+
+
+def test_themes_parse_failure_flags_the_report_not_kills_it() -> None:
+    changeset, structure, _literals, _excerpts = _inputs()
+    good = render_themes(
+        Themes(
+            mr_iid=18,
+            themes=(Theme("t-01", "버전 정책", "버전 값이 함께 바뀌었다.", ("u-1", "u-2")),),
+        )
+    )
+    bad = good.replace("themes: 1", "themes: 3")
+    collect = _collect([_analysis(structure, changeset)], themes_text=bad)
+    assert collect.themes == ()
+    assert collect.themes_failed is True

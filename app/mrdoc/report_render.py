@@ -6,8 +6,9 @@ The design's three render steps: (1) every block's refs must exist in
 report.html (single file, inline CSS, zero external dependencies) and
 slack-summary.txt (section 1 verbatim, no document body).
 
-The page is organised 파일(제품) → 연산 → 성질, not by level: 개요 · 변경
-매트릭스 · 파일별 상세(3.1 구조 · 3.2 추가 · 3.3 삭제 · 3.4 변경) · 부록.
+The page is organised 파일(제품) → 연산 → 성질, not by level: 개요 · 주요
+변경사항 · 변경 매트릭스 · 파일별 상세(4.1 구조 · 4.2 추가 · 4.3 삭제 ·
+4.4 변경) · 분석 상태 · 부록.
 Nothing here judges — 판정 · 심각도 · 머지 의견이 모두 없다. Structure,
 raw text and literal values come from the tool artifacts, so a run whose
 설명 all failed still renders every one of them; only the prose says so.
@@ -19,9 +20,11 @@ template dependency for a page this small.
 from __future__ import annotations
 
 import html
+import re
 
 from . import classes
 from .collect import (
+    _CONF_KEYS,
     EXPLANATION_FAILED,
     SUMMARY_FAILED,
     Collect,
@@ -33,6 +36,7 @@ from .structure import Structure, TreeSection
 
 _AXES = (classes.STRUCTURE, classes.MEANING, classes.EXPRESSION)
 _OPS = ("추가", "삭제", "변경")
+_UNIT_ID = re.compile(r"u-[0-9a-f]{8}")
 
 #: 부록 carries the same wording in every product's report — 10 reports have
 #: to be comparable, so the criteria are not re-worded per run.
@@ -48,6 +52,22 @@ CRITERIA: tuple[tuple[str, str], ...] = (
 
 def _e(value: object) -> str:
     return html.escape(str(value), quote=True)
+
+
+def _strip_ids(text: str) -> str:
+    """Remove u- hash ids from prose — the appendix table owns them.
+
+    The measured complaint: 산문에 u-a0c3709c 같은 해시가 섞여 읽힌다.
+    Ids stay in the appendix mapping (and nowhere else), so prose lines
+    drop them here — "(u-x, head 1-2)" becomes "(head 1-2)" and an id that
+    leaves an empty parenthesis takes the parenthesis with it.
+    """
+
+    out = _UNIT_ID.sub("", text)
+    out = re.sub(r"\(\s*,\s*", "(", out)
+    out = re.sub(r"\(\s*\)", "", out)
+    out = re.sub(r"\s{2,}", " ", out)
+    return out.strip()
 
 
 def _basename(path: str) -> str:
@@ -167,7 +187,7 @@ def overview_lines(
         ),
     ]
     for entry in collect.file_blocks:
-        lines.append(f"{_basename(entry.path)}: {entry.summary}")
+        lines.append(f"{_basename(entry.path)}: {_strip_ids(entry.summary)}")
     lines.append(
         "[리포트 신뢰도] "
         + " · ".join(
@@ -201,6 +221,10 @@ def render_slack_summary(
     lines = overview_lines(
         collect, mr_iid=mr_iid, base_sha=base_sha, head_sha=head_sha
     )
+    if collect.themes:
+        top = sorted(collect.themes, key=lambda t: (-len(t.units), t.theme_id))[:3]
+        theme_line = "주요 주제: " + " · ".join(theme.title for theme in top)
+        lines = [*lines[:-1], theme_line, lines[-1]]
     if link:
         lines.append(link)
     return "\n".join(lines) + "\n"
@@ -340,6 +364,12 @@ td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; }
 .wrap { overflow-x: auto; }
 .file { border: 1px solid #e2e6ea; border-radius: 6px; background: #fff;
         padding: .5rem 1rem 1rem; margin: 1.25rem 0; }
+.theme { border: 1px solid #e2e6ea; border-radius: 6px; background: #fff;
+         padding: .5rem 1rem .75rem; margin: 1rem 0; }
+.theme h3 { margin: .3rem 0 .2rem; }
+.badge { display: inline-block; padding: .06rem .5rem; margin-left: .5rem;
+         border-radius: 999px; font-size: .78rem; vertical-align: middle;
+         border: 1px solid #b98a00; background: #fff7e0; color: #7a5200; }
 .trees { display: flex; gap: 1rem; flex-wrap: wrap; }
 .trees > div { flex: 1 1 18rem; min-width: 15rem; }
 .tree { list-style: none; margin: 0; padding: 0; font-size: .84rem;
@@ -377,6 +407,8 @@ ul.plain li { padding: .1rem 0; }
   .tag { background: #22262c; border-color: #39414a; color: #d5dae0; }
   .sec, .tree li { color: #cdd3d9; }
   .sub, .uid, .none, .trust { color: #98a2ad; }
+  .theme { background: #1d2025; border-color: #2c3238; }
+  .badge { background: #3a2f10; border-color: #7a5200; color: #ffd98a; }
 }
 """
 
@@ -454,7 +486,7 @@ def _unit_html(
         else:
             parts.append(_raw("after", excerpt.after if excerpt else ""))
     parts.append(_values_html(unit, ops))
-    parts.append(f'<p class="exp">설명 — {_e(unit.explanation)}</p>')
+    parts.append(f'<p class="exp">설명 — {_e(_strip_ids(unit.explanation))}</p>')
     parts.append("</div>")
     return "".join(parts)
 
@@ -469,8 +501,8 @@ def _file_html(
         '<div class="file">',
         f"<h3>{_e(entry.path)}</h3>",
         f'<p class="sub">{_e(entry.product_dir)} · 유닛 {entry.units}</p>',
-        f"<p>{_e(entry.summary)}</p>",
-        "<h4>3.1 구조 변화</h4>",
+        f"<p>{_e(_strip_ids(entry.summary))}</p>",
+        "<h4>4.1 구조 변화</h4>",
     ]
     if structure is None:
         parts.append('<p class="miss">05-structure 없음</p>')
@@ -492,9 +524,9 @@ def _file_html(
             else '<p class="none">구조 변화 없음</p>'
         )
     for title, whole_kind, sides, op in (
-        ("3.2 추가된 내용", "added", ("after",), "추가"),
-        ("3.3 삭제된 내용", "removed", ("before",), "삭제"),
-        ("3.4 변경된 내용", "", ("before", "after"), "변경"),
+        ("4.2 추가된 내용", "added", ("after",), "추가"),
+        ("4.3 삭제된 내용", "removed", ("before",), "삭제"),
+        ("4.4 변경된 내용", "", ("before", "after"), "변경"),
     ):
         if whole_kind:
             whole = [unit for unit in units if unit.kind == whole_kind]
@@ -557,17 +589,76 @@ def _matrix_html(collect: Collect) -> str:
     )
 
 
-def _appendix_html(
+def _themes_html(collect: Collect, units: tuple[CollectedUnit, ...]) -> str:
+    """Section 2 — the themes satellite's grouping, counts measured here.
+
+    The satellite writes a title, one line and member ids; file and unit
+    counts are derived from the members against this report's own units,
+    never trusted from prose. Member ids stay out of the prose — the
+    appendix's 주제 · 유닛 대응 table is where they live.
+    """
+
+    if not collect.themes:
+        if collect.themes_failed:
+            return '<p class="none">주제 생성 실패 — 5. 분석 상태 참조</p>'
+        return '<p class="none">주제 없음</p>'
+    by_unit = {unit.unit_id: unit for unit in units}
+    path_of = {entry.file_id: entry.path for entry in collect.file_blocks}
+    items: list[str] = []
+    for theme in sorted(collect.themes, key=lambda t: (-len(t.units), t.theme_id)):
+        files = sorted(
+            {
+                path_of.get(by_unit[u].file, by_unit[u].file)
+                for u in theme.units
+                if u in by_unit
+            }
+        )
+        items.append(
+            '<div class="theme">'
+            f"<h3>{_e(theme.title)}</h3>"
+            f"<p>{_e(_strip_ids(theme.line))}</p>"
+            f'<p class="sub">유닛 {len(theme.units)} · 파일 {len(files)}</p>'
+            "</div>"
+        )
+    return "".join(items)
+
+
+def _status_html(
     collect: Collect, units: tuple[CollectedUnit, ...], dropped: int
 ) -> str:
-    criteria = "".join(
-        f"<tr><td>{_e(name)}</td><td>{_e(rule)}</td></tr>" for name, rule in CRITERIA
+    """Section 5 — the pipeline's own bookkeeping, WARNING when degraded."""
+
+    prose_failures = len(_prose_failures(collect, units))
+    rows: list[tuple[str, str]] = [
+        ("검증 라운드", str(collect.verify.get("rounds", 0))),
+        ("지적 잔존", str(collect.verify.get("outstanding", 0))),
+        ("집계 불일치", str(collect.verify.get("counts_mismatch", 0))),
+        ("설명 생성 실패 파일", str(prose_failures)),
+        ("분류 불확실", str(collect.classes.get(classes.UNCLASSIFIED, 0))),
+        ("refs 드롭", str(collect.refs_dropped + dropped)),
+        ("주제 드롭", str(collect.themes_dropped)),
+        ("주제 생성 실패", "있음" if collect.themes_failed else "없음"),
+    ]
+    confidence = " · ".join(
+        f"{key} {collect.confidence_dist.get(key, 0)}"
+        for key in _CONF_KEYS
+        if collect.confidence_dist.get(key, 0)
     )
-    mapping = "".join(
-        f"<tr><td>{_e(unit.unit_id)}</td><td>{_e(unit.section)}</td>"
-        f"<td>{_e(unit.excerpt_ref or '-')}</td></tr>"
-        for unit in units
+    if confidence:
+        rows.append(("신뢰도 분포", confidence))
+    warning = any(
+        (
+            collect.verify.get("outstanding", 0),
+            collect.verify.get("counts_mismatch", 0),
+            prose_failures,
+            collect.classes.get(classes.UNCLASSIFIED, 0),
+            collect.refs_dropped + dropped,
+            collect.themes_dropped,
+            collect.themes_failed,
+        )
     )
+    badge = '<span class="badge">WARNING</span>' if warning else ""
+    table = "".join(f"<tr><th>{_e(key)}</th><td>{_e(value)}</td></tr>" for key, value in rows)
     uncertain: list[str] = [
         f"{unit.unit_id} — {classes.UNCLASSIFIED}"
         for unit in units
@@ -579,10 +670,9 @@ def _appendix_html(
         if unit.vocab_violation
     ]
     uncertain += [str(item) for item in collect.uncertain]
-    outstanding = collect.verify.get("outstanding", 0)
-    if outstanding:
-        uncertain.append(f"지적 잔존 {outstanding}건")
-    partial: list[str] = [f"{name} — 20-analysis 읽기 실패" for name in collect.failed_files]
+    partial: list[str] = [
+        f"{name} — 20-analysis 읽기 실패" for name in collect.failed_files
+    ]
     partial += [
         f"{entry.path} — {SUMMARY_FAILED}"
         for entry in collect.file_blocks
@@ -593,9 +683,6 @@ def _appendix_html(
         for unit in units
         if unit.explanation == EXPLANATION_FAILED
     ]
-    total_dropped = collect.refs_dropped + dropped
-    if total_dropped:
-        partial.append(f"refs 드롭 {total_dropped}건")
 
     def listing(items: list[str]) -> str:
         if not items:
@@ -605,6 +692,40 @@ def _appendix_html(
             + "".join(f"<li>{_e(item)}</li>" for item in items)
             + "</ul>"
         )
+
+    return "".join(
+        [
+            f"<p>파이프라인 상태{badge}</p>",
+            '<div class="wrap"><table><thead><tr><th>항목</th><th>값</th></tr>'
+            "</thead><tbody>"
+            + table
+            + "</tbody></table></div>",
+            "<h4>분류 불확실 항목</h4>",
+            listing(uncertain),
+            "<h4>부분 실패 목록</h4>",
+            listing(partial),
+        ]
+    )
+
+
+def _appendix_html(
+    collect: Collect, units: tuple[CollectedUnit, ...], dropped: int
+) -> str:
+    """Section 6 — the criteria and the id mappings prose never carries."""
+
+    criteria = "".join(
+        f"<tr><td>{_e(name)}</td><td>{_e(rule)}</td></tr>" for name, rule in CRITERIA
+    )
+    mapping = "".join(
+        f"<tr><td>{_e(unit.unit_id)}</td><td>{_e(unit.section)}</td>"
+        f"<td>{_e(unit.excerpt_ref or '-')}</td></tr>"
+        for unit in units
+    )
+    theme_rows = "".join(
+        f"<tr><td>{_e(theme.theme_id)}</td><td>{_e(theme.title)}</td>"
+        f"<td>{_e(', '.join(theme.units))}</td></tr>"
+        for theme in collect.themes
+    )
 
     return "".join(
         [
@@ -624,10 +745,15 @@ def _appendix_html(
                 if mapping
                 else '<p class="none">없음</p>'
             ),
-            "<h4>분류 불확실 항목</h4>",
-            listing(uncertain),
-            "<h4>부분 실패 목록</h4>",
-            listing(partial),
+            "<h4>주제 · 유닛 대응</h4>",
+            (
+                '<div class="wrap"><table><thead><tr><th>theme_id</th>'
+                "<th>주제</th><th>멤버 유닛</th></tr></thead><tbody>"
+                + theme_rows
+                + "</tbody></table></div>"
+                if theme_rows
+                else '<p class="none">없음</p>'
+            ),
         ]
     )
 
@@ -642,7 +768,7 @@ def render_report_html(
     head_sha: str = "",
     diff_url: str = "",
 ) -> str:
-    """One self-contained page — 4 sections, inline CSS, no external calls."""
+    """One self-contained page — 6 sections, inline CSS, no external calls."""
 
     units, dropped = gate(collect)
     by_ref = {unit.unit_id: unit for unit in (excerpts.units if excerpts else ())}
@@ -670,10 +796,12 @@ def render_report_html(
             f"<h1>mrdoc 문서 변경 리포트 — MR !{_e(mr_iid)}</h1>",
             f'<p class="sub">문서 변경 설명 리포트{link}</p>',
             '<h2>1. 개요</h2><div class="ov">' + body + "</div>",
-            "<h2>2. 변경 매트릭스</h2>" + _matrix_html(collect),
-            "<h2>3. 파일별 상세</h2>"
+            "<h2>2. 주요 변경사항</h2>" + _themes_html(collect, units),
+            "<h2>3. 변경 매트릭스</h2>" + _matrix_html(collect),
+            "<h2>4. 파일별 상세</h2>"
             + (files_html or '<p class="none">변경된 파일 없음</p>'),
-            "<h2>4. 부록</h2>" + _appendix_html(collect, units, dropped),
+            "<h2>5. 분석 상태</h2>" + _status_html(collect, units, dropped),
+            "<h2>6. 부록</h2>" + _appendix_html(collect, units, dropped),
             "</body></html>",
         ]
     )

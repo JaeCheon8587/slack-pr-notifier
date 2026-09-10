@@ -106,6 +106,11 @@ def _run_tool_node(
         levelcheck = parse_levelcheck(paths["levelcheck"].read_text(encoding="utf-8"))
         structure = parse_structure(paths["structure"].read_text(encoding="utf-8"))
         changeset = parse_changeset(paths["changeset"].read_text(encoding="utf-8"))
+        themes_text = (
+            paths["themes"].read_text(encoding="utf-8")
+            if paths["themes"].is_file()
+            else ""
+        )
         collect = build_collect(
             mr_iid=inputs.mr_iid,
             analyses=analyses,
@@ -116,6 +121,7 @@ def _run_tool_node(
             changeset=changeset,
             excerpts=parse_excerpts(paths["excerpt"].read_text(encoding="utf-8")),
             verifier_text=paths["verifier"].read_text(encoding="utf-8"),
+            themes_text=themes_text,
         )
         paths["collect"].write_text(render_collect(collect), encoding="utf-8")
     elif node == "render":

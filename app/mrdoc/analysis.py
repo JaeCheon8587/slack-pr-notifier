@@ -38,6 +38,9 @@ class AnalysisUnit:
     section_id: str
     klass: str  # '의미' | '표현' | '' (null — tool-determined unit)
     explanation: str
+    #: kebab-case topic hint for the themes satellite — a candidate, not a
+    #: ruling: the themes satellite confirms or rewrites it. '' = no hint.
+    topic_hint: str = ""
 
 
 @dataclass(frozen=True)
@@ -72,7 +75,7 @@ class FileAnalysis:
 
 _BLOCK_HEADER = re.compile(r"^## ([A-Z][A-Z0-9_]*)(?: ([^\s]+))?")
 #: Closed marker set: an arbitrary '**...**' inside prose must not read as one.
-_BOLD = re.compile(r"^\*\*(설명|FILE_SUMMARY|before|after)\*\*\s*(.*)$")
+_BOLD = re.compile(r"^\*\*(설명|FILE_SUMMARY|before|after|한 줄)\*\*\s*(.*)$")
 _FENCE = chr(96) * 3
 
 
@@ -155,6 +158,7 @@ def parse_analysis(text: str) -> FileAnalysis:
                     section_id=_text_str(fields.get("section_id")),
                     klass=_text_str(fields.get("class")),
                     explanation=_bold_lines(block_lines).get("설명", ""),
+                    topic_hint=_text_str(fields.get("topic_hint")),
                 )
             )
         elif header[0] == "FILE_SUMMARY":
@@ -210,7 +214,11 @@ def render_analysis(analysis: FileAnalysis) -> str:
             render_section(
                 "UNIT",
                 unit.unit_id,
-                {"section_id": unit.section_id, "class": unit.klass or None},
+                {
+                    "section_id": unit.section_id,
+                    "class": unit.klass or None,
+                    "topic_hint": unit.topic_hint or None,
+                },
             )
         )
         parts.append(f"**설명** {unit.explanation}")

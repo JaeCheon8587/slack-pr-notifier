@@ -25,6 +25,7 @@ from app.mrdoc.levelcheck import (
 from app.mrdoc.orchestrator import PipelineInputs, run_to_completion
 from app.mrdoc.satellites import parse_spec
 from app.mrdoc.structure import parse_structure
+from app.mrdoc.themes import Theme, Themes, render_themes
 from app.mrdoc.verifier import (
     Fix,
     Verifier,
@@ -91,6 +92,8 @@ def _agent(
             round_two = (work / "40-verifier.r1.md").is_file()
             flag = fixes_round2 if round_two else fixes_round1
             return _write_verifier(mission, work, round_two, flag)
+        if mission.agent == "themes":
+            return _write_themes(mission, work)
         return False
 
     return run
@@ -172,6 +175,27 @@ def _write_verifier(mission, work: Path, round_two: bool, flag: bool) -> bool:
     return True
 
 
+def _write_themes(mission, work: Path) -> bool:
+    """One cross-cutting theme when the units allow it, none when they don't."""
+
+    changeset = parse_changeset(_read(work, "00-changeset.md"))
+    structure = parse_structure(_read(work, "05-structure.md"))
+    unit_ids = tuple(unit.unit_id for unit in structure.changed)
+    themes: tuple[Theme, ...] = ()
+    if len(unit_ids) >= 2:
+        themes = (
+            Theme(
+                theme_id="t-01",
+                title="타임아웃 정책",
+                line=_CLEAN,
+                units=unit_ids,
+            ),
+        )
+    report = Themes(mr_iid=changeset.mr_iid, themes=themes)
+    mission.return_path.write_text(render_themes(report), encoding="utf-8")
+    return True
+
+
 #: The quiet path — both gates clean, so the retry branch never fires.
 _fake_agent = _agent()
 
@@ -190,6 +214,7 @@ def test_run_to_completion_reaches_exit_4(tmp_path: Path) -> None:
         "excerpt",
         "levelcheck",
         "verifier",
+        "themes",
         "collect",
         "render",
         "slack_summary",
@@ -199,7 +224,14 @@ def test_run_to_completion_reaches_exit_4(tmp_path: Path) -> None:
     assert "abort" not in ledger
     assert "pipeline complete" in ledger
     html = paths["render"].read_text(encoding="utf-8")
-    for heading in ("1. 개요", "2. 변경 매트릭스", "3. 파일별 상세", "4. 부록"):
+    for heading in (
+        "1. 개요",
+        "2. 주요 변경사항",
+        "3. 변경 매트릭스",
+        "4. 파일별 상세",
+        "5. 분석 상태",
+        "6. 부록",
+    ):
         assert heading in html, heading
     assert _CLEAN in html  # the 20-analysis 설명 reached the page
     # slack-summary.txt is section 1 and carries no document text

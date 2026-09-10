@@ -83,6 +83,9 @@ def artifact_paths(directory: Path) -> dict[str, Path]:
         "excerpt": directory / "07-excerpts.md",
         "levelcheck": directory / "30-levelcheck.md",
         "verifier": directory / "40-verifier.md",
+        # Themes satellite — one session per MR, after the verifier's final
+        # word, so grouping sees the prose the report will actually print.
+        "themes": directory / "45-themes.md",
         "collect": directory / "50-collect.md",
         "render": directory / "report.html",
         # Written by the render node beside report.html — section 1 verbatim,

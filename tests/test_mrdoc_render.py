@@ -1,4 +1,4 @@
-"""Tests for app/mrdoc/report_render.py — the four sections, one gate, escaping.
+"""Tests for app/mrdoc/report_render.py — the six sections, one gate, escaping.
 
 The page's contract is that the deterministic half always renders. A run
 whose 설명 all failed must still show the overview, the matrix, the heading
@@ -19,11 +19,13 @@ from app.mrdoc.excerpt import build_excerpts
 from app.mrdoc.levelcheck import build_levelcheck
 from app.mrdoc.literals import build_literals
 from app.mrdoc.report_render import (
+    _strip_ids,
     overview_lines,
     render_report_html,
     render_slack_summary,
     structure_notes,
 )
+from app.mrdoc.themes import Theme
 from app.mrdoc.structure import build_structure
 
 _BASE = {"docs/p-a/setup.md": "# 개요\n권장 Python 3.12.4\n\n## 정책\n만료 60분\n"}
@@ -107,23 +109,25 @@ def _page(**kwargs) -> str:
     )
 
 
-def test_page_has_the_four_sections() -> None:
+def test_page_has_the_six_sections() -> None:
     page = _page()
     for heading in (
         "1. 개요",
-        "2. 변경 매트릭스",
-        "3. 파일별 상세",
-        "4. 부록",
-        "3.1 구조 변화",
-        "3.2 추가된 내용",
-        "3.3 삭제된 내용",
-        "3.4 변경된 내용",
+        "2. 주요 변경사항",
+        "3. 변경 매트릭스",
+        "4. 파일별 상세",
+        "5. 분석 상태",
+        "6. 부록",
+        "4.1 구조 변화",
+        "4.2 추가된 내용",
+        "4.3 삭제된 내용",
+        "4.4 변경된 내용",
     ):
         assert heading in page, heading
 
 
 def test_value_change_and_raw_text_appear_together() -> None:
-    """3.4 carries the literal diff beside the excerpt — tools, then 설명."""
+    """4.4 carries the literal diff beside the excerpt — tools, then 설명."""
 
     page = _page()
     assert "version 3.12.4 → 3.12.7" in page
@@ -199,18 +203,21 @@ def test_appendix_carries_the_fixed_criteria() -> None:
     assert "헤딩 · 파일 · 절의 존재 · 위치 · 레벨이 바뀜. 본문 명제는 무관" in page
     assert "명제 동일 — 동의어 · 어순 · 오탈자 · 서식 · 문장 분할/병합" in page
     assert "유닛 ID · 소스 대응" in page
+    assert "주제 · 유닛 대응" in page
     assert "부분 실패 목록" in page
 
 
-def test_page_shows_only_the_four_sections_and_three_properties() -> None:
+def test_page_shows_only_the_six_sections_and_three_properties() -> None:
     """Closed sets: no banner, no ranked cards, no level labels, no 권고."""
 
     page = _page()
     assert re.findall(r"<h2>([^<]*)</h2>", page) == [
         "1. 개요",
-        "2. 변경 매트릭스",
-        "3. 파일별 상세",
-        "4. 부록",
+        "2. 주요 변경사항",
+        "3. 변경 매트릭스",
+        "4. 파일별 상세",
+        "5. 분석 상태",
+        "6. 부록",
     ]
     tags = set(re.findall(r'<span class="tag">\[([^\]]*)\]</span>', page))
     # a mixed unit's tag lists every axis it touches, ' · '-joined
@@ -219,6 +226,48 @@ def test_page_shows_only_the_four_sections_and_three_properties() -> None:
     assert "부분" not in atoms  # the partial note is not an axis
     assert "권고" not in page
     assert not {"L1", "L2", "L3"} & set(re.findall(r"L[123]", page))
+
+
+def test_themes_section_measures_members_and_hides_ids() -> None:
+    """Section 2 counts what the members cover — ids live in the appendix."""
+
+    collect, structure, excerpts = _pipeline()
+    ids = tuple(unit.unit_id for unit in collect.units)
+    themed = replace(
+        collect,
+        themes=(Theme("t-01", "버전 정책", "버전 요구 값이 2곳 바뀌었다.", ids),),
+    )
+    page = render_report_html(
+        themed, mr_iid=18, excerpts=excerpts, structure=structure
+    )
+    assert "<h3>버전 정책</h3>" in page
+    assert "유닛 %d" % len(ids) in page
+    assert "t-01" in page  # appendix 주제 · 유닛 대응 — the one place ids appear
+
+
+def test_slack_summary_lists_top_themes_before_the_trust_line() -> None:
+    collect, _structure, _excerpts = _pipeline()
+    ids = tuple(unit.unit_id for unit in collect.units)
+    themed = replace(
+        collect,
+        themes=(
+            Theme("t-01", "버전 정책", "버전 요구 값이 2곳 바뀌었다.", ids),
+            Theme("t-02", "문서 개편", "절 구성이 바뀌었다.", ids[:1]),
+        ),
+    )
+    summary = render_slack_summary(themed, mr_iid=18)
+    lines = summary.splitlines()
+    assert "주요 주제: 버전 정책 · 문서 개편" in lines
+    assert lines[-2].startswith("주요 주제: ")
+    assert "[리포트 신뢰도]" in lines[-1]
+
+
+def test_strip_ids_removes_hashes_from_prose() -> None:
+    assert (
+        _strip_ids("값 변경 (u-a0c3709c, head 1-2) — 상향")
+        == "값 변경 (head 1-2) — 상향"
+    )
+    assert _strip_ids("u-a0c3709c") == ""
 
 
 def test_pure_reorder_is_read_off_the_two_trees() -> None:

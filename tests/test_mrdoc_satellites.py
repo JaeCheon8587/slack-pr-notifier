@@ -195,7 +195,7 @@ def test_analyzer_prompt_offers_only_the_v2_schema(tmp_path) -> None:
         assert gone not in text, gone
     blocks = parse_sections(satellites._ANALYZER_TEMPLATE)
     assert {tuple(fields) for fields in blocks.values()} == {
-        ("section_id", "class"),
+        ("section_id", "class", "topic_hint"),
         ("refs",),
     }
 

@@ -25,12 +25,19 @@ from app.ai_runner import _CREDENTIAL_ENV_KEYS
 from app.config import Settings
 
 from . import classes, vocab
-from .analysis import AnalysisUnit, FileAnalysis, parse_analysis, render_analysis
+from .analysis import (
+    AnalysisUnit,
+    FileAnalysis,
+    load_analyses_split,
+    parse_analysis,
+    render_analysis,
+)
 from .changeset import Changeset, parse_changeset
 from .inventory import build_inventory
 from .levelcheck import parse_levelcheck
 from .literals import parse_literals
 from .structure import parse_structure
+from .themes import Theme, Themes, parse_themes, render_themes
 from .verifier import (
     CountMismatch,
     CountsCheck,
@@ -49,7 +56,7 @@ FENCE = chr(96) * 3
 _SCOPE = re.compile(r"^files (\d+)\.\.(\d+)$")
 #: The FIX re-call's scope — named units instead of a file batch.
 _SCOPE_UNITS = re.compile(r"^units (.+)$")
-_EFFORT = {"analyzer": "high", "verifier": "high"}
+_EFFORT = {"analyzer": "high", "verifier": "high", "themes": "medium"}
 
 
 def _no_check() -> str:
@@ -298,6 +305,58 @@ _VERIFIER_RETURN = (
     "UNCERTAIN: <애매한 점 한 줄> | none\n"
     "CONFIDENCE: high|medium|low — <직접 확인한 사실만 근거로>\n"
     "REPORT: <40-verifier.md 절대경로>\n"
+    "리턴을 조립하기 전에 산출물 말미에 리턴 블록을 '## RECEIPT' 로 복사한다."
+)
+
+_THEMES_SYSTEM = (
+    "당신은 doc-themes 위성이다. 변경 유닛을 주제로 묶는다 — 판정하지 않는다.\n"
+    "\n"
+    "[HARD LIMITS]\n"
+    "1. 입력은 프롬프트의 유닛 목록만이다. 원문을 읽지 않는다 — "
+    "base/·snapshot/ 디렉터리와 07-excerpts.md 를 열지 않는다.\n"
+    "2. 주제는 멤버 유닛들이 실제로 공유하는 변경 주제여야 한다. "
+    "목록에 있는 사실(파일 · 섹션 · 성질 · 값 · 힌트)만으로 묶는다.\n"
+    "3. 한 유닛은 여러 주제에 속할 수 있다. 모든 유닛을 최소 한 주제에 "
+    "포함시킨다 — 포함시키지 못하면 UNCOVERED 에 남긴다.\n"
+    "4. 주제 하나의 멤버는 2개 이상이다. 1개짜리 주제는 만들지 않는다.\n"
+    "5. 주제명은 변경 주제를 나타내는 명사구 3~15자. "
+    "한 줄 설명은 주제가 묶은 변경이 무엇인지만 쓴다.\n"
+    "6. 왜(동기·배경) · 그래서(영향·의미) · 평가 어휘를 쓰지 않는다. "
+    "제품 동작 추측도 하지 않는다. "
+    "금지 어휘: " + vocab.prompt_line() + ".\n"
+    "7. 지적 · 권고 · 심각도 · 머지 의견을 쓰지 않는다. 스키마에 그 필드가 없다.\n"
+    "8. 템플릿에 없는 섹션을 만들지 않는다. THEME · RECEIPT 둘뿐이다."
+)
+
+#: Same rule as the other two: the template is the parser's own renderer,
+#: so the prompt cannot describe a shape parse_themes would refuse.
+_THEMES_TEMPLATE = render_themes(
+    Themes(
+        mr_iid=0,
+        themes=(
+            Theme(
+                theme_id="t-01",
+                title="<주제명 — 명사구>",
+                line="<한 줄 — 주제가 묶은 변경이 무엇인지>",
+                units=("u-xxxxxxxx", "u-yyyyyyyy"),
+            ),
+        ),
+        status="OK",
+        uncovered="none",
+        uncertain="none",
+        confidence="high — <목록 대조로 확인한 사실만>",
+    )
+)
+
+_THEMES_RETURN = (
+    "[리턴] 10줄 이내로 다음 필드만 출력한다.\n"
+    "STATUS: OK | EMPTY | PARTIAL — <잘린 범위> | BLOCKED — <이유> | FAILED — <이유>\n"
+    "THEMES: <쓴 THEME 블록 수>\n"
+    "UNITS: <주제에 포함시킨 유닛 수>/<전체 유닛 수>\n"
+    "UNCOVERED: <어느 주제에도 넣지 못한 id 목록> | none\n"
+    "UNCERTAIN: <애매한 점 한 줄> | none\n"
+    "CONFIDENCE: high|medium|low — <목록 대조로 확인한 사실만 근거로>\n"
+    "REPORT: <45-themes.md 절대경로>\n"
     "리턴을 조립하기 전에 산출물 말미에 리턴 블록을 '## RECEIPT' 로 복사한다."
 )
 
@@ -625,9 +684,102 @@ def _verifier_mission(mission: Mission, work_dir: Path) -> MissionPlan:
     return MissionPlan(_VERIFIER_SYSTEM, prompt, (mission.return_path,))
 
 
+def _themes_check(path: Path) -> Callable[[], str]:
+    """parse_themes is the acceptance bar — a file it refuses is redone."""
+
+    def check() -> str:
+        if not path.is_file():
+            return f"{path.name} 이 사라졌다"
+        try:
+            parse_themes(path.read_text(encoding="utf-8"))
+        except ValueError as error:
+            return f"{path.name} 파싱 실패: {error}"
+        return ""
+
+    return check
+
+
+def _themes_mission(mission: Mission, work_dir: Path) -> MissionPlan:
+    """One session per MR: every unit as one compact line, grouped live."""
+
+    changeset = parse_changeset(_read(work_dir / "00-changeset.md"))
+    structure = parse_structure(_read(work_dir / "05-structure.md"))
+    literals = parse_literals(_read(work_dir / "06-literals.md"))
+    inventory = build_inventory(structure, literals, changeset)
+    analyses, _failed = load_analyses_split(work_dir / "20-analysis")
+    hints = {
+        unit.unit_id: unit.topic_hint
+        for analysis in analyses
+        for unit in analysis.units
+    }
+    lit_by_unit = {unit.unit_id: unit for unit in literals.units}
+    heads = {row.section_id: row for row in structure.tree}
+    paths = {entry.fid: entry.path for entry in changeset.files}
+
+    lines = ["[유닛 목록] 이 목록만 본다 — 원문을 읽지 않는다."]
+    for unit in structure.changed:
+        where = paths.get(unit.file_id, unit.file_id)
+        row = heads.get(unit.section_id)
+        if row:
+            where += " § " + row.heading_path.rsplit(" > ", 1)[-1]
+        axes = " · ".join(inventory.unit_axes.get(unit.unit_id, ()))
+        ops = " · ".join(inventory.unit_ops.get(unit.unit_id, ()))
+        facts: list[str] = []
+        lit = lit_by_unit.get(unit.unit_id)
+        if lit:
+            if lit.changed:
+                facts.append(
+                    "값: "
+                    + " · ".join(
+                        f"{c.key} {c.from_value} → {c.to_value}"
+                        for c in lit.changed
+                    )
+                )
+            if lit.textual:
+                facts.append(f"표현 재작성 {len(lit.textual)}건")
+            if lit.prose_added:
+                facts.append(f"문장 추가 {len(lit.prose_added)}건")
+            if lit.prose_removed:
+                facts.append(f"문장 삭제 {len(lit.prose_removed)}건")
+        hint = hints.get(unit.unit_id, "")
+        hint_part = f" · hint: {hint}" if hint else ""
+        lines.append(
+            f"- {unit.unit_id} · {where} · [{axes}] ({ops})"
+            + ((" · " + " · ".join(facts)) if facts else "")
+            + hint_part
+        )
+
+    prompt = "\n".join(
+        [
+            "[산출 형식] 정확히 이 템플릿을 따른다 (yaml fence 필수). "
+            "리스트는 한 줄 flow 로만 쓴다:",
+            _THEMES_TEMPLATE,
+            "",
+            f"[mr_iid] {changeset.mr_iid}",
+            "",
+            *lines,
+            "",
+            "[주제 작성] 공유 주제가 보이는 대로 묶는다 — 파일을 가로지르는 "
+            "주제도 좋고 한 파일 안의 주제도 좋다. 주제명은 중복되지 않게, "
+            "멤버는 실제로 그 주제에 속하는 유닛만.",
+            "",
+            _THEMES_RETURN,
+            "",
+            f"[산출 위치] {mission.return_path.resolve()} — 이 파일 하나만 쓴다.",
+        ]
+    )
+    return MissionPlan(
+        _THEMES_SYSTEM,
+        prompt,
+        (mission.return_path,),
+        _themes_check(mission.return_path),
+    )
+
+
 _MISSIONS: dict[str, Callable[[Mission, Path], MissionPlan]] = {
     "analyzer": _analyzer_mission,
     "verifier": _verifier_mission,
+    "themes": _themes_mission,
 }
 
 

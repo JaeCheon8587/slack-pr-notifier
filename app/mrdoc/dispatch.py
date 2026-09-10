@@ -33,7 +33,10 @@ DEPS: dict[str, tuple[str, ...]] = {
     "analysis": ("changeset",),
     "levelcheck": ("analysis",),
     "verifier": ("levelcheck",),
-    "collect": ("verifier",),
+    # Themes runs on the verifier's settled output — a fix round reopens
+    # verifier, and themes has to wait for the prose's final word.
+    "themes": ("verifier",),
+    "collect": ("themes", "verifier"),
     "render": ("collect",),
 }
 
@@ -45,6 +48,7 @@ _NODES: tuple[str, ...] = (
     "analysis",
     "levelcheck",
     "verifier",
+    "themes",
     "collect",
     "render",
 )
@@ -280,6 +284,20 @@ def next_specs(
                     ),
                     budget_usd=budget_usd,
                     return_path=paths[node],
+                )
+            )
+        elif node == "themes":
+            specs.append(
+                SpecBlock(
+                    wave=wave,
+                    agent="themes",
+                    read=(
+                        paths["analysis_dir"],
+                        paths["structure"],
+                        paths["literals"],
+                    ),
+                    budget_usd=budget_usd,
+                    return_path=paths["themes"],
                 )
             )
     return specs
