@@ -11,6 +11,7 @@ boundary applies to the line just as it does to 설명: 무엇이 / 어떻게
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 from .analysis import _bold_lines, _split_blocks
@@ -20,6 +21,50 @@ from .frontmatter import (
     render_frontmatter,
     render_section,
 )
+
+_KV_LINE = re.compile(r"^[A-Za-z0-9_]+:")
+
+
+def _salvaged_meta(text: str) -> dict[str, object] | None:
+    """Recover the drift where every field was written as leading prose.
+
+    Observed on MR !34: the satellite listed the six frontmatter fields as
+    plain 'key: value' lines and then used '---' (or the first section
+    header) as the boundary, so the file never starts with a fence. The
+    salvage is allowed only when every line before that boundary is a
+    key: value line — anything else is a real preamble and stays a parse
+    error, so the acceptance bar keeps its teeth.
+    """
+
+    lines = text.splitlines()
+    boundary = next(
+        (
+            index
+            for index, line in enumerate(lines)
+            if line.strip() == "---" or line.strip().startswith("## ")
+        ),
+        None,
+    )
+    if boundary is None or boundary == 0:
+        return None
+    fields = [line for line in lines[:boundary] if line.strip()]
+    if not fields or not all(_KV_LINE.match(line) for line in fields):
+        return None
+    return parse_frontmatter("\n".join(["---", *fields, "---"]))
+
+
+def _parse_meta(text: str) -> dict[str, object]:
+    """Frontmatter first; the plain-preamble drift second."""
+
+    try:
+        return parse_frontmatter(text)
+    except ValueError as error:
+        if "does not start with a frontmatter fence" not in str(error):
+            raise
+        salvaged = _salvaged_meta(text)
+        if salvaged is None:
+            raise
+        return salvaged
 
 
 @dataclass(frozen=True)
@@ -75,7 +120,7 @@ def render_themes(themes: Themes) -> str:
 def parse_themes(text: str) -> Themes:
     """Parse 45-themes.md back (ValueError on malformed frontmatter)."""
 
-    meta = parse_frontmatter(text)
+    meta = _parse_meta(text)
     sections = parse_sections(text)
 
     themes: list[Theme] = []

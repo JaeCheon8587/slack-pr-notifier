@@ -15,20 +15,19 @@ text, literal values and the tool-determined 성질 all still render.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from dataclasses import replace
+from dataclasses import dataclass, replace
 
 from . import classes
 from .analysis import FileAnalysis, _bold_lines, _split_blocks
 from .changeset import Changeset
 from .excerpt import Excerpts
-from .inventory import build_inventory
 from .frontmatter import (
     parse_frontmatter,
     parse_sections,
     render_frontmatter,
     render_section,
 )
+from .inventory import build_inventory
 from .levelcheck import LevelCheck
 from .literals import ChangedValue, Literals
 from .structure import Structure
@@ -247,14 +246,18 @@ def build_collect(
             parsed = None
             themes_failed = True  # shown in 분석 상태, the report still renders
         if parsed is not None:
-            kept: list[Theme] = []
-            for theme in parsed.themes:
-                members = tuple(u for u in theme.units if u in known)
-                if len(members) < 2:
-                    themes_dropped += 1
-                    continue
-                kept.append(replace(theme, units=members))
-            themes = tuple(kept)
+            if parsed.status.strip().upper().startswith(("FAILED", "BLOCKED")):
+                parsed = None
+                themes_failed = True
+            else:
+                kept: list[Theme] = []
+                for theme in parsed.themes:
+                    members = tuple(u for u in theme.units if u in known)
+                    if len(members) < 2:
+                        themes_dropped += 1
+                        continue
+                    kept.append(replace(theme, units=members))
+                themes = tuple(kept)
 
     return Collect(
         mr_iid=mr_iid,

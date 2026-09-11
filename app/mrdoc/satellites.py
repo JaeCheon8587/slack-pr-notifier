@@ -325,7 +325,9 @@ _THEMES_SYSTEM = (
     "제품 동작 추측도 하지 않는다. "
     "금지 어휘: " + vocab.prompt_line() + ".\n"
     "7. 지적 · 권고 · 심각도 · 머지 의견을 쓰지 않는다. 스키마에 그 필드가 없다.\n"
-    "8. 템플릿에 없는 섹션을 만들지 않는다. THEME · RECEIPT 둘뿐이다."
+    "8. 템플릿에 없는 섹션을 만들지 않는다. THEME · RECEIPT 둘뿐이다.\n"
+    "9. 산출물의 첫 줄은 '---' 이다. frontmatter 필드를 fence 앞에 평문으로 "
+    "나열하지 않고, '---' 을 fence 가 아닌 구분선으로 쓰지 않는다."
 )
 
 #: Same rule as the other two: the template is the parser's own renderer,
@@ -654,6 +656,7 @@ def _verifier_mission(mission: Mission, work_dir: Path) -> MissionPlan:
     prompt = "\n".join(
         [
             "[산출 형식] 정확히 이 템플릿을 따른다 (yaml fence 필수). "
+            "파일 첫 줄은 '---' — 그 앞에 아무 줄도 쓰지 않는다. "
             "카운트 필드는 블록에서 다시 세므로 블록과 어긋나면 블록이 이긴다:",
             _VERIFIER_TEMPLATE,
             "",
@@ -752,6 +755,7 @@ def _themes_mission(mission: Mission, work_dir: Path) -> MissionPlan:
     prompt = "\n".join(
         [
             "[산출 형식] 정확히 이 템플릿을 따른다 (yaml fence 필수). "
+            "파일 첫 줄은 '---' — 그 앞에 아무 줄도 쓰지 않는다. "
             "리스트는 한 줄 flow 로만 쓴다:",
             _THEMES_TEMPLATE,
             "",

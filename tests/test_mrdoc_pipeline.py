@@ -266,6 +266,45 @@ def test_exception_in_agent_aborts(tmp_path: Path) -> None:
     assert "satellite crashed" in ledger
 
 
+def test_themes_failure_degrades_instead_of_aborting(tmp_path: Path) -> None:
+    """A themes satellite that wrote nothing costs section 2, not the MR."""
+
+    def themes_down(spec: str) -> bool:
+        mission = parse_spec(spec)
+        if mission.agent != "themes":
+            return _fake_agent(spec)
+        return False  # rejected, artifact missing
+
+    directory = tmp_path / ".work" / "1-h"
+    code = run_to_completion(
+        _inputs(), directory, themes_down, fanout=5, budget_usd=1.0
+    )
+    assert code == dispatch.EXIT_COMPLETE
+    paths = artifact_paths(directory)
+    ledger = paths["ledger"].read_text(encoding="utf-8")
+    assert "themes degraded" in ledger
+    assert "주제 생성 실패" in paths["render"].read_text(encoding="utf-8")
+
+
+def test_themes_rejected_artifact_is_kept_and_degrades(tmp_path: Path) -> None:
+    def themes_rejected(spec: str) -> bool:
+        mission = parse_spec(spec)
+        if mission.agent != "themes":
+            return _fake_agent(spec)
+        mission.return_path.write_text("주제 없음.\n", encoding="utf-8")
+        return False
+
+    directory = tmp_path / ".work" / "1-h"
+    code = run_to_completion(
+        _inputs(), directory, themes_rejected, fanout=5, budget_usd=1.0
+    )
+    assert code == dispatch.EXIT_COMPLETE
+    paths = artifact_paths(directory)
+    assert paths["themes"].read_text(encoding="utf-8") == "주제 없음.\n"
+    assert "themes degraded" in paths["ledger"].read_text(encoding="utf-8")
+    assert "주제 생성 실패" in paths["render"].read_text(encoding="utf-8")
+
+
 def test_spec_block_render_format(tmp_path: Path) -> None:
     directory = tmp_path / "w"
     directory.mkdir()

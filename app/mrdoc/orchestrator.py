@@ -25,6 +25,7 @@ from .levelcheck import build_levelcheck, parse_levelcheck, render_levelcheck
 from .literals import build_literals, parse_literals, render_literals
 from .report_render import render_report_html, render_slack_summary
 from .structure import build_structure, parse_structure, render_structure
+from .themes import Themes, render_themes
 from .workspace import artifact_paths
 
 AgentExecutor = Callable[[str], bool]
@@ -220,6 +221,29 @@ def _run_fix_round(
     return lines
 
 
+def _degrade_themes(work_dir: Path, mr_iid: int) -> None:
+    """Leave themes 'done but failed' so the report renders without it.
+
+    Themes is the one supplementary satellite: an analyzer or verifier
+    failure aborts because sections 4-5 would lie without them, but a lost
+    section 2 is survivable — collect flags themes_failed and the report
+    prints '주제 생성 실패'. A rejected artifact stays exactly as written
+    (collect degrades on the parse error); the FAILED stub only covers a
+    satellite that wrote nothing at all, which would otherwise pend forever
+    and die as a no-progress abort.
+    """
+
+    paths = artifact_paths(work_dir)
+    if paths["themes"].is_file():
+        return
+    paths["themes"].write_text(
+        render_themes(
+            Themes(mr_iid=mr_iid, status="FAILED — satellite wrote nothing")
+        ),
+        encoding="utf-8",
+    )
+
+
 def run_wave(
     inputs: PipelineInputs,
     work_dir: Path,
@@ -243,6 +267,10 @@ def run_wave(
         )
         for spec in specs:
             if not agent_executor(spec.render()):
+                if spec.agent == "themes":
+                    _degrade_themes(work_dir, inputs.mr_iid)
+                    ledger.append("themes degraded (satellite failed)")
+                    continue
                 raise RuntimeError(f"agent failed: {spec.agent}")
             ledger.append(f"{spec.agent} done ({spec.return_path.name})")
         fix_lines = _run_fix_round(work_dir, agent_executor, wave, budget_usd)

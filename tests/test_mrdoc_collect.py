@@ -14,6 +14,8 @@ from __future__ import annotations
 
 from dataclasses import replace
 
+import pytest
+
 from app.mrdoc.analysis import AnalysisUnit, FileAnalysis
 from app.mrdoc.changeset import build_changeset
 from app.mrdoc.collect import (
@@ -28,7 +30,7 @@ from app.mrdoc.frontmatter import parse_frontmatter, parse_sections
 from app.mrdoc.levelcheck import build_levelcheck
 from app.mrdoc.literals import build_literals
 from app.mrdoc.structure import build_structure
-from app.mrdoc.themes import Theme, Themes, render_themes
+from app.mrdoc.themes import Theme, Themes, parse_themes, render_themes
 
 _BASE = {"docs/p-a/auth.md": "# 개요\n권장 Python 3.12.4\n\n## 정책\n만료 60분\n"}
 _HEAD = {
@@ -317,5 +319,36 @@ def test_themes_parse_failure_flags_the_report_not_kills_it() -> None:
     )
     bad = good.replace("themes: 1", "themes: 3")
     collect = _collect([_analysis(structure, changeset)], themes_text=bad)
+    assert collect.themes == ()
+    assert collect.themes_failed is True
+
+
+def test_themes_plain_preamble_drift_is_salvaged() -> None:
+    """MR !34's drift: fields as prose first, '---' as the boundary."""
+
+    rendered = render_themes(
+        Themes(
+            mr_iid=34,
+            themes=(
+                Theme("t-01", "버전 값 갱신", "버전 값이 바뀌었다.", ("u-1", "u-2")),
+            ),
+        )
+    )
+    drifted = rendered.replace("---\n", "", 1)  # the opening fence is gone
+    assert parse_themes(drifted) == parse_themes(rendered)
+
+
+def test_themes_prose_preamble_is_still_rejected() -> None:
+    rendered = render_themes(Themes(mr_iid=34))
+    with pytest.raises(ValueError):
+        parse_themes("주제를 정리했다.\n" + rendered)
+
+
+def test_themes_failed_status_flags_the_report() -> None:
+    changeset, structure, _literals, _excerpts = _inputs()
+    stub = render_themes(
+        Themes(mr_iid=18, status="FAILED — satellite wrote nothing")
+    )
+    collect = _collect([_analysis(structure, changeset)], themes_text=stub)
     assert collect.themes == ()
     assert collect.themes_failed is True
