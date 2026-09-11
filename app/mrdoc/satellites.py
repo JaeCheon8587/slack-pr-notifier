@@ -47,7 +47,7 @@ from .verifier import (
     parse_verifier,
     render_verifier,
 )
-from .workspace import artifact_paths
+from .workspace import artifact_paths, fix_rounds_used
 
 logger = logging.getLogger("uvicorn.error")
 
@@ -78,9 +78,9 @@ class MissionPlan:
 
 
 def _round_number(work_dir: Path) -> int:
-    """1 before the FIX re-call has been spent, 2 after."""
+    """1 before any FIX re-call, then one past the rounds already spent."""
 
-    return 2 if artifact_paths(work_dir)["fix_marker"].exists() else 1
+    return 1 + fix_rounds_used(work_dir)
 
 
 @dataclass(frozen=True)

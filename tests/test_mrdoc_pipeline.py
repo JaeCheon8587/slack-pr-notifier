@@ -33,7 +33,7 @@ from app.mrdoc.verifier import (
     parse_verifier,
     render_verifier,
 )
-from app.mrdoc.workspace import artifact_paths, work_dir
+from app.mrdoc.workspace import artifact_paths, fix_rounds_used, work_dir
 
 
 def test_work_dir_is_push_scoped() -> None:
@@ -76,6 +76,7 @@ def _agent(
     rewritten: str = _CLEAN,
     fixes_round1: bool = False,
     fixes_round2: bool = False,
+    fixes_round3: bool = False,
 ) -> Callable[[str], bool]:
     """A satellite double whose two gates can be made to complain on demand.
 
@@ -89,9 +90,9 @@ def _agent(
         if mission.agent == "analyzer":
             return _write_analyses(mission, work, explanation, rewritten)
         if mission.agent == "verifier":
-            round_two = (work / "40-verifier.r1.md").is_file()
-            flag = fixes_round2 if round_two else fixes_round1
-            return _write_verifier(mission, work, round_two, flag)
+            round_no = 1 + fix_rounds_used(work)
+            flag = (fixes_round1, fixes_round2, fixes_round3)[round_no - 1]
+            return _write_verifier(mission, work, round_no, flag)
         if mission.agent == "themes":
             return _write_themes(mission, work)
         return False
@@ -145,7 +146,7 @@ def _write_analyses(mission, work: Path, explanation: str, rewritten: str) -> bo
     return True
 
 
-def _write_verifier(mission, work: Path, round_two: bool, flag: bool) -> bool:
+def _write_verifier(mission, work: Path, round_no: int, flag: bool) -> bool:
     changeset = parse_changeset(_read(work, "00-changeset.md"))
     structure = parse_structure(_read(work, "05-structure.md"))
     units = tuple(
@@ -165,7 +166,7 @@ def _write_verifier(mission, work: Path, round_two: bool, flag: bool) -> bool:
     )
     report = Verifier(
         mr_iid=changeset.mr_iid,
-        round=2 if round_two else 1,
+        round=round_no,
         checked=len(units),
         confidence="high",
         units=units,
@@ -409,18 +410,22 @@ def test_verifier_fix_triggers_exactly_one_re_analysis(tmp_path: Path) -> None:
     assert parse_verifier(_read(directory, "40-verifier.md")).round == 2
 
 
-def test_second_round_does_not_buy_another_call(tmp_path: Path) -> None:
-    """The loop must end: round 2's fixes go to the report, not the analyzer."""
+def test_spent_retries_do_not_buy_another_call(tmp_path: Path) -> None:
+    """The loop must end: after two retries the findings hit the report."""
 
     code, directory = _run(
-        _agent(fixes_round1=True, fixes_round2=True), tmp_path
+        _agent(fixes_round1=True, fixes_round2=True, fixes_round3=True),
+        tmp_path,
     )
     paths = artifact_paths(directory)
+    ledger = paths["ledger"].read_text(encoding="utf-8")
     assert code == dispatch.EXIT_COMPLETE
-    assert paths["ledger"].read_text(encoding="utf-8").count("fix round 1") == 1
+    assert ledger.count("fix round 1") == 1
+    assert ledger.count("fix round 2") == 1
+    assert paths["verifier_r1"].is_file() and paths["verifier_r2"].is_file()
     collect = parse_frontmatter(_read(directory, "50-collect.md"))
     verify = collect["verify"]
-    assert verify == {"rounds": 2, "outstanding": 1, "counts_mismatch": 0}
+    assert verify == {"rounds": 3, "outstanding": 1, "counts_mismatch": 0}
 
 
 def test_vocab_violation_alone_opens_the_fix_round(tmp_path: Path) -> None:
@@ -444,33 +449,35 @@ def test_fix_targets_union_both_gates(tmp_path: Path) -> None:
     directory = tmp_path / "w"
     directory.mkdir()
     paths = artifact_paths(directory)
-    paths["verifier"].write_text(
-        render_verifier(
-            Verifier(
-                mr_iid=1,
-                units=(VerifierUnit("u-a", "omitted", "", "agree"),),
-                fixes=(Fix("r-01", "u-a", "설명", "fidelity_omitted"),),
-            )
-        ),
-        encoding="utf-8",
+    verifier_text = render_verifier(
+        Verifier(
+            mr_iid=1,
+            units=(VerifierUnit("u-a", "omitted", "", "agree"),),
+            fixes=(Fix("r-01", "u-a", "설명", "fidelity_omitted"),),
+        )
     )
-    paths["levelcheck"].write_text(
-        render_levelcheck(
-            LevelCheck(
-                mr_iid=1,
-                units=(
-                    LevelRow("u-b", "", "L2", "b", ("의미",), vocab_violation=("개선",)),
-                    LevelRow("u-c", "", "L2", "c", ("의미",)),
-                ),
-            )
-        ),
-        encoding="utf-8",
+    paths["verifier"].write_text(verifier_text, encoding="utf-8")
+    levelcheck_text = render_levelcheck(
+        LevelCheck(
+            mr_iid=1,
+            units=(
+                LevelRow("u-b", "", "L2", "b", ("의미",), vocab_violation=("개선",)),
+                LevelRow("u-c", "", "L2", "c", ("의미",)),
+            ),
+        )
     )
+    paths["levelcheck"].write_text(levelcheck_text, encoding="utf-8")
     assert dispatch.fix_targets(directory) == ("u-a", "u-b")
     assert dispatch.fix_round_due(directory) == ("u-a", "u-b")
     dispatch.close_fix_round(directory)
-    assert dispatch.fix_round_due(directory) == ()  # spent, never again
     assert paths["verifier_r1"].is_file() and not paths["verifier"].is_file()
+    # round 2's gates flagging again still buys the second — the last — re-call
+    paths["verifier"].write_text(verifier_text, encoding="utf-8")
+    paths["levelcheck"].write_text(levelcheck_text, encoding="utf-8")
+    assert dispatch.fix_round_due(directory) == ("u-a", "u-b")
+    dispatch.close_fix_round(directory)
+    assert dispatch.fix_round_due(directory) == ()  # both spent, never again
+    assert paths["verifier_r2"].is_file() and not paths["verifier"].is_file()
 
 
 def test_fanout_batches_analysis_specs(tmp_path: Path) -> None:

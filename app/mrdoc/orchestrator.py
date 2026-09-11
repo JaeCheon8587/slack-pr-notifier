@@ -201,20 +201,22 @@ def _run_fix_round(
     """The pipeline's one branch: re-analyze the units the gates rejected.
 
     It is not a node — no new artifact appears — so it lives here rather than
-    in the DAG, and it happens at most once per work directory. Spending the
-    round is recorded before the satellite runs, so a failure costs the retry
-    instead of buying an unbounded supply of them: 2회차에 남은 지적은
-    verify.outstanding 으로 리포트에 실리고, 분석기로 돌아가지 않는다.
+    in the DAG, and it happens at most FIX_ROUND_MAX times per work
+    directory. Spending the round is recorded before the satellite runs, so
+    a failure costs the retry instead of buying an unbounded supply of them:
+    재시도를 모두 소진한 검증(3회차)에 남은 지적은 verify.outstanding 으로
+    리포트에 실리고, 분석기로 돌아가지 않는다.
     """
 
     targets = dispatch.fix_round_due(work_dir)
     if not targets:
         return []
+    round_no = dispatch.fix_rounds_used(work_dir) + 1
     spec = dispatch.fix_spec(
         work_dir, wave=wave, budget_usd=budget_usd, targets=targets
     )
     dispatch.close_fix_round(work_dir)
-    lines = [f"fix round 1: {', '.join(targets)}"]
+    lines = [f"fix round {round_no}: {', '.join(targets)}"]
     if not agent_executor(spec.render()):
         raise RuntimeError("agent failed: analyzer (fix round)")
     lines.append(f"analyzer done (fix round, {len(targets)} units)")

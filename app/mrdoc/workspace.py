@@ -93,9 +93,28 @@ def artifact_paths(directory: Path) -> dict[str, Path]:
         "slack_summary": directory / "slack-summary.txt",
         "analysis_dir": directory / "20-analysis",
         "ledger": directory / "ledger.md",
-        # Presence means the one FIX re-call has been spent. It is what makes
-        # the retry loop finite without asking anybody's opinion.
+        # Its content counts the FIX re-calls already spent (1, 2, ...).
+        # Reaching the dispatcher's cap is what makes the retry loop finite
+        # without asking anybody's opinion.
         "fix_marker": directory / ".fix-round",
         "verifier_r1": directory / "40-verifier.r1.md",
+        "verifier_r2": directory / "40-verifier.r2.md",
         "levelcheck_r1": directory / "30-levelcheck.r1.md",
+        "levelcheck_r2": directory / "30-levelcheck.r2.md",
     }
+
+
+def fix_rounds_used(directory: Path) -> int:
+    """How many FIX re-calls this work directory has already spent.
+
+    A missing marker means zero; a corrupt marker still counts as one
+    spent round — the loop stays finite even when the counter is unreadable.
+    """
+
+    marker = artifact_paths(directory)["fix_marker"]
+    if not marker.is_file():
+        return 0
+    try:
+        return max(int(marker.read_text(encoding="utf-8").strip()), 1)
+    except ValueError:
+        return 1

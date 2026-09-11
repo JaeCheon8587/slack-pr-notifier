@@ -16,11 +16,15 @@ from pathlib import Path
 
 from .levelcheck import parse_levelcheck
 from .verifier import parse_verifier
-from .workspace import artifact_paths
+from .workspace import artifact_paths, fix_rounds_used
 
 EXIT_WAVE_RAN = 0
 EXIT_COMPLETE = 4
 EXIT_ABORT = 2
+
+#: Total FIX re-calls a work directory may spend before the remaining
+#: findings ride the report as verify.outstanding instead of a re-analysis.
+FIX_ROUND_MAX = 2
 
 DEPS: dict[str, tuple[str, ...]] = {
     "changeset": (),
@@ -153,10 +157,10 @@ def fix_targets(work_dir: Path) -> tuple[str, ...]:
 
 
 def fix_round_due(work_dir: Path) -> tuple[str, ...]:
-    """Targets for the single re-call, or () when it is not owed or spent."""
+    """Targets for the next re-call, or () when none is left to spend."""
 
     paths = artifact_paths(work_dir)
-    if paths["fix_marker"].exists() or not paths["verifier"].is_file():
+    if fix_rounds_used(work_dir) >= FIX_ROUND_MAX or not paths["verifier"].is_file():
         return ()
     return fix_targets(work_dir)
 
@@ -185,21 +189,22 @@ def fix_spec(
 
 
 def close_fix_round(work_dir: Path) -> None:
-    """Spend the round: mark it, archive round 1's gates, reopen 30 and 40.
+    """Spend a round: bump the marker, archive this round's gates, reopen 30/40.
 
     The marker goes down before anything else so a crash mid-round still
     costs the round — the design's one hard requirement here is that the
     loop ends, not that it always gets its retry. Archiving rather than
-    deleting keeps round 1 readable next to the ledger; removing the live
+    deleting keeps every round readable next to the ledger; removing the live
     files is what puts levelcheck and verifier back to pending, which is how
     the DAG re-runs them over the rewritten 설명.
     """
 
     paths = artifact_paths(work_dir)
-    paths["fix_marker"].write_text("1\n", encoding="utf-8")
+    round_no = fix_rounds_used(work_dir) + 1
+    paths["fix_marker"].write_text(f"{round_no}\n", encoding="utf-8")
     for live, archived in (
-        ("verifier", "verifier_r1"),
-        ("levelcheck", "levelcheck_r1"),
+        ("verifier", f"verifier_r{round_no}"),
+        ("levelcheck", f"levelcheck_r{round_no}"),
     ):
         if paths[live].is_file():
             paths[archived].write_text(
