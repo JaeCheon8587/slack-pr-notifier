@@ -31,6 +31,7 @@ from app.mrdoc.levelcheck import build_levelcheck
 from app.mrdoc.literals import build_literals
 from app.mrdoc.structure import build_structure
 from app.mrdoc.themes import Theme, Themes, parse_themes, render_themes
+from app.mrdoc.verifier import Fix, Verifier, render_verifier
 
 _BASE = {"docs/p-a/auth.md": "# 개요\n권장 Python 3.12.4\n\n## 정책\n만료 60분\n"}
 _HEAD = {
@@ -87,7 +88,13 @@ def _analysis(structure, changeset, **overrides) -> FileAnalysis:
     return FileAnalysis(**fields)
 
 
-def _collect(analyses: list[FileAnalysis], *, failed=(), themes_text: str = ""):
+def _collect(
+    analyses: list[FileAnalysis],
+    *,
+    failed=(),
+    themes_text: str = "",
+    verifier_text: str = "",
+):
     changeset, structure, literals, excerpts = _inputs()
     levelcheck = build_levelcheck(18, literals, analyses, structure)
     return build_collect(
@@ -99,7 +106,7 @@ def _collect(analyses: list[FileAnalysis], *, failed=(), themes_text: str = ""):
         structure=structure,
         changeset=changeset,
         excerpts=excerpts,
-        verifier_text="",
+        verifier_text=verifier_text,
         themes_text=themes_text,
     )
 
@@ -257,6 +264,7 @@ def test_artifact_carries_exactly_the_declared_fields() -> None:
         "refs_dropped",
         "themes_dropped",
         "themes_failed",
+        "fix_targets",
     ]
     blocks = parse_sections(text)
     assert list(blocks[_unit(collect, "개요").unit_id]) == [
@@ -352,3 +360,30 @@ def test_themes_failed_status_flags_the_report() -> None:
     collect = _collect([_analysis(structure, changeset)], themes_text=stub)
     assert collect.themes == ()
     assert collect.themes_failed is True
+
+
+def test_fix_targets_flow_from_verifier_and_round_trip() -> None:
+    """fix_targets — FIX 블록에서 잰 뒤 50-collect를 거쳐 render까지 간다."""
+
+    verifier = Verifier(
+        mr_iid=18,
+        round=1,
+        checked=1,
+        uncovered="none",
+        uncertain="none",
+        confidence="high",
+        fixes=(
+            Fix("r-01", "u-2c81de", "설명", "fidelity_invented"),
+            Fix("r-02", "u-9a03ff", "설명", "fidelity_omitted"),
+            Fix("r-03", "u-2c81de", "FILE_SUMMARY", "counts_mismatch"),
+        ),
+    )
+    collect = _collect([], verifier_text=render_verifier(verifier))
+    assert collect.fix_targets == ("u-2c81de", "u-9a03ff")
+    parsed = parse_collect(render_collect(collect))
+    assert parsed.fix_targets == ("u-2c81de", "u-9a03ff")
+
+
+def test_fix_targets_degrade_to_empty_on_unparsable_verifier() -> None:
+    collect = _collect([], verifier_text="깨진 리포트")
+    assert collect.fix_targets == ()

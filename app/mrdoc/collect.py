@@ -32,7 +32,7 @@ from .levelcheck import LevelCheck
 from .literals import ChangedValue, Literals
 from .structure import Structure
 from .themes import Theme, parse_themes
-from .verifier import verify_summary
+from .verifier import parse_verifier, verify_summary
 
 #: What a prose field says when the analyzer produced nothing usable for it.
 #: The design's words, not a paraphrase — the report prints them as-is and
@@ -106,6 +106,9 @@ class Collect:
     themes: tuple[Theme, ...] = ()
     themes_dropped: int = 0
     themes_failed: bool = False
+    #: Units the verifier's FIX blocks named — the scatter's gold rings.
+    #: Measured from 40-verifier.md, never the satellite's own tally.
+    fix_targets: tuple[str, ...] = ()
 
     def valid_ids(self) -> frozenset[str]:
         """Every id a block may point at — render's one gate."""
@@ -144,6 +147,13 @@ def build_collect(
     themes_text: str = "",
 ) -> Collect:
     """Run the design's six steps over parsed artifacts — no LLM anywhere."""
+
+    # verifier의 FIX 블록에서 fix 대상을 잰다 — verify_summary와 같은 degrade
+    # 규칙: 파싱 실패는 "없음"이지 죽음이 아니다.
+    try:
+        fix_targets = parse_verifier(verifier_text).fix_targets()
+    except ValueError:
+        fix_targets = ()
 
     # 1. parse — the caller did it; failed_files is what could not be read.
     known = {unit.unit_id for unit in structure.changed}
@@ -285,6 +295,7 @@ def build_collect(
         themes=themes,
         themes_dropped=themes_dropped,
         themes_failed=themes_failed,
+        fix_targets=fix_targets,
     )
 
 
@@ -307,6 +318,7 @@ def render_collect(collect: Collect) -> str:
                 "refs_dropped": collect.refs_dropped,
                 "themes_dropped": collect.themes_dropped,
                 "themes_failed": collect.themes_failed,
+                "fix_targets": list(collect.fix_targets),
             }
         ),
     ]
@@ -483,4 +495,5 @@ def parse_collect(text: str) -> Collect:
         themes=tuple(themes),
         themes_dropped=_as_int(meta.get("themes_dropped")),
         themes_failed=bool(meta.get("themes_failed")),
+        fix_targets=str_list("fix_targets"),
     )
