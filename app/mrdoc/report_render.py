@@ -31,8 +31,8 @@ from .collect import (
     CollectedFile,
     CollectedUnit,
 )
+from .density import distribution_html
 from .excerpt import Excerpts
-from .scatter import distribution_html
 from .structure import Structure, TreeSection
 
 _AXES = (classes.STRUCTURE, classes.MEANING, classes.EXPRESSION)
@@ -809,7 +809,7 @@ def render_report_html(
             "<h2>2. 주요 변경사항</h2>" + _themes_html(collect, units),
             "<h2>3. 변경 매트릭스</h2>"
             + _matrix_html(collect)
-            + distribution_html(collect, units),
+            + distribution_html(collect),
             "<h2>4. 파일별 상세</h2>"
             + (files_html or '<p class="none">변경된 파일 없음</p>'),
             "<h2>5. 분석 상태</h2>" + _status_html(collect, units, dropped),

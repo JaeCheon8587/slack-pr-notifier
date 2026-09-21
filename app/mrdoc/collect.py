@@ -71,8 +71,6 @@ class CollectedUnit:
     textual: tuple[tuple[str, str], ...] = ()
     prose_added: tuple[str, ...] = ()
     prose_removed: tuple[str, ...] = ()
-    #: 라인 폭 — excerpt 양쪽 범위 중 큰 쪽. 산점도 x축의 실측값.
-    span: int = 0
 
 
 @dataclass(frozen=True)
@@ -108,8 +106,8 @@ class Collect:
     themes: tuple[Theme, ...] = ()
     themes_dropped: int = 0
     themes_failed: bool = False
-    #: Units the verifier's FIX blocks named — the scatter's gold rings.
-    #: Measured from 40-verifier.md, never the satellite's own tally.
+    #: Units the verifier's FIX blocks named — measured from 40-verifier.md,
+    #: never the satellite's own tally.
     fix_targets: tuple[str, ...] = ()
 
     def valid_ids(self) -> frozenset[str]:
@@ -133,14 +131,6 @@ def _product_dir(path: str) -> str:
 
 def _one_line(text: str) -> str:
     return " ".join(text.split())
-
-
-def _extent(segments: tuple[tuple[int, int], ...]) -> int:
-    """Line width a segment set covers — 0 when there is nothing to measure."""
-
-    if not segments:
-        return 0
-    return max(end for _, end in segments) - min(start for start, _ in segments) + 1
 
 
 def build_collect(
@@ -213,14 +203,6 @@ def build_collect(
                 textual=lit.textual if lit else (),
                 prose_added=lit.prose_added if lit else (),
                 prose_removed=lit.prose_removed if lit else (),
-                span=(
-                    max(
-                            _extent(excerpt.base_lines),
-                            _extent(excerpt.head_lines),
-                        )
-                    if excerpt
-                    else 0
-                ),
             )
         )
 
@@ -376,7 +358,6 @@ def render_collect(collect: Collect) -> str:
                 ],
                 "prose_added": list(unit.prose_added),
                 "prose_removed": list(unit.prose_removed),
-                "span": unit.span,
             }
             if unit.vocab_violation:
                 fields["vocab_violation"] = list(unit.vocab_violation)
@@ -480,7 +461,6 @@ def parse_collect(text: str) -> Collect:
                     prose_removed=tuple(
                         str(v) for v in fields.get("prose_removed") or []
                     ),
-                    span=_as_int(fields.get("span")),
                     explanation=bold.get("설명", ""),
                     vocab_violation=tuple(
                         str(v) for v in fields.get("vocab_violation") or []
