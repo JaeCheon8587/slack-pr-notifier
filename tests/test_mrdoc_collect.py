@@ -282,6 +282,7 @@ def test_artifact_carries_exactly_the_declared_fields() -> None:
         "textual",
         "prose_added",
         "prose_removed",
+        "span",
     ]
     assert list(blocks[collect.file_blocks[0].file_id]) == [
         "path",
@@ -387,3 +388,17 @@ def test_fix_targets_flow_from_verifier_and_round_trip() -> None:
 def test_fix_targets_degrade_to_empty_on_unparsable_verifier() -> None:
     collect = _collect([], verifier_text="깨진 리포트")
     assert collect.fix_targets == ()
+
+
+def test_unit_span_is_measured_and_round_trips() -> None:
+    """span — excerpt 양쪽 범위 중 큰 쪽의 라인 폭, 50-collect를 거쳐도 산다."""
+
+    changeset, structure, _literals, _excerpts = _inputs()
+    collect = _collect([_analysis(structure, changeset)])
+    for unit in collect.units:
+        assert unit.span >= 1
+    shifted = replace(
+        collect, units=tuple(replace(u, span=7) for u in collect.units)
+    )
+    parsed = parse_collect(render_collect(shifted))
+    assert [u.span for u in parsed.units] == [7] * len(collect.units)

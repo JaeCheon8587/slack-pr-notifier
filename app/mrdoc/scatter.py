@@ -1,11 +1,12 @@
-"""유닛 분포 시각화 — 이번 검사 안의 유닛만, 결정론 SVG.
+"""유닛 분포 — 라인 폭 × 원자 수 산점도, 결정론 SVG.
 
-3번 매트릭스의 시각 짝. 유닛 하나가 점 하나: x는 리포트가 이미 쓰는
-문서 순서, y는 종류 부호가 붙은 원자 수(추가·변경은 위, 삭제는 아래),
-색은 인벤토리가 그 유닛을 놓은 첫 축, 금색 테두리는 verifier의 FIX
-블록이 지목한 유닛. 밴드는 이번 검사 자체의 |원자| 평균+2σ — 과거
-데이터도 기준선도 없다. 산문에 u- 해시는 못 온다: 툴팁과 해석 문장은
-파일 · 섹션 · 축으로만 말한다.
+3번 매트릭스의 시각 짝. 유닛 하나가 점 하나: x는 07 excerpt가 잰 라인
+폭(변경이 실제로 걸친 범위), y는 원자 수 — 두 축 모두 실측값이라 점의
+위치가 곧 변경의 성격이다. 좌하단 뭉침은 국소 수정, 대각선(원자=폭)
+근처는 밀도 높은 재작성, 우상단은 넓은 범위의 대형 수술. 모양은 연산
+(추가▲/삭제▼/변경●), 색은 인벤토리의 첫 축, 금 테두리는 verifier의
+FIX 지목, 겹침은 반투명이라 뭉칠수록 진해진다. 산문에 u- 해시는 못
+온다: 툴팁·라벨·해석 문장은 파일 · 섹션 · 축으로만 말한다.
 """
 
 from __future__ import annotations
@@ -30,6 +31,8 @@ _AXIS_COLORS: dict[str, str] = {
     classes.UNCLASSIFIED: "#8c8c8c",
 }
 _FIX_STROKE = "#b98a00"
+_WIDE_SPAN = 8  # 넓은 범위 — 폭 이상
+_BIG_ATOMS = 5  # 대형 수술 — 원자 이상
 
 
 @dataclass(frozen=True)
@@ -37,9 +40,9 @@ class ScatterRow:
     """One unit as a dot — prose only, no ids."""
 
     label: str  # "setup.md § 개요 · 표현 · 원자 3"
-    x: int  # document order, 0-based
-    y: int  # signed atom count: + added/changed, − removed
-    changed_atoms: int
+    short: str  # "개요" — chart label
+    x: int  # 라인 폭
+    y: int  # 원자 수
     axis: str
     kind: str
     fixed: bool
@@ -66,7 +69,7 @@ def _axis_of(unit: CollectedUnit) -> str:
 def scatter_rows(
     collect: Collect, units: tuple[CollectedUnit, ...]
 ) -> tuple[ScatterRow, ...]:
-    """Build the dots — x keeps the report's own document order."""
+    """Build the dots — x is the measured line span, y the atom count."""
 
     label_of = {
         entry.file_id: entry.path.rpartition("/")[2] or entry.path
@@ -74,27 +77,24 @@ def scatter_rows(
     }
     fixes = frozenset(collect.fix_targets)
     rows: list[ScatterRow] = []
-    for index, unit in enumerate(units):
+    for unit in units:
         axis = _axis_of(unit)
-        atoms = _atoms(unit)
+        atoms = max(1, _atoms(unit))  # 유닛 자체가 최소 하나의 변경이다
         file_label = label_of.get(unit.file, unit.file)
         # excerpt.section은 'auth.md § 개요'처럼 파일명을 이미 물고 온다 —
         # § 유무로만 판단한다.
         where = unit.section if "§" in unit.section else f"{file_label} § {unit.section}"
+        short = unit.section.split("§")[-1].strip() if "§" in unit.section else unit.section
         fixed = unit.unit_id in fixes
         rows.append(
             ScatterRow(
                 label=(
-                    f"{where} · {axis} · 원자 {atoms}"
+                    f"{where} · {axis} · 원자 {atoms} · 폭 {unit.span}"
                     + (" · fix됨" if fixed else "")
                 ),
-                x=index,
-                y=(-1 if unit.kind == "removed" else 1) * atoms,
-                changed_atoms=(
-                    len(unit.changed) + len(unit.textual)
-                    if unit.kind == "changed"
-                    else 0
-                ),
+                short=short,
+                x=unit.span,
+                y=atoms,
                 axis=axis,
                 kind=unit.kind,
                 fixed=fixed,
@@ -104,149 +104,162 @@ def scatter_rows(
     return tuple(rows)
 
 
-def band_of(rows: tuple[ScatterRow, ...]) -> tuple[float, float] | None:
-    """(mean, mean+2σ) over this review's |y| — None under five units.
-
-    Population σ (÷n): the band describes this run, it does not estimate
-    any larger population. Five is where the number stops meaning anything.
-    """
-
-    if len(rows) < 5:
-        return None
-    magnitudes = [abs(row.y) for row in rows]
-    mean = sum(magnitudes) / len(magnitudes)
-    variance = sum((m - mean) ** 2 for m in magnitudes) / len(magnitudes)
-    return (mean, mean + 2 * math.sqrt(variance))
+def _ticks(maxv: int) -> list[int]:
+    step = max(1, math.ceil(maxv / 6))
+    return list(range(0, maxv + 1, step))
 
 
-def dot_plot(
-    rows: tuple[ScatterRow, ...],
-    band: tuple[float, float] | None,
-    *,
-    width: int = 760,
-) -> str:
+def _jitter(index: int, salt: int) -> float:
+    """Deterministic ±0.2 spread — stacked coordinates become a cloud."""
+
+    return (((index * 37 + salt * 53) % 11) - 5) / 5 * 0.2
+
+
+def dot_plot(rows: tuple[ScatterRow, ...], *, width: int = 760) -> str:
     """One self-contained SVG — inline colors, native <title> tooltips."""
 
     if not rows:
         return ""
-    compact = len(rows) < 10
-    plot_h = 150 if compact else 230
-    left, right, top, axis_h = 46, 18, 14, 44
+    left, right, top, axis_h = 46, 110, 14, 46
+    plot_h = 230
     height = top + plot_h + axis_h
     plot_w = width - left - right
-    col = plot_w / len(rows)
+    x_max = max(max(r.x for r in rows), 1)
+    y_max = max(max(r.y for r in rows), 1)
 
-    up = max(max((r.y for r in rows if r.y > 0), default=0), 1)
-    down = max(max((-r.y for r in rows if r.y < 0), default=0), 1)
-    zero = top + plot_h * (up / (up + down))
+    def x_of(v: float) -> float:
+        return left + (max(0.0, v) / x_max) * plot_w
 
-    def y_of(value: float) -> float:
-        v = max(float(-down), min(float(up), value))
-        if v >= 0:
-            return zero - (v / up) * (zero - top)
-        return zero + (-v / down) * (top + plot_h - zero)
+    def y_of(v: float) -> float:
+        return top + plot_h - (max(0.0, v) / y_max) * plot_h
 
     parts: list[str] = [
         f'<svg class="scatter" viewBox="0 0 {width} {height}" role="img" '
-        'aria-label="유닛 분포 — 가로 문서 순서, 세로 원자 수">'
+        'aria-label="유닛 분포 — 가로 라인 폭, 세로 원자 수">'
     ]
-    if band is not None:
-        y_top, y_bottom = y_of(band[1]), y_of(-band[1])
-        parts.append(
-            f'<rect class="band" x="{left}" y="{y_top:.1f}" '
-            f'width="{plot_w}" height="{max(y_bottom - y_top, 1.0):.1f}" '
-            'fill="#8c8c8c" fill-opacity="0.08"/>'
-        )
 
-    has_pos = any(r.y > 0 for r in rows)
-    has_neg = any(r.y < 0 for r in rows)
-    grid = ""
-    if has_pos:
-        step = max(1, math.ceil(up / 6))
-        for v in range(0, up + 1, step):
-            yy = y_of(v)
-            grid += (
-                f'<line x1="{left}" x2="{left + plot_w}" y1="{yy:.1f}" '
-                f'y2="{yy:.1f}" stroke="#e2e6ea"/>'
-                f'<text x="{left - 6}" y="{yy + 3.5:.1f}" text-anchor="end">{v}</text>'
-            )
-    if has_neg:
-        step = max(1, math.ceil(down / 6))
-        for v in range(step, down + 1, step):
-            yy = y_of(-v)
-            grid += (
-                f'<line x1="{left}" x2="{left + plot_w}" y1="{yy:.1f}" '
-                f'y2="{yy:.1f}" stroke="#e2e6ea"/>'
-                f'<text x="{left - 6}" y="{yy + 3.5:.1f}" text-anchor="end">-{v}</text>'
-            )
-    parts.append(grid)
+    # grid + ticks
+    for v in _ticks(x_max):
+        xx = x_of(v)
+        parts.append(
+            f'<line x1="{xx:.1f}" x2="{xx:.1f}" y1="{top}" y2="{top + plot_h}" '
+            'stroke="#eef1f4"/>'
+            f'<text x="{xx:.1f}" y="{top + plot_h + 14:.1f}" text-anchor="middle">{v}</text>'
+        )
+    for v in _ticks(y_max):
+        yy = y_of(v)
+        parts.append(
+            f'<line x1="{left}" x2="{left + plot_w}" y1="{yy:.1f}" '
+            f'y2="{yy:.1f}" stroke="#eef1f4"/>'
+            f'<text x="{left - 6}" y="{yy + 3.5:.1f}" text-anchor="end">{v}</text>'
+        )
     parts.append(
-        f'<line x1="{left}" x2="{left + plot_w}" y1="{zero:.1f}" '
-        f'y2="{zero:.1f}" stroke="#9aa4ad" stroke-width="1.2"/>'
+        f'<text x="{left + plot_w:.1f}" y="{top + plot_h + 30:.1f}" '
+        'text-anchor="end" class="ax">라인 폭</text>'
+        f'<text x="{left - 6}" y="{top - 4:.1f}" text-anchor="end" class="ax">원자 수</text>'
     )
 
-    # file groups — separators between runs of the same file_label
-    groups: list[list[object]] = []
-    for row in rows:
-        if groups and groups[-1][0] == row.file_label:
-            groups[-1][2] = row.x + 1
-        else:
-            groups.append([row.file_label, row.x, row.x + 1])
-    for group in groups[1:]:
-        x = left + float(group[1]) * col
+    # 대각선 — 원자=폭의 최대 밀도선, 플롯을 벗어나는 지점에서 끊는다
+    m = min(x_max, y_max)
+    if m >= 1:
         parts.append(
-            f'<line x1="{x:.1f}" x2="{x:.1f}" y1="{top}" y2="{top + plot_h}" '
-            'stroke="#d5dbe0" stroke-dasharray="3 3"/>'
-        )
-    for label, start, end in groups:
-        mid = left + (float(start) + float(end)) / 2 * col
-        parts.append(
-            f'<text x="{mid:.1f}" y="{top + plot_h + 16:.1f}" '
-            f'text-anchor="middle">{html.escape(str(label))}</text>'
+            f'<line class="diag" x1="{x_of(0):.1f}" y1="{y_of(0):.1f}" '
+            f'x2="{x_of(m):.1f}" y2="{y_of(m):.1f}" stroke="#9aa4ad" '
+            'stroke-dasharray="4 4"/>'
         )
 
-    for row in rows:
-        cx = left + (row.x + 0.5) * col
+    # dots — shape by kind, translucent so overlap darkens
+    centers: dict[int, tuple[float, float]] = {}
+    for index, row in enumerate(rows):
+        jx = min(max(0.0, row.x + _jitter(index, 1)), x_max)
+        jy = min(max(0.0, row.y + _jitter(index, 2)), y_max)
+        cx = x_of(jx)
+        cy = y_of(jy)
+        centers[index] = (cx, cy)
         color = _AXIS_COLORS.get(row.axis, _AXIS_COLORS[classes.UNCLASSIFIED])
-        radius = (
-            4.5
-            if row.changed_atoms == 0
-            else min(9.0, 4.0 + 1.1 * row.changed_atoms)
+        stroke = (
+            f'stroke="{_FIX_STROKE}" stroke-width="2"'
+            if row.fixed
+            else f'stroke="{color}" stroke-width="1"'
         )
-        if row.fixed:
-            stroke = f'stroke="{_FIX_STROKE}" stroke-width="2"'
-            cls = "dot fixed"
+        cls = "dot fixed" if row.fixed else "dot"
+        tip = f"<title>{html.escape(row.label)}</title>"
+        r = 5.0
+        if row.kind == "added":
+            pts = (
+                f"{cx:.1f},{cy - r:.1f} {cx - r:.1f},{cy + r:.1f} "
+                f"{cx + r:.1f},{cy + r:.1f}"
+            )
+            parts.append(
+                f'<polygon class="{cls}" points="{pts}" fill="{color}" '
+                f'fill-opacity="0.55" {stroke}>{tip}</polygon>'
+            )
+        elif row.kind == "removed":
+            pts = (
+                f"{cx:.1f},{cy + r:.1f} {cx - r:.1f},{cy - r:.1f} "
+                f"{cx + r:.1f},{cy - r:.1f}"
+            )
+            parts.append(
+                f'<polygon class="{cls}" points="{pts}" fill="{color}" '
+                f'fill-opacity="0.55" {stroke}>{tip}</polygon>'
+            )
         else:
-            stroke = f'stroke="{color}" stroke-width="1"'
-            cls = "dot"
-        parts.append(
-            f'<circle class="{cls}" cx="{cx:.1f}" cy="{y_of(row.y):.1f}" '
-            f'r="{radius:.1f}" fill="{color}" {stroke}>'
-            f"<title>{html.escape(row.label)}</title></circle>"
-        )
+            parts.append(
+                f'<circle class="{cls}" cx="{cx:.1f}" cy="{cy:.1f}" r="{r:.1f}" '
+                f'fill="{color}" fill-opacity="0.55" {stroke}>{tip}</circle>'
+            )
 
-    # legend — one row, bottom-left
+    # labels — the biggest three units, like the reference's named outliers
+    labelled = sorted(rows, key=lambda r: (-r.y, -r.x))[:3]
+    for row in labelled:
+        if row.y < 3:
+            continue
+        index = rows.index(row)
+        cx, cy = centers[index]
+        if cx > left + plot_w * 0.72:
+            parts.append(
+                f'<text x="{cx - 8:.1f}" y="{cy + 3.5:.1f}" text-anchor="end" '
+                f'class="lbl">{html.escape(row.short)}</text>'
+            )
+        else:
+            parts.append(
+                f'<text x="{cx + 8:.1f}" y="{cy + 3.5:.1f}" '
+                f'class="lbl">{html.escape(row.short)}</text>'
+            )
+
+    # legend — axis colors, kind shapes, fix ring, diagonal note
     lx, ly = left, height - 8
     for axis in _AXIS_ORDER:
         parts.append(
-            f'<circle cx="{lx:.1f}" cy="{ly}" r="4" fill="{_AXIS_COLORS[axis]}"/>'
+            f'<circle cx="{lx:.1f}" cy="{ly}" r="4" fill="{_AXIS_COLORS[axis]}"/>'  # noqa: E501
         )
         parts.append(
             f'<text x="{lx + 8:.1f}" y="{ly + 3.5}">{html.escape(axis)}</text>'
         )
         lx += 14 + len(axis) * 11
-    if band is not None:
-        parts.append(
-            f'<rect x="{lx:.1f}" y="{ly - 4}" width="10" height="8" '
-            'fill="#8c8c8c" fill-opacity="0.15"/>'
-        )
-        parts.append(f'<text x="{lx + 14:.1f}" y="{ly + 3.5}">평균±2σ</text>')
-        lx += 14 + 5 * 11
+    parts.append(
+        f'<polygon points="{lx},{ly - 4} {lx - 4},{ly + 4} {lx + 4},{ly + 4}" '
+        'fill="#8c8c8c"/>'
+        f'<text x="{lx + 8:.1f}" y="{ly + 3.5}">추가</text>'
+    )
+    lx += 14 + 2 * 11
+    parts.append(
+        f'<polygon points="{lx},{ly + 4} {lx - 4},{ly - 4} {lx + 4},{ly - 4}" '
+        'fill="#8c8c8c"/>'
+        f'<text x="{lx + 8:.1f}" y="{ly + 3.5}">삭제</text>'
+    )
+    lx += 14 + 2 * 11
     parts.append(
         f'<circle cx="{lx:.1f}" cy="{ly}" r="4" fill="#fff" '
         f'stroke="{_FIX_STROKE}" stroke-width="2"/>'
     )
     parts.append(f'<text x="{lx + 8:.1f}" y="{ly + 3.5}">fix</text>')
+    lx += 14 + 3 * 11
+    parts.append(
+        f'<line x1="{lx:.1f}" x2="{lx + 14:.1f}" y1="{ly}" y2="{ly}" '
+        'stroke="#9aa4ad" stroke-dasharray="4 4"/>'
+        f'<text x="{lx + 18:.1f}" y="{ly + 3.5}">최대 밀도</text>'
+    )
     parts.append("</svg>")
     return "".join(parts)
 
@@ -297,12 +310,20 @@ def heatmap(collect: Collect) -> str:
     )
 
 
-def interpret(rows: tuple[ScatterRow, ...], band: tuple[float, float] | None) -> str:
+def interpret(rows: tuple[ScatterRow, ...]) -> str:
     """The chart's one deterministic reading — counts, never judgement."""
 
     if not rows:
         return ""
     total = len(rows)
+    big = wide = 0
+    for r in rows:
+        if r.y >= _BIG_ATOMS:
+            big += 1
+        elif r.x >= _WIDE_SPAN:
+            wide += 1
+    rest = total - big - wide
+    biggest = max(rows, key=lambda r: (r.y, r.x))
     axis_part = "축 분포: " + " · ".join(
         f"{axis} {sum(1 for r in rows if r.axis == axis)}"
         for axis in _AXIS_ORDER
@@ -310,19 +331,16 @@ def interpret(rows: tuple[ScatterRow, ...], band: tuple[float, float] | None) ->
     )
     fixed_count = sum(1 for r in rows if r.fixed)
     fixed_part = f" · fix 재작성 {fixed_count}개" if fixed_count else ""
-    if band is None:
-        return f"유닛 {total}개 — 밴드는 유닛 5개 미만이라 생략. {axis_part}{fixed_part}"
-    edge = band[1]
-    inside = sum(1 for r in rows if abs(r.y) <= edge)
-    outside = total - inside
-    lead = (
-        f"유닛 {total}개 — 밴드 안 {inside}개({round(100 * inside / total)}%), "
-        f"밴드 밖 {outside}개"
+    buckets = [f"잔 변경 {rest}"]
+    if wide:
+        buckets.append(f"넓은 범위 {wide}")
+    if big:
+        buckets.append(f"대형 수술 {big}")
+    return (
+        f"유닛 {total}개 — {' · '.join(buckets)}"
+        f" · 최대: {biggest.short} (폭 {biggest.x} · 원자 {biggest.y}). "
+        f"{axis_part}{fixed_part}"
     )
-    if outside:
-        biggest = max(rows, key=lambda r: abs(r.y))
-        lead += f"(최대: {biggest.label})"
-    return f"{lead}. {axis_part}{fixed_part}"
 
 
 def distribution_html(
@@ -333,15 +351,13 @@ def distribution_html(
     rows = scatter_rows(collect, units)
     if not rows:
         return ""
-    band = band_of(rows)
     parts = ["<h3>유닛 분포</h3>"]
-    if band is None:
-        note = "밴드 없음 — 유닛 5개 미만"
-    else:
-        note = f"밴드 = 이번 검사 |원자| 평균 {band[0]:.1f} + 2σ (상한 {band[1]:.1f})"
-    parts.append(f'<p class="sub">{html.escape(note)}</p>')
-    parts.append(f"<p>{html.escape(interpret(rows, band))}</p>")
-    parts.append(f'<div class="chart">{dot_plot(rows, band)}</div>')
+    parts.append(
+        '<p class="sub">가로 = 변경이 걸친 라인 폭 · 세로 = 원자 수 · '
+        "점선 = 최대 밀도(원자=폭) · ▲ 추가 ▼ 삭제 ● 변경</p>"
+    )
+    parts.append(f"<p>{html.escape(interpret(rows))}</p>")
+    parts.append(f'<div class="chart">{dot_plot(rows)}</div>')
     heat = heatmap(collect)
     if heat:
         parts.append("<h3>파일 × 축 밀도</h3>")
