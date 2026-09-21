@@ -306,13 +306,14 @@ def test_rename_and_no_change_both_get_a_sentence() -> None:
     ]
 
 
-def test_page_has_axis_density_after_the_matrix() -> None:
-    """3번 매트릭스 뒤 파일 × 축 밀도 표 — 해시는 없다."""
+def test_page_has_only_the_matrix_in_section_three() -> None:
+    """3번은 매트릭스 표 하나로 끝난다 — 추가 차트 블록 없음."""
 
     page = _page()
     start = page.index("3. 변경 매트릭스")
     end = page.index("4. 파일별 상세")
     block = page[start:end]
-    assert "파일 × 축 밀도" in block
+    assert "파일 × 축 밀도" not in block
     assert "유닛 분포" not in block
+    assert "<svg" not in block
     assert not re.search(r"u-[0-9a-f]{8}", block)

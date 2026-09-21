@@ -31,7 +31,6 @@ from .collect import (
     CollectedFile,
     CollectedUnit,
 )
-from .density import distribution_html
 from .excerpt import Excerpts
 from .structure import Structure, TreeSection
 
@@ -371,15 +370,6 @@ td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; }
 .badge { display: inline-block; padding: .06rem .5rem; margin-left: .5rem;
          border-radius: 999px; font-size: .78rem; vertical-align: middle;
          border: 1px solid #b98a00; background: #fff7e0; color: #7a5200; }
-.chart { background: #fff; border: 1px solid #e2e6ea; border-radius: 6px;
-         padding: .5rem; margin: 1rem 0; overflow-x: auto; }
-.chart svg { display: block; width: 100%; height: auto; min-width: 480px; }
-.chart svg text { fill: #444; font-size: 11px; }
-.chart table.heat { border-collapse: collapse; margin: 0; }
-.chart table.heat th, .chart table.heat td {
-  border: 1px solid #e2e6ea; padding: .25rem .6rem; }
-.chart table.heat td.hc { text-align: center;
-  font-variant-numeric: tabular-nums; }
 .trees { display: flex; gap: 1rem; flex-wrap: wrap; }
 .trees > div { flex: 1 1 18rem; min-width: 15rem; }
 .tree { list-style: none; margin: 0; padding: 0; font-size: .84rem;
@@ -808,8 +798,7 @@ def render_report_html(
             '<h2>1. 개요</h2><div class="ov">' + body + "</div>",
             "<h2>2. 주요 변경사항</h2>" + _themes_html(collect, units),
             "<h2>3. 변경 매트릭스</h2>"
-            + _matrix_html(collect)
-            + distribution_html(collect),
+            + _matrix_html(collect),
             "<h2>4. 파일별 상세</h2>"
             + (files_html or '<p class="none">변경된 파일 없음</p>'),
             "<h2>5. 분석 상태</h2>" + _status_html(collect, units, dropped),
