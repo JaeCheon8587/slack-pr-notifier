@@ -226,12 +226,11 @@ def test_run_to_completion_reaches_exit_4(tmp_path: Path) -> None:
     assert "pipeline complete" in ledger
     html = paths["render"].read_text(encoding="utf-8")
     for heading in (
-        "1. 개요",
-        "2. 주요 변경사항",
-        "3. 변경 매트릭스",
-        "4. 파일별 상세",
-        "5. 분석 상태",
-        "6. 부록",
+        "01 / CHANGE MATRIX",
+        "02 / WHAT CHANGED",
+        "03 / ATTENTION",
+        "04 / FILE CHANGES",
+        "05 / ANALYSIS QUALITY",
     ):
         assert heading in html, heading
     assert _CLEAN in html  # the 20-analysis 설명 reached the page

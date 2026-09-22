@@ -1,0 +1,801 @@
+<!DOCTYPE html>
+
+<html lang="ko">
+<head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1" name="viewport"/>
+<title>MR !40 — Document Change Intelligence</title>
+<style>
+:root {
+  color-scheme: dark;
+  --bg: #0D1321;
+  --panel: #131C2E;
+  --panel-2: #182339;
+  --panel-3: #0F1726;
+  --border: #273653;
+  --border-strong: #35496E;
+  --text: #EDF2FA;
+  --muted: #8998AE;
+  --dim: #65758A;
+  --cyan: #62B6FF;
+  --blue: #7395FF;
+  --violet: #A78BFA;
+  --green: #61C995;
+  --red: #F07E86;
+  --amber: #F2BF62;
+  --shadow: 0 18px 60px rgba(0,0,0,.24);
+  --radius: 18px;
+}
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body {
+  margin: 0;
+  background:
+    radial-gradient(circle at 10% -10%, rgba(98,182,255,.075), transparent 28rem),
+    radial-gradient(circle at 92% 0%, rgba(167,139,250,.06), transparent 30rem),
+    var(--bg);
+  color: var(--text);
+  font: 14px/1.68 Inter, Pretendard, -apple-system, BlinkMacSystemFont, "Segoe UI", "Malgun Gothic", sans-serif;
+}
+a { color: inherit; }
+.page {
+  width: min(1180px, calc(100% - 32px));
+  margin: 0 auto;
+  padding: 28px 0 72px;
+}
+.topbar {
+  display:flex; justify-content:space-between; align-items:center;
+  gap:16px; margin-bottom:18px; color:var(--muted); font-size:12px;
+}
+.brand { font-weight:800; letter-spacing:.08em; color:#cbd5e1; }
+.toplinks { display:flex; gap:14px; flex-wrap:wrap; }
+.toplinks a { text-decoration:none; color:var(--muted); }
+.toplinks a:hover { color:var(--text); }
+
+.hero {
+  position:relative; overflow:hidden;
+  border:1px solid var(--border);
+  border-radius:24px;
+  background:linear-gradient(135deg, rgba(19,28,46,.98), rgba(12,19,33,.99));
+  padding:30px;
+  box-shadow:var(--shadow);
+}
+.hero:after {
+  content:"";
+  position:absolute; inset:auto -80px -100px auto;
+  width:320px; height:320px; border-radius:50%;
+  background:radial-gradient(circle, rgba(115,149,255,.10), transparent 68%);
+  pointer-events:none;
+}
+.hero-row { display:flex; justify-content:space-between; gap:24px; align-items:flex-start; }
+.hero h1 { margin:7px 0 6px; font-size:clamp(28px,4vw,46px); line-height:1.08; letter-spacing:-.035em; }
+.hero-sub { color:var(--muted); font-size:15px; max-width:760px; margin:0; }
+.eyebrow { color:var(--cyan); font-weight:800; font-size:11px; letter-spacing:.14em; }
+.status {
+  display:inline-flex; align-items:center; gap:8px;
+  border:1px solid rgba(255,200,87,.45);
+  background:rgba(255,200,87,.08); color:#ffd77e;
+  border-radius:999px; padding:7px 11px; font-weight:800; font-size:12px; white-space:nowrap;
+}
+.status i { width:7px; height:7px; border-radius:50%; background:var(--amber); box-shadow:0 0 18px var(--amber); }
+.hashline {
+  margin-top:22px; padding-top:18px; border-top:1px solid var(--border);
+  display:flex; gap:10px; flex-wrap:wrap; color:var(--muted); font-family:ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size:12px;
+}
+.hash { color:#c8d3df; }
+
+.stats {
+  display:grid; grid-template-columns:repeat(4, 1fr); gap:12px; margin:14px 0 34px;
+}
+.stat {
+  background:rgba(17,24,33,.82); border:1px solid var(--border); border-radius:16px;
+  padding:18px 18px 16px;
+}
+.stat .label { color:var(--muted); font-size:11px; text-transform:uppercase; letter-spacing:.11em; }
+.stat .value { margin-top:7px; font-size:30px; font-weight:850; letter-spacing:-.04em; }
+.stat .subv { color:var(--dim); font-size:12px; margin-top:2px; }
+
+.section { margin-top:42px; }
+.section-head {
+  display:flex; justify-content:space-between; align-items:end; gap:18px; margin-bottom:14px;
+}
+.section-num { color:var(--dim); font-weight:800; font-size:11px; letter-spacing:.14em; }
+.section h2 { margin:3px 0 0; font-size:20px; letter-spacing:-.02em; }
+.section-note { color:var(--muted); font-size:12px; }
+
+.key-grid { display:grid; grid-template-columns:repeat(2, 1fr); gap:12px; }
+.key-card {
+  position:relative; overflow:hidden;
+  border:1px solid var(--border); background:var(--panel); border-radius:16px; padding:18px;
+}
+.key-card strong { display:block; font-size:15px; margin:7px 0 5px; }
+.key-card p { margin:0; color:var(--muted); }
+.k-tag { font-size:10px; letter-spacing:.1em; font-weight:850; color:var(--blue); }
+.delta {
+  display:inline-flex; align-items:center; gap:8px; margin-top:13px;
+  font-family:ui-monospace, SFMono-Regular, Consolas, monospace;
+  background:var(--panel-3); border:1px solid var(--border); border-radius:10px; padding:7px 10px;
+}
+.delta .old { color:#ff9aa6; }
+.delta .new { color:#8fe4aa; }
+.delta .arrow { color:var(--dim); }
+
+.alert-grid { display:grid; grid-template-columns:1.2fr .8fr; gap:12px; }
+.alert {
+  border:1px solid rgba(255,200,87,.30);
+  background:linear-gradient(180deg, rgba(255,200,87,.065), rgba(255,200,87,.025));
+  border-radius:16px; padding:18px;
+}
+.alert.secondary {
+  border-color:rgba(122,162,255,.25);
+  background:linear-gradient(180deg, rgba(122,162,255,.055), rgba(122,162,255,.018));
+}
+.alert-top { display:flex; gap:10px; align-items:center; margin-bottom:8px; }
+.alert-icon {
+  display:grid; place-items:center; width:28px; height:28px; border-radius:9px;
+  background:rgba(255,200,87,.12); color:var(--amber); font-weight:900;
+}
+.alert.secondary .alert-icon { background:rgba(122,162,255,.12); color:var(--blue); }
+.alert h3 { margin:0; font-size:14px; }
+.alert p { margin:0; color:var(--muted); }
+.compare {
+  margin-top:13px; display:grid; grid-template-columns:1fr 32px 1fr; align-items:center; gap:8px;
+}
+.compare > div { border:1px solid var(--border); border-radius:10px; padding:10px; background:var(--panel-3); }
+.compare .c-label { display:block; color:var(--dim); font-size:10px; letter-spacing:.08em; }
+.compare b { font-family:ui-monospace, SFMono-Regular, Consolas, monospace; }
+.compare .mid { border:0; background:none; color:var(--amber); text-align:center; padding:0; }
+
+.file-list { display:grid; gap:18px; }
+.file-card {
+  border:1px solid var(--border);
+  background:linear-gradient(180deg, rgba(17,24,33,.96), rgba(14,20,28,.96));
+  border-radius:20px; overflow:hidden; box-shadow:0 12px 32px rgba(0,0,0,.15);
+}
+.file-head {
+  display:flex; justify-content:space-between; gap:16px; align-items:flex-start; padding:22px 22px 14px;
+}
+.file-head h3 { margin:4px 0 2px; font-size:18px; letter-spacing:-.02em; font-family:ui-monospace, SFMono-Regular, Consolas, monospace; }
+.pathline { margin:0; color:var(--dim); font-size:11px; }
+.file-count {
+  min-width:82px; text-align:right; font-size:26px; line-height:1; font-weight:850;
+}
+.file-count span { display:block; margin-top:5px; color:var(--muted); font-size:10px; text-transform:uppercase; letter-spacing:.12em; }
+.file-summary {
+  margin:0; padding:0 22px 20px; color:#aab6c3;
+}
+.structure-card {
+  margin:0 22px 16px; border:1px solid var(--border); border-radius:14px; background:rgba(15,21,29,.72);
+}
+.structure-card summary {
+  cursor:pointer; list-style:none; display:flex; justify-content:space-between; gap:12px;
+  padding:13px 15px; font-weight:750;
+}
+.structure-card summary::-webkit-details-marker { display:none; }
+.structure-body { border-top:1px solid var(--border); padding:14px; }
+.muted { color:var(--muted); font-weight:500; font-size:11px; }
+
+.change-stack { border-top:1px solid var(--border); }
+.change-card { border-bottom:1px solid var(--border); }
+.change-card:last-child { border-bottom:0; }
+.change-card > summary {
+  cursor:pointer; list-style:none;
+  display:flex; justify-content:space-between; gap:18px; align-items:center;
+  padding:16px 22px;
+  transition:background .18s ease;
+}
+.change-card > summary:hover { background:rgba(255,255,255,.018); }
+.change-card > summary::-webkit-details-marker { display:none; }
+.change-kicker { color:var(--dim); font-size:10px; letter-spacing:.12em; font-weight:800; }
+.change-title { margin-top:3px; font-weight:760; }
+.change-tags { display:flex; gap:6px; flex-wrap:wrap; justify-content:flex-end; }
+.pill {
+  display:inline-flex; align-items:center; padding:4px 8px; border-radius:999px;
+  border:1px solid var(--border-strong); background:var(--panel-2); color:#c7d1dc;
+  font-size:10px; font-weight:800;
+}
+.pill.tag-구조 { color:#d4c4ff; border-color:rgba(182,156,255,.35); background:rgba(182,156,255,.075); }
+.pill.tag-의미, .pill[class*="의미"] { color:#9ddfff; border-color:rgba(107,213,255,.32); background:rgba(107,213,255,.07); }
+.pill.tag-표현, .pill[class*="표현"] { color:#c6ced8; }
+.pill.tag-부분 { color:#ffd786; border-color:rgba(255,200,87,.28); background:rgba(255,200,87,.055); }
+
+.change-body { padding:0 22px 22px; }
+.diff-grid { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+.diff-grid.single { grid-template-columns:1fr; }
+.diff-pane {
+  min-width:0; border:1px solid var(--border); border-radius:13px; overflow:hidden; background:var(--panel-3);
+}
+.diff-label {
+  padding:8px 11px; font-size:10px; font-weight:900; letter-spacing:.11em; border-bottom:1px solid var(--border);
+}
+.before-pane .diff-label { color:#ff9ba7; background:rgba(255,123,139,.055); }
+.after-pane .diff-label { color:#8fe4aa; background:rgba(100,217,139,.055); }
+pre {
+  margin:0; padding:13px; overflow:auto; white-space:pre-wrap; overflow-wrap:anywhere;
+  color:#cbd6e2; font:12px/1.6 ui-monospace, SFMono-Regular, Consolas, monospace;
+}
+.value-box {
+  margin-top:10px; border:1px solid var(--border); border-radius:12px; padding:11px 13px; background:rgba(122,162,255,.035);
+}
+.value-label { color:var(--blue); font-size:10px; letter-spacing:.1em; font-weight:900; text-transform:uppercase; }
+.value-box ul { margin:6px 0 0 18px; padding:0; color:#b9c5d2; }
+.explain { margin-top:12px; }
+.explain-label { color:var(--dim); font-size:10px; letter-spacing:.1em; font-weight:900; }
+.explain p { margin:5px 0 0; color:#aebac7; }
+
+.trees { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+.trees h5 { margin:0 0 8px; color:var(--muted); font-size:10px; letter-spacing:.11em; text-transform:uppercase; }
+.tree { list-style:none; margin:0; padding:10px 12px; border:1px solid var(--border); border-radius:11px; background:var(--panel-3); font:11px/1.7 ui-monospace, SFMono-Regular, Consolas, monospace; }
+.tree li { color:#b9c4cf; }
+.d2 { padding-left:12px; } .d3 { padding-left:24px; } .d4 { padding-left:36px; }
+.notes { margin:12px 0 0; padding-left:18px; color:var(--muted); }
+
+.data-card {
+  border:1px solid var(--border); background:var(--panel); border-radius:16px; overflow:hidden;
+}
+.wrap { overflow:auto; }
+table { border-collapse:collapse; width:100%; min-width:680px; font-size:12px; }
+th, td { border-bottom:1px solid var(--border); padding:11px 12px; text-align:left; }
+th { color:#9caaba; background:rgba(255,255,255,.018); font-weight:750; }
+td { color:#cbd5df; }
+tr:last-child td { border-bottom:0; }
+td.n, th.n { text-align:right; font-variant-numeric:tabular-nums; }
+
+.analysis-wrap {
+  display:grid; grid-template-columns:1.15fr .85fr; gap:12px;
+}
+.analysis-panel, .appendix-panel {
+  border:1px solid var(--border); background:var(--panel); border-radius:16px; padding:18px;
+}
+.analysis-panel .badge {
+  display:inline-flex; border:1px solid rgba(255,200,87,.3); color:#ffd77e;
+  background:rgba(255,200,87,.06); border-radius:999px; padding:3px 8px; margin-left:8px; font-size:10px; font-weight:850;
+}
+.analysis-panel h4, .appendix-panel h4 { margin:18px 0 8px; font-size:12px; color:#d8e0e8; }
+.analysis-panel h4:first-child, .appendix-panel h4:first-child { margin-top:0; }
+.analysis-panel p, .analysis-panel li, .appendix-panel p, .appendix-panel li { color:var(--muted); }
+.plain { padding-left:18px; }
+.none { color:var(--dim) !important; }
+.trustbar {
+  margin-top:14px; height:8px; background:#0d131b; border:1px solid var(--border);
+  border-radius:999px; overflow:hidden;
+}
+.trustbar > span { display:block; width:88%; height:100%; background:linear-gradient(90deg, #7aa2ff, #6bd5ff); }
+
+footer {
+  margin-top:44px; padding-top:20px; border-top:1px solid var(--border); color:var(--dim);
+  display:flex; justify-content:space-between; gap:16px; flex-wrap:wrap; font-size:11px;
+}
+
+@media (max-width: 820px) {
+  .stats, .key-grid, .alert-grid, .analysis-wrap { grid-template-columns:1fr 1fr; }
+  .diff-grid, .trees { grid-template-columns:1fr; }
+  .hero-row { flex-direction:column; }
+}
+@media (max-width: 560px) {
+  .page { width:min(100% - 20px, 1180px); padding-top:10px; }
+  .hero { padding:22px; border-radius:18px; }
+  .stats, .key-grid, .alert-grid, .analysis-wrap { grid-template-columns:1fr; }
+  .change-card > summary, .file-head { flex-direction:column; align-items:flex-start; }
+  .change-tags { justify-content:flex-start; }
+  .file-count { text-align:left; }
+}
+</style>
+</head>
+<body>
+<main class="page">
+<div class="topbar">
+<div class="brand">MRDOC / CHANGE INTELLIGENCE</div>
+<nav class="toplinks"><a href="#matrix">Matrix</a><a href="#changes">Changes</a><a href="#files">Files</a><a href="#quality">Quality</a></nav>
+</div>
+<section class="hero">
+<div class="hero-row">
+<div>
+<div class="eyebrow">DOCUMENT CHANGE REPORT</div>
+<h1>MR !40</h1>
+<p class="hero-sub">LLM WIKI / docu-automatic 문서 변경을 구조 · 의미 · 표현 단위로 분석한 리포트</p>
+</div>
+<div class="status"><i></i> PIPELINE WARNING</div>
+</div>
+<div class="hashline">
+<span>base <span class="hash">094a03f0</span></span>
+<span>→</span>
+<span>head <span class="hash">3f7cd7bb</span></span>
+<span>·</span>
+<span>LLM WIKI/10-hub/packages/docu-automatic/docs</span>
+</div>
+</section>
+<section aria-label="MR summary" class="stats">
+<div class="stat"><div class="label">Files</div><div class="value">2</div><div class="subv">affected documents</div></div>
+<div class="stat"><div class="label">Units</div><div class="value">10</div><div class="subv">analyzed changes</div></div>
+<div class="stat"><div class="label">Semantic</div><div class="value">9</div><div class="subv">5 value-level changes</div></div>
+<div class="stat"><div class="label">Analysis</div><div class="value" style="font-size:24px;color:#ffd77e">WARN</div><div class="subv">theme drop 3</div></div>
+</section><section class="section" id="matrix">
+<div class="section-head">
+<div><div class="section-num">01 / CHANGE MATRIX</div><h2>변경 매트릭스</h2></div>
+<div class="section-note">상세를 읽기 전에, MR 전체 변화의 분포부터 확인</div>
+</div>
+<div class="data-card"><div class="wrap"><table><thead><tr><th rowspan="2">파일</th><th colspan="3">구조</th><th colspan="3">의미</th><th colspan="3">표현</th></tr><tr><th class="n">추가</th><th class="n">삭제</th><th class="n">변경</th><th class="n">추가</th><th class="n">삭제</th><th class="n">변경</th><th class="n">추가</th><th class="n">삭제</th><th class="n">변경</th></tr></thead><tbody><tr><td title="LLM WIKI/10-hub/packages/docu-automatic/docs/00.README.md">00.README.md</td><td class="n">1</td><td class="n">0</td><td class="n">0</td><td class="n">1</td><td class="n">1</td><td class="n">2</td><td class="n">0</td><td class="n">0</td><td class="n">1</td></tr><tr><td title="LLM WIKI/10-hub/packages/docu-automatic/docs/03.SETUP-GUIDE.md">03.SETUP-GUIDE.md</td><td class="n">1</td><td class="n">0</td><td class="n">1</td><td class="n">0</td><td class="n">2</td><td class="n">3</td><td class="n">0</td><td class="n">0</td><td class="n">1</td></tr></tbody></table></div></div>
+</section><section class="section" id="changes">
+<div class="section-head">
+<div><div class="section-num">02 / WHAT CHANGED</div><h2>핵심 변경사항</h2></div>
+<div class="section-note">Diff보다 먼저, 사람이 알아야 할 변화부터</div>
+</div>
+<div class="key-grid">
+<div class="key-card"><div class="k-tag">RUNTIME REQUIREMENT</div><strong>README Python 최소 요구 버전 변경</strong><p>실행 로거·대시보드 hook의 사전 요구사항 값이 변경됨.</p><div class="delta"><span class="old">3.11+</span><span class="arrow">→</span><span class="new">3.10+</span></div></div>
+<div class="key-card"><div class="k-tag">INSTALLATION</div><strong>설치 가이드 Python 패키지 상향</strong><p>Windows winget 및 macOS Homebrew 예제가 3.13 기준으로 변경됨.</p><div class="delta"><span class="old">3.11</span><span class="arrow">→</span><span class="new">3.13</span></div></div>
+<div class="key-card"><div class="k-tag">POLICY</div><strong>docu-writer 재시도 상한 변경</strong><p>검증 실패 시 재호출 가능한 최대 횟수가 늘어남.</p><div class="delta"><span class="old">2회</span><span class="arrow">→</span><span class="new">3회</span></div></div>
+<div class="key-card"><div class="k-tag">DOCUMENT STRUCTURE</div><strong>운영 원칙 · 제거 절 신규 추가</strong><p>README에 운영 원칙이, Setup Guide에 제거 절이 새로 추가됨.</p><div class="delta"><span class="new">+ 2 new sections</span></div></div>
+</div>
+</section><section class="section">
+<div class="section-head">
+<div><div class="section-num">03 / ATTENTION</div><h2>확인이 필요한 항목</h2></div>
+<div class="section-note">MR 내용 이슈와 분석 파이프라인 상태를 분리</div>
+</div>
+<div class="alert-grid">
+<div class="alert">
+<div class="alert-top"><div class="alert-icon">!</div><h3>재시도 정책 표기가 서로 다름</h3></div>
+<p>정책 표에서는 3회로 변경됐지만, 같은 절의 실행 흐름 도식에는 기존 “최대 2회” 표기가 남아 있음.</p>
+<div class="compare">
+<div><span class="c-label">POLICY TABLE</span><b>최대 3회</b></div>
+<div class="mid">≠</div>
+<div><span class="c-label">FLOW DIAGRAM</span><b>최대 2회</b></div>
+</div>
+</div>
+<div class="alert secondary">
+<div class="alert-top"><div class="alert-icon">i</div><h3>Theme aggregation incomplete</h3></div>
+<p>원자 단위 변경 분석은 완료됐지만 상위 주제 묶음에서 <b>주제 드롭 3</b>이 발생하여 파이프라인 상태가 WARNING임.</p>
+</div>
+</div>
+</section><section class="section" id="files">
+<div class="section-head">
+<div><div class="section-num">04 / FILE CHANGES</div><h2>파일별 상세</h2></div>
+<div class="section-note">각 변경 카드를 펼치면 Before / After와 설명을 확인할 수 있음</div>
+</div>
+<div class="file-list">
+<article class="file-card" id="file-1">
+<header class="file-head">
+<div>
+<div class="eyebrow">FILE 01</div>
+<h3>LLM WIKI/10-hub/packages/docu-automatic/docs/00.README.md</h3>
+<p class="pathline">LLM WIKI/10-hub/packages/docu-automatic/docs · 유닛 5</p>
+</div>
+<div class="file-count">5<span>changes</span></div>
+</header>
+<p class="file-summary">구조 변화가 있다 — 파일 말미에 운영 원칙 절이 추가되고, 문서 맵 표에 L4 행이 추가되며, 1차 스코프 테마 절의 theme-definitions 링크 인용줄이 삭제되었다. 값 변경 2건: 사전 요구사항의 Python 버전 3.11+ → 3.10+(3-10행), 정책 표의 재시도 상한 2회 → 3회(아키텍처 요약). 표현 변경 1건: 도입 문장의 어순·표현. 추가 2건·삭제 1건이다.</p>
+<details class="structure-card">
+<summary>
+<span>Document structure change</span>
+<span class="muted">before / after outline</span>
+</summary>
+<div class="structure-body"><div class="trees"><div><h5>before</h5><ul class="tree"><li class="d1">문서 자동화 파이프라인 (docu-automatic)</li><li class="d2">전체 흐름</li><li class="d2">문서 맵</li><li class="d2">아키텍처 요약</li><li class="d2">1차 스코프 테마</li><li class="d2">산출물 현황</li><li class="d3">오케스트레이터 (scripts/)</li><li class="d3">에이전트 (agents/)</li><li class="d3">스킬 (skills/)</li></ul></div><div><h5>after</h5><ul class="tree"><li class="d1">문서 자동화 파이프라인 (docu-automatic)</li><li class="d2">전체 흐름</li><li class="d2">문서 맵</li><li class="d2">아키텍처 요약</li><li class="d2">1차 스코프 테마</li><li class="d2">산출물 현황</li><li class="d3">오케스트레이터 (scripts/)</li><li class="d3">에이전트 (agents/)</li><li class="d3">스킬 (skills/)</li><li class="d2">운영 원칙</li></ul></div></div><ul class="notes"><li>§운영 원칙 절이 §산출물 현황 뒤에 추가되었다</li></ul></div>
+</details>
+<div class="change-stack">
+<details class="change-card" open="">
+<summary>
+<div class="change-summary-main">
+<div class="change-kicker">CHANGE 01</div>
+<div class="change-title">00.README.md § 운영 원칙</div>
+</div>
+<div class="change-tags"><span class="pill tag-구조">[구조]</span></div>
+</summary>
+<div class="change-body">
+<div class="diff-grid single">
+<div class="diff-pane after-pane">
+<div class="diff-label">AFTER</div>
+<pre>## 운영 원칙
+
+- 문서는 항상 생성 시점의 코드와 동기화한다 — 오래된 문서는 없는 문서보다 나쁘다.
+- 근거 없는 문장은 허용하지 않는다. evidence 스키마를 채우지 못하면 쓰지 않는다.
+- 판단이 애매하면 WARNING으로 남기고 사람에게 넘긴다.</pre>
+</div></div>
+<div class="explain"><div class="explain-label">WHAT CHANGED</div><p>설명 — 산출물 현황의 스킬 표 다음인 파일 말미(118~122행)에 "## 운영 원칙" 절이 새로 추가되었다. 문서를 생성 시점의 코드와 맞춘다는 항목, evidence 스키마를 채우지 못하는 문장을 쓰지 않는다는 항목, 판단이 애매하면 WARNING으로 남겨 사람에게 넘긴다는 항목의 세 가지를 다룬다. 기존 절을 대체하지 않는 신규 주제다.</p></div>
+</div>
+</details>
+<details class="change-card">
+<summary>
+<div class="change-summary-main">
+<div class="change-kicker">CHANGE 02</div>
+<div class="change-title">00.README.md § 문서 맵</div>
+</div>
+<div class="change-tags"><span class="pill tag-의미">[의미]</span><span class="pill tag-부분">부분</span></div>
+</summary>
+<div class="change-body">
+<div class="diff-grid single">
+<div class="diff-pane after-pane">
+<div class="diff-label">AFTER</div>
+<pre>| L0 | **00.README.md** (현재) | 엔트리포인트 — 30초 파악 |
+| L1 | [설계 결정사항](01.설계-결정사항.md) | WHY + WHAT — 설계 결정과 근거 |
+| L2 | [아키텍처](02.아키텍처.md) | HOW (상세) — 에이전트/스킬 구현 |
+| L3 | [셋업 가이드](03.SETUP-GUIDE.md) | HOW (실행) — 플러그인 설치/운영 |
+| L4 | [reports/](../reports/) | 벤치마크·감사 기록 (참고) |</pre>
+</div></div>
+<div class="value-box"><div class="value-label">Detected values</div><ul><li>추가된 값: ../reports/</li></ul></div>
+<div class="explain"><div class="explain-label">WHAT CHANGED</div><p>설명 — 문서 맵 표의 L3 셋업 가이드 행 다음에 L4 행이 추가되었다. 새 행은 [reports/](../reports/) 링크와 "벤치마크·감사 기록 (참고)" 설명을 담고 있다. 기존 L0~L3 행은 그대로다.</p></div>
+</div>
+</details>
+<details class="change-card">
+<summary>
+<div class="change-summary-main">
+<div class="change-kicker">CHANGE 03</div>
+<div class="change-title">00.README.md § 1차 스코프 테마</div>
+</div>
+<div class="change-tags"><span class="pill tag-의미">[의미]</span><span class="pill tag-부분">부분</span></div>
+</summary>
+<div class="change-body">
+<div class="diff-grid single">
+<div class="diff-pane before-pane">
+<div class="diff-label">BEFORE</div>
+<pre>## 1차 스코프 테마
+
+| 테마 ID | 테마명 | 출력 경로 |
+…
+| getting-started/requirements | 시스템 요구사항 | `docs/getting-started/requirements.md` |
+| architecture/overview | 제품 아키텍처 | `docs/architecture/overview.md` |
+| architecture/component-diagram | 컴포넌트 다이어그램 | `docs/architecture/component-diagram.md` |
+
+&gt; 테마 정의 상세: [theme-definitions/SKILL.md](../skills/theme-definitions/SKILL.md)</pre>
+</div></div>
+<div class="value-box"><div class="value-label">Detected values</div><ul><li>삭제된 값: ../skills/theme-definitions/SKILL.md</li></ul></div>
+<div class="explain"><div class="explain-label">WHAT CHANGED</div><p>설명 — 1차 스코프 테마 표 아래에 있던 "테마 정의 상세: theme-definitions/SKILL.md" 인용 링크줄이 삭제되었다. 표의 테마 행 4개는 그대로이고, 대체하는 링크나 문구가 없는 순삭제다.</p></div>
+</div>
+</details>
+<details class="change-card">
+<summary>
+<div class="change-summary-main">
+<div class="change-kicker">CHANGE 04</div>
+<div class="change-title">00.README.md § 문서 자동화 파이프라인 (docu-automatic)</div>
+</div>
+<div class="change-tags"><span class="pill tag-의미-표현">[의미 · 표현]</span></div>
+</summary>
+<div class="change-body">
+<div class="diff-grid">
+<div class="diff-pane before-pane">
+<div class="diff-label">BEFORE</div>
+<pre># 문서 자동화 파이프라인 (docu-automatic)
+
+팀 내 제품 레포의 git push 시 AI가 기술 문서(.md)를 자동 생성하는 파이프라인. 대상 언어: C++, C#, JavaScript, Python.
+
+&gt; **범위**: docu-automatic은 **.md 문서 생성까지**만 담당한다. 생성된 문서의 사이트 빌드/배포는 **별도 파이프라인**으로 구축한다 ([설계 결정사항](01.설계-결정사항.md) 미결 사항 참조).
+
+&gt; **사전 요구사항**: 실행 로거·대시보드 hook이 **Python 3.11+**를 필요로 한다(PATH에 없으면 로그·대시보드 미생성). 설치는 [셋업 가이드 §0](03.SETUP-GUIDE.md)를 참조.</pre>
+</div>
+<div class="diff-pane after-pane">
+<div class="diff-label">AFTER</div>
+<pre># 문서 자동화 파이프라인 (docu-automatic)
+
+팀 내 제품 레포에 git push가 일어나면 AI가 기술 문서(.md)를 자동으로 생성하는 파이프라인. 대상 언어: C++, C#, JavaScript, Python.
+
+&gt; **범위**: docu-automatic은 **.md 문서 생성까지**만 담당한다. 생성된 문서의 사이트 빌드/배포는 **별도 파이프라인**으로 구축한다 ([설계 결정사항](01.설계-결정사항.md) 미결 사항 참조).
+
+&gt; **사전 요구사항**: 실행 로거·대시보드 hook이 **Python 3.10+**를 필요로 한다(PATH에 없으면 로그·대시보드 미생성). 설치는 [셋업 가이드 §0](03.SETUP-GUIDE.md)를 참조.</pre>
+</div></div>
+<div class="value-box"><div class="value-label">Detected values</div><ul><li>version 3.11+ → 3.10+</li><li>표현 재작성: 팀 내 제품 레포의 git push 시 AI가 기술 문서(.md)를 자동 생성하는 파이프라인. 대상 언어: C++, C#, JavaScript, Python. → 팀 내 제품 레포에 git push가 일어나면 AI가 기술 문서(.md)를 자동으로 생성하는 파이프라인. 대상 언어: C++, C#, JavaScript, Python.</li></ul></div>
+<div class="explain"><div class="explain-label">WHAT CHANGED</div><p>설명 — 도입 문장이 "레포의 git push 시 AI가 기술 문서를 자동 생성"에서 "레포에 git push가 일어나면 AI가 기술 문서를 자동으로 생성"으로 어순과 표현이 바뀌었다. 사전 요구사항 인용줄의 Python 요구 버전이 3.11+ → 3.10+로 바뀌었다. 범위 인용줄과 대상 언어 목록은 그대로다.</p></div>
+</div>
+</details>
+<details class="change-card">
+<summary>
+<div class="change-summary-main">
+<div class="change-kicker">CHANGE 05</div>
+<div class="change-title">00.README.md § 아키텍처 요약</div>
+</div>
+<div class="change-tags"><span class="pill tag-의미">[의미]</span></div>
+</summary>
+<div class="change-body">
+<div class="diff-grid">
+<div class="diff-pane before-pane">
+<div class="diff-label">BEFORE</div>
+<pre>## 아키텍처 요약
+
+&gt; 상세: [아키텍처](02.아키텍처.md) · 설계 근거: [설계 결정사항](01.설계-결정사항.md)
+…
+| 반박 검증 | critic은 "성공 확인"이 아니라 "실패 탐색". finding은 스키마(file/line/evidence)를 채워야 성립, **빈 배열이 정답** |
+| 타이브레이크 | 1:1 대립 시 judge가 finding별로 반박 시도 — **블라인드** (대립 사실·critic 결과를 모름). 기준은 "몇 명이 찬성했나"가 아니라 **"반박이 실패했나"** |
+| 모델 정책 | **슬롯 + 프로파일 매핑** — 슬롯 고정(surveyor=frontier, writer·criticB=heavy, merge·criticA=mid, scout=light, judge=diverse), 실제 모델은 메인이 실행 시점에 매핑 |
+| Full Reset | 매 단계마다 새 에이전트 생성 (`agent()` 새 호출 = 새 세션, resume 금지) |
+| 재시도 | 검증 실패 시 docu-writer 재호출 최대 2회, 초과 시 `auto_generated_warning` 태그 |</pre>
+</div>
+<div class="diff-pane after-pane">
+<div class="diff-label">AFTER</div>
+<pre>## 아키텍처 요약
+
+&gt; 상세: [아키텍처](02.아키텍처.md) · 설계 근거: [설계 결정사항](01.설계-결정사항.md)
+…
+| 반박 검증 | critic은 "성공 확인"이 아니라 "실패 탐색". finding은 스키마(file/line/evidence)를 채워야 성립, **빈 배열이 정답** |
+| 타이브레이크 | 1:1 대립 시 judge가 finding별로 반박 시도 — **블라인드** (대립 사실·critic 결과를 모름). 기준은 "몇 명이 찬성했나"가 아니라 **"반박이 실패했나"** |
+| 모델 정책 | **슬롯 + 프로파일 매핑** — 슬롯 고정(surveyor=frontier, writer·criticB=heavy, merge·criticA=mid, scout=light, judge=diverse), 실제 모델은 메인이 실행 시점에 매핑 |
+| Full Reset | 매 단계마다 새 에이전트 생성 (`agent()` 새 호출 = 새 세션, resume 금지) |
+| 재시도 | 검증 실패 시 docu-writer 재호출 최대 3회, 초과 시 `auto_generated_warning` 태그 |</pre>
+</div></div>
+<div class="value-box"><div class="value-label">Detected values</div><ul><li>회 2 → 3</li></ul></div>
+<div class="explain"><div class="explain-label">WHAT CHANGED</div><p>설명 — 아키텍처 요약의 정책 표에서 재시도 행의 docu-writer 재호출 상한이 최대 2회 → 최대 3회로 바뀌었다. 같은 절 실행 흐름 도식의 "FAIL 재시도 (최대 2회)" 표기는 그대로 남아 있다. 나머지 정책 행과 도식은 변화가 없다.</p></div>
+</div>
+</details>
+</div>
+</article>
+<article class="file-card" id="file-2">
+<header class="file-head">
+<div>
+<div class="eyebrow">FILE 02</div>
+<h3>LLM WIKI/10-hub/packages/docu-automatic/docs/03.SETUP-GUIDE.md</h3>
+<p class="pathline">LLM WIKI/10-hub/packages/docu-automatic/docs · 유닛 5</p>
+</div>
+<div class="file-count">6<span>changes</span></div>
+</header>
+<p class="file-summary">구조 변화가 있다 — 파일 말미에 7. 제거 절이 추가되고, 설치 (Windows) 절의 Store 별칭 인용줄이 삭제되며, 6. 문제 해결 제목에 (FAQ)가 붙었다. 값 변경 3건: 검증 기준 3.12.4 → 3.12.10(0. 사전 요구사항), winget 패키지 Python.Python.3.11 → Python.Python.3.13(설치 Windows), brew 패키지 python@3.11 → python@3.13(설치 macOS/Linux). 표현 변경 2건: 0절 도입 문장의 동의어·어순, 6절 제목 표기. 추가 1건·삭제 1건이다.</p>
+<details class="structure-card">
+<summary>
+<span>Document structure change</span>
+<span class="muted">before / after outline</span>
+</summary>
+<div class="structure-body"><div class="trees"><div><h5>before</h5><ul class="tree"><li class="d1">셋업 가이드</li><li class="d2">0. 사전 요구사항 — Python (필수)</li><li class="d3">설치 (Windows)</li><li class="d3">설치 (macOS / Linux)</li><li class="d2">1. 구성요소</li><li class="d2">2. 실행</li><li class="d2">3. 설치·검증</li><li class="d2">4. 새 테마 추가</li><li class="d2">5. 파일 구조</li><li class="d2">6. 문제 해결</li></ul></div><div><h5>after</h5><ul class="tree"><li class="d1">셋업 가이드</li><li class="d2">0. 사전 요구사항 — Python (필수)</li><li class="d3">설치 (Windows)</li><li class="d3">설치 (macOS / Linux)</li><li class="d2">1. 구성요소</li><li class="d2">2. 실행</li><li class="d2">3. 설치·검증</li><li class="d2">4. 새 테마 추가</li><li class="d2">5. 파일 구조</li><li class="d2">6. 문제 해결 (FAQ)</li><li class="d2">7. 제거</li></ul></div></div><ul class="notes"><li>§6. 문제 해결 가 §6. 문제 해결 (FAQ) 로 개명되었다</li><li>§7. 제거 절이 §6. 문제 해결 (FAQ) 뒤에 추가되었다</li></ul></div>
+</details>
+<div class="change-stack">
+<details class="change-card" open="">
+<summary>
+<div class="change-summary-main">
+<div class="change-kicker">CHANGE 01</div>
+<div class="change-title">03.SETUP-GUIDE.md § 7. 제거</div>
+</div>
+<div class="change-tags"><span class="pill tag-구조">[구조]</span></div>
+</summary>
+<div class="change-body">
+<div class="diff-grid single">
+<div class="diff-pane after-pane">
+<div class="diff-label">AFTER</div>
+<pre>## 7. 제거
+
+1. 플러그인 디렉토리를 삭제한다.
+2. 생성된 execution-log.md와 .pipeline-temp 폴더는 대상 레포에서 지운다.
+3. 세션에서 /reload-plugins 로 언로드한다.</pre>
+</div></div>
+<div class="explain"><div class="explain-label">WHAT CHANGED</div><p>설명 — 6. 문제 해결 (FAQ) 절 뒤인 파일 말미에 "## 7. 제거" 절이 새로 들어갔다. 플러그인 디렉토리 삭제, 대상 레포의 execution-log.md와 .pipeline-temp 제거, /reload-plugins 언로드의 세 단계를 다루는 신규 주제다.</p></div>
+</div>
+</details>
+<details class="change-card">
+<summary>
+<div class="change-summary-main">
+<div class="change-kicker">CHANGE 02</div>
+<div class="change-title">03.SETUP-GUIDE.md § 설치 (Windows)</div>
+</div>
+<div class="change-tags"><span class="pill tag-의미">[의미]</span><span class="pill tag-부분">부분</span></div>
+</summary>
+<div class="change-body">
+<div class="diff-grid single">
+<div class="diff-pane before-pane">
+<div class="diff-label">BEFORE</div>
+<pre>### 설치 (Windows)
+
+Windows에서 `python`이 **Microsoft Store 별칭 리다이렉터**(`WindowsApps\python.exe`)에 걸려 "Python was not found"가 뜨는 경우가 많다. 실제 Python을 설치해 PATH에 올린다:
+
+```powershell
+# winget (권장)
+winget install --id Python.Python.3.11 -e
+
+# 설치 후 새 터미널에서 확인 (py 런처가 가장 신뢰도 높음)
+py --version
+python --version
+```
+
+&gt; **Store 별칭 끄기(선택)**: 설정 → 앱 → 고급 앱 설정 → 앱 실행 별칭에서 `python.exe` / `python3.exe`를 끄면 리다이렉터가 실제 Python을 가리지 않는다.</pre>
+</div></div>
+<div class="value-box"><div class="value-label">Detected values</div><ul><li>삭제된 값: python.exe, python3.exe</li></ul></div>
+<div class="explain"><div class="explain-label">WHAT CHANGED</div><p>설명 — winget 설치 명령의 패키지가 Python.Python.3.11 → Python.Python.3.13으로 바뀌었다. 코드 블록 뒤에 있던 "Store 별칭 끄기(선택)" 인용 안내(앱 실행 별칭의 python.exe·python3.exe 해제)가 삭제되었고 대체 문구는 없다. py·python 버전 확인 명령은 그대로다.</p></div>
+</div>
+</details>
+<details class="change-card">
+<summary>
+<div class="change-summary-main">
+<div class="change-kicker">CHANGE 03</div>
+<div class="change-title">03.SETUP-GUIDE.md § 0. 사전 요구사항 — Python (필수)</div>
+</div>
+<div class="change-tags"><span class="pill tag-의미-표현">[의미 · 표현]</span></div>
+</summary>
+<div class="change-body">
+<div class="diff-grid">
+<div class="diff-pane before-pane">
+<div class="diff-label">BEFORE</div>
+<pre>## 0. 사전 요구사항 — Python (필수)
+
+이 플러그인의 **실행 로거·대시보드 리포트 hook**은 Python으로 동작한다. Python이 PATH에 없으면 hook이 매 툴 호출마다 다음과 같이 실패하고, **실행 로그·대시보드가 생성되지 않는다**(파이프라인 본체는 non-blocking으로 계속 진행되지만 히스토리가 남지 않음):
+
+```
+PreToolUse:Bash hook error
+Failed ... Python was not found; run without arguments to install from the Microsoft Store ...
+```
+
+- **권장 버전: Python 3.12 이상** (검증 기준 3.12.4). 최소 3.8+에서 동작하지만, 3.8/3.9는 EOL이므로 신규 설치는 3.12+ 권장.
+- 표준 라이브러리만 사용한다 — `pip install`로 추가 설치할 패키지 없음.</pre>
+</div>
+<div class="diff-pane after-pane">
+<div class="diff-label">AFTER</div>
+<pre>## 0. 사전 요구사항 — Python (필수)
+
+이 플러그인의 **실행 로거와 대시보드 리포트 hook**은 Python으로 작성되어 있다. Python이 PATH에 없으면 hook이 매 툴 호출마다 다음과 같이 실패하고, **실행 로그·대시보드가 생성되지 않는다**(파이프라인 본체는 non-blocking으로 계속 진행되지만 히스토리가 남지 않음):
+
+```
+PreToolUse:Bash hook error
+Failed ... Python was not found; run without arguments to install from the Microsoft Store ...
+```
+
+- **권장 버전: Python 3.12 이상** (검증 기준 3.12.10). 최소 3.8+에서 동작하지만, 3.8/3.9는 EOL이므로 신규 설치는 3.12+ 권장.
+- 표준 라이브러리만 사용한다 — `pip install`로 추가 설치할 패키지 없음.</pre>
+</div></div>
+<div class="value-box"><div class="value-label">Detected values</div><ul><li>version 3.12.4 → 3.12.10</li><li>표현 재작성: 이 플러그인의 **실행 로거·대시보드 리포트 hook**은 Python으로 동작한다. Python이 PATH에 없으면 hook이 매 툴 호출마다 다음과 같이 실패하고, **실행 로그·대시보드가 생성되지 않는다**(파이프라인 본체는 non-blocking으로 계속 진행되지만 히스토리가 남지 않음): → 이 플러그인의 **실행 로거와 대시보드 리포트 hook**은 Python으로 작성되어 있다. Python이 PATH에 없으면 hook이 매 툴 호출마다 다음과 같이 실패하고, **실행 로그·대시보드가 생성되지 않는다**(파이프라인 본체는 non-blocking으로 계속 진행되지만 히스토리가 남지 않음):</li></ul></div>
+<div class="explain"><div class="explain-label">WHAT CHANGED</div><p>설명 — 첫 문장이 "실행 로거·대시보드 리포트 hook은 Python으로 동작한다"에서 "실행 로거와 대시보드 리포트 hook은 Python으로 작성되어 있다"로 동의어·어순이 바뀌었다. 권장 버전 항목의 검증 기준이 3.12.4 → 3.12.10으로 바뀌었다. hook 오류 예시 블록과 표준 라이브러리 항목은 그대로다.</p></div>
+</div>
+</details>
+<details class="change-card">
+<summary>
+<div class="change-summary-main">
+<div class="change-kicker">CHANGE 04</div>
+<div class="change-title">03.SETUP-GUIDE.md § 설치 (Windows)</div>
+</div>
+<div class="change-tags"><span class="pill tag-의미">[의미]</span></div>
+</summary>
+<div class="change-body">
+<div class="diff-grid">
+<div class="diff-pane before-pane">
+<div class="diff-label">BEFORE</div>
+<pre>### 설치 (Windows)
+
+Windows에서 `python`이 **Microsoft Store 별칭 리다이렉터**(`WindowsApps\python.exe`)에 걸려 "Python was not found"가 뜨는 경우가 많다. 실제 Python을 설치해 PATH에 올린다:
+
+```powershell
+# winget (권장)
+winget install --id Python.Python.3.11 -e
+
+# 설치 후 새 터미널에서 확인 (py 런처가 가장 신뢰도 높음)
+py --version
+python --version
+```
+
+&gt; **Store 별칭 끄기(선택)**: 설정 → 앱 → 고급 앱 설정 → 앱 실행 별칭에서 `python.exe` / `python3.exe`를 끄면 리다이렉터가 실제 Python을 가리지 않는다.</pre>
+</div>
+<div class="diff-pane after-pane">
+<div class="diff-label">AFTER</div>
+<pre>### 설치 (Windows)
+
+Windows에서 `python`이 **Microsoft Store 별칭 리다이렉터**(`WindowsApps\python.exe`)에 걸려 "Python was not found"가 뜨는 경우가 많다. 실제 Python을 설치해 PATH에 올린다:
+
+```powershell
+# winget (권장)
+winget install --id Python.Python.3.13 -e
+
+# 설치 후 새 터미널에서 확인 (py 런처가 가장 신뢰도 높음)
+py --version
+python --version
+```</pre>
+</div></div>
+<div class="value-box"><div class="value-label">Detected values</div><ul><li>Python.Python 3.11 → 3.13</li></ul></div>
+<div class="explain"><div class="explain-label">WHAT CHANGED</div><p>설명 — winget 설치 명령의 패키지가 Python.Python.3.11 → Python.Python.3.13으로 바뀌었다. 코드 블록 뒤에 있던 "Store 별칭 끄기(선택)" 인용 안내(앱 실행 별칭의 python.exe·python3.exe 해제)가 삭제되었고 대체 문구는 없다. py·python 버전 확인 명령은 그대로다.</p></div>
+</div>
+</details>
+<details class="change-card">
+<summary>
+<div class="change-summary-main">
+<div class="change-kicker">CHANGE 05</div>
+<div class="change-title">03.SETUP-GUIDE.md § 설치 (macOS / Linux)</div>
+</div>
+<div class="change-tags"><span class="pill tag-의미">[의미]</span></div>
+</summary>
+<div class="change-body">
+<div class="diff-grid">
+<div class="diff-pane before-pane">
+<div class="diff-label">BEFORE</div>
+<pre>### 설치 (macOS / Linux)
+
+```bash
+# macOS (Homebrew)
+brew install python@3.11
+
+# Ubuntu/Debian
+sudo apt update &amp;&amp; sudo apt install -y python3
+
+# 확인
+python3 --version
+```</pre>
+</div>
+<div class="diff-pane after-pane">
+<div class="diff-label">AFTER</div>
+<pre>### 설치 (macOS / Linux)
+
+```bash
+# macOS (Homebrew)
+brew install python@3.13
+
+# Ubuntu/Debian
+sudo apt update &amp;&amp; sudo apt install -y python3
+
+# 확인
+python3 --version
+```</pre>
+</div></div>
+<div class="value-box"><div class="value-label">Detected values</div><ul><li>python@ 3.11 → 3.13</li></ul></div>
+<div class="explain"><div class="explain-label">WHAT CHANGED</div><p>설명 — macOS Homebrew 설치 명령이 brew install python@3.11 → brew install python@3.13으로 바뀌었다. Ubuntu/Debian 설치 명령과 버전 확인 명령, 뒤따르는 python 심볼릭 링크 인용줄은 그대로다.</p></div>
+</div>
+</details>
+<details class="change-card">
+<summary>
+<div class="change-summary-main">
+<div class="change-kicker">CHANGE 06</div>
+<div class="change-title">03.SETUP-GUIDE.md § 6. 문제 해결 (FAQ)</div>
+</div>
+<div class="change-tags"><span class="pill tag-구조">[구조]</span></div>
+</summary>
+<div class="change-body">
+<div class="diff-grid">
+<div class="diff-pane before-pane">
+<div class="diff-label">BEFORE</div>
+<pre>## 6. 문제 해결
+
+| 증상 | 확인 |
+| --- | --- |
+| 모든 테마 SKIPPED | surveyor가 관련 영역을 못 찾음 — theme-definitions의 must_cover 키워드가 실제 코드와 맞는지, 레포가 git 추적 상태인지 확인 |
+…
+| 생성 문서가 사이트에 안 보임 | 출력 경로가 Docusaurus content 폴더와 맞는지 확인. 기존 사이트가 `docs/docs/`를 읽으면 `[out-dir]` 인수로 `docs/docs` 명시. `execution-log.md`의 `out_dir` 필드로 실제 출력 위치 확인 |
+| 특정 모델이 그 환경에 없어 실패 | 슬롯 매핑에서 해당 슬롯을 `null`(미지정)로 두면 세션 메인 모델로 폴백. `execution-log.md`의 `models:` 필드로 실제 배정 확인 |
+| Workflow가 시작 안 됨 | `claude plugin validate`로 매니페스트 검증, `/reload-plugins` 후 재시도 |
+| 외부코드가 문서에 섞임 | surveyor의 repo-map `excluded` 확인 — `.gitmodules` 인식 여부, git 추적 파일 기준 동작 여부 |</pre>
+</div>
+<div class="diff-pane after-pane">
+<div class="diff-label">AFTER</div>
+<pre>## 6. 문제 해결 (FAQ)
+
+| 증상 | 확인 |
+| --- | --- |
+| 모든 테마 SKIPPED | surveyor가 관련 영역을 못 찾음 — theme-definitions의 must_cover 키워드가 실제 코드와 맞는지, 레포가 git 추적 상태인지 확인 |
+…
+| 생성 문서가 사이트에 안 보임 | 출력 경로가 Docusaurus content 폴더와 맞는지 확인. 기존 사이트가 `docs/docs/`를 읽으면 `[out-dir]` 인수로 `docs/docs` 명시. `execution-log.md`의 `out_dir` 필드로 실제 출력 위치 확인 |
+| 특정 모델이 그 환경에 없어 실패 | 슬롯 매핑에서 해당 슬롯을 `null`(미지정)로 두면 세션 메인 모델로 폴백. `execution-log.md`의 `models:` 필드로 실제 배정 확인 |
+| Workflow가 시작 안 됨 | `claude plugin validate`로 매니페스트 검증, `/reload-plugins` 후 재시도 |
+| 외부코드가 문서에 섞임 | surveyor의 repo-map `excluded` 확인 — `.gitmodules` 인식 여부, git 추적 파일 기준 동작 여부 |</pre>
+</div></div>
+<div class="explain"><div class="explain-label">WHAT CHANGED</div><p>설명 — 절 제목이 "## 6. 문제 해결"에서 "## 6. 문제 해결 (FAQ)"로 바뀐 제목 표기 변경이다. 표의 증상·확인 행 6개는 모두 그대로다.</p></div>
+</div>
+</details>
+</div>
+</article>
+</div>
+</section><section class="section" id="quality">
+<div class="section-head">
+<div><div class="section-num">05 / ANALYSIS QUALITY</div><h2>분석 상태</h2></div>
+<div class="section-note">MR 문제와 분석 파이프라인 품질을 별도 확인</div>
+</div>
+<div class="analysis-wrap">
+<div class="analysis-panel">
+<p>파이프라인 상태<span class="badge">WARNING</span></p>
+<div class="wrap"><table><thead><tr><th>항목</th><th>값</th></tr></thead><tbody><tr><th>검증 라운드</th><td>3</td></tr><tr><th>지적 잔존</th><td>0</td></tr><tr><th>집계 불일치</th><td>0</td></tr><tr><th>설명 생성 실패 파일</th><td>0</td></tr><tr><th>분류 불확실</th><td>0</td></tr><tr><th>refs 드롭</th><td>0</td></tr><tr><th>주제 드롭</th><td>3</td></tr><tr><th>주제 생성 실패</th><td>없음</td></tr><tr><th>신뢰도 분포</th><td>high 2</td></tr></tbody></table></div>
+<h4>분류 불확실 항목</h4>
+<ul class="plain"><li>u-a0c3709c 신규 절 본문은 06-literals.md에 원자로 잡히지 않음 (prose_added 비어 있음)</li><li>u-e599f392 제목 변경과 u-99475a5e 신규 절 본문은 06-literals.md에 원자로 잡히지 않음</li></ul>
+<h4>부분 실패 목록</h4>
+<p class="none">없음</p>
+<div class="trustbar" title="high confidence distribution"><span></span></div>
+</div>
+<div class="appendix-panel">
+<div class="eyebrow">REFERENCE</div>
+<h4>집계 기준</h4>
+<p>카운트는 원자 단위로 센다 — 헤딩 변화 1건 · 값 1개 · 표현 재작성 1건 · 문장 묶음 1건이 각각 1로 센다. 추가·삭제 유닛에 병기된 값은 정보용이며 카운트에는 넣지 않는다.</p>
+<h4>분류 기준표</h4>
+<div class="wrap"><table><thead><tr><th>성질</th><th>기준</th></tr></thead><tbody><tr><td>구조</td><td>헤딩 · 파일 · 절의 존재 · 위치 · 레벨이 바뀜. 본문 명제는 무관</td></tr><tr><td>의미</td><td>명제가 달라짐 — 값 · 수치 · 조건 · 절차 순서 · 대상 · 부정/긍정 · 범위</td></tr><tr><td>표현</td><td>명제 동일 — 동의어 · 어순 · 오탈자 · 서식 · 문장 분할/병합</td></tr></tbody></table></div>
+<h4>유닛 ID · 소스 대응</h4>
+<div class="wrap"><table><thead><tr><th>unit_id</th><th>section</th><th>excerpt_ref</th></tr></thead><tbody><tr><td>u-5e912e7d</td><td>00.README.md § 문서 자동화 파이프라인 (docu-automatic)</td><td>u-5e912e7d</td></tr><tr><td>u-88d2fbff</td><td>00.README.md § 문서 맵</td><td>u-88d2fbff</td></tr><tr><td>u-f4e5e299</td><td>00.README.md § 아키텍처 요약</td><td>u-f4e5e299</td></tr><tr><td>u-3972e5b6</td><td>00.README.md § 1차 스코프 테마</td><td>u-3972e5b6</td></tr><tr><td>u-a0c3709c</td><td>00.README.md § 운영 원칙</td><td>u-a0c3709c</td></tr><tr><td>u-ed1a5c71</td><td>03.SETUP-GUIDE.md § 0. 사전 요구사항 — Python (필수)</td><td>u-ed1a5c71</td></tr><tr><td>u-d1660f66</td><td>03.SETUP-GUIDE.md § 설치 (Windows)</td><td>u-d1660f66</td></tr><tr><td>u-27faf245</td><td>03.SETUP-GUIDE.md § 설치 (macOS / Linux)</td><td>u-27faf245</td></tr><tr><td>u-e599f392</td><td>03.SETUP-GUIDE.md § 6. 문제 해결 (FAQ)</td><td>u-e599f392</td></tr><tr><td>u-99475a5e</td><td>03.SETUP-GUIDE.md § 7. 제거</td><td>u-99475a5e</td></tr></tbody></table></div>
+<h4>주제 · 유닛 대응</h4>
+<p class="none">없음</p>
+</div>
+</div>
+</section>
+
+
+
+
+
+<footer>
+<span>mrdoc — MR !40 navy-indigo / matrix-first</span>
+<span>Evidence-first · progressive disclosure · navy-indigo theme</span>
+</footer>
+</main>
+</body>
+</html>

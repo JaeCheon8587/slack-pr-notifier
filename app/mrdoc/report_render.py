@@ -4,11 +4,13 @@ The design's three render steps: (1) every block's refs must exist in
 50-collect, otherwise the block is dropped, (2) the body comes from
 50-collect — the renderer never recounts and never rewrites, (3) out come
 report.html (single file, inline CSS, zero external dependencies) and
-slack-summary.txt (section 1 verbatim, no document body).
+slack-summary.txt (the overview verbatim, no document body).
 
-The page is organised 파일(제품) → 연산 → 성질, not by level: 개요 · 주요
-변경사항 · 변경 매트릭스 · 파일별 상세(4.1 구조 · 4.2 추가 · 4.3 삭제 ·
-4.4 변경) · 분석 상태 · 부록.
+The page layout follows docs/mrdoc-report-template.html (navy-indigo /
+matrix-first): hero · stats · 01 변경 매트릭스 · 02 핵심 변경사항 ·
+03 확인이 필요한 항목 · 04 파일별 상세 · 05 분석 상태+부록. The CSS lives
+in report_style.css next to this module so the template stays a file.
+
 Nothing here judges — 판정 · 심각도 · 머지 의견이 모두 없다. Structure,
 raw text and literal values come from the tool artifacts, so a run whose
 설명 all failed still renders every one of them; only the prose says so.
@@ -21,6 +23,7 @@ from __future__ import annotations
 
 import html
 import re
+from pathlib import Path
 
 from . import classes
 from .collect import (
@@ -126,7 +129,7 @@ def gate(collect: Collect) -> tuple[tuple[CollectedUnit, ...], int]:
 
 
 # --------------------------------------------------------------------------
-# section 1 — the overview, shared with slack-summary.txt
+# the overview — shared with slack-summary.txt
 # --------------------------------------------------------------------------
 
 
@@ -161,7 +164,7 @@ def overview_lines(
     base_sha: str = "",
     head_sha: str = "",
 ) -> list[str]:
-    """Section 1 as plain text — the one source both outputs read."""
+    """The overview as plain text — the one source slack-summary reads."""
 
     units, dropped = gate(collect)
     dirs = sorted({entry.product_dir for entry in collect.file_blocks})
@@ -211,7 +214,7 @@ def render_slack_summary(
     head_sha: str = "",
     link: str = "",
 ) -> str:
-    """slack-summary.txt — section 1 and nothing else.
+    """slack-summary.txt — the overview and nothing else.
 
     The document body never reaches Slack; the overview does, 리포트 신뢰도
     included, because a partial failure disappearing quietly is this
@@ -231,7 +234,7 @@ def render_slack_summary(
 
 
 # --------------------------------------------------------------------------
-# section 3.1 — structure notes, generated from the two trees
+# structure notes, generated from the two trees
 # --------------------------------------------------------------------------
 
 
@@ -330,87 +333,322 @@ def structure_notes(structure: Structure, path: str) -> list[str]:
 
 
 # --------------------------------------------------------------------------
-# the page
+# the page — navy-indigo / matrix-first (docs/mrdoc-report-template.html)
 # --------------------------------------------------------------------------
 
-_CSS = """
-:root { color-scheme: light dark; }
-* { box-sizing: border-box; }
-body {
-  margin: 0; padding: 2rem 1.25rem 4rem;
-  font: 15px/1.65 -apple-system, "Segoe UI", "Malgun Gothic", sans-serif;
-  color: #1b1f24; background: #fbfbfa; max-width: 62rem; margin-inline: auto;
-}
-h1 { font-size: 1.5rem; margin: 0 0 .25rem; }
-h2 { font-size: 1.15rem; margin: 2.5rem 0 .75rem; padding-bottom: .3rem;
-     border-bottom: 2px solid #d7dbe0; }
-h3 { font-size: 1.02rem; margin: 1.75rem 0 .5rem; font-family: ui-monospace,
-     "Cascadia Mono", Consolas, monospace; }
-h4 { font-size: .92rem; margin: 1.25rem 0 .4rem; color: #4a5560;
-     text-transform: none; letter-spacing: .01em; }
-h5 { font-size: .78rem; margin: 0 0 .3rem; color: #6b7684; font-weight: 600; }
-p { margin: .35rem 0; }
-.sub { color: #6b7684; font-size: .85rem; margin: 0 0 .5rem; }
-.ov p { margin: .15rem 0; }
-.ov { background: #fff; border: 1px solid #e2e6ea; border-radius: 6px;
-      padding: .85rem 1rem; }
-.trust { margin-top: .6rem !important; padding-top: .5rem;
-         border-top: 1px dashed #d7dbe0; color: #4a5560; font-size: .88rem; }
-table { border-collapse: collapse; width: 100%; font-size: .88rem;
-        background: #fff; }
-th, td { border: 1px solid #e2e6ea; padding: .35rem .5rem; text-align: left; }
-th { background: #f2f4f6; font-weight: 600; }
-td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; }
-.wrap { overflow-x: auto; }
-.file { border: 1px solid #e2e6ea; border-radius: 6px; background: #fff;
-        padding: .5rem 1rem 1rem; margin: 1.25rem 0; }
-.theme { border: 1px solid #e2e6ea; border-radius: 6px; background: #fff;
-         padding: .5rem 1rem .75rem; margin: 1rem 0; }
-.theme h3 { margin: .3rem 0 .2rem; }
-.badge { display: inline-block; padding: .06rem .5rem; margin-left: .5rem;
-         border-radius: 999px; font-size: .78rem; vertical-align: middle;
-         border: 1px solid #b98a00; background: #fff7e0; color: #7a5200; }
-.trees { display: flex; gap: 1rem; flex-wrap: wrap; }
-.trees > div { flex: 1 1 18rem; min-width: 15rem; }
-.tree { list-style: none; margin: 0; padding: 0; font-size: .84rem;
-        font-family: ui-monospace, Consolas, monospace; }
-.tree li { padding: .05rem 0; color: #3d4650; }
-.d2 { padding-left: 1rem !important; }
-.d3 { padding-left: 2rem !important; }
-.d4 { padding-left: 3rem !important; }
-.d5 { padding-left: 4rem !important; }
-.d6 { padding-left: 5rem !important; }
-.notes { margin: .6rem 0 0; padding-left: 1.1rem; font-size: .88rem; }
-.unit { border-top: 1px solid #eceff2; padding: .7rem 0 .2rem; }
-.uid { font-family: ui-monospace, Consolas, monospace; font-size: .82rem;
-       color: #6b7684; }
-.tag { display: inline-block; padding: .02rem .4rem; margin-right: .35rem;
-       border: 1px solid #c7ced6; border-radius: 3px; font-size: .78rem;
-       color: #2f3a45; background: #f2f4f6; font-family: inherit; }
-.sec { color: #1b1f24; }
-pre.raw { margin: .35rem 0; padding: .55rem .7rem; overflow-x: auto;
-          background: #f7f8f9; border: 1px solid #e2e6ea; border-radius: 4px;
-          font-size: .82rem; white-space: pre; }
-.vals { margin: .35rem 0; padding-left: 1.1rem; font-size: .85rem; }
-.exp { margin: .35rem 0 0; }
-.miss { color: #8a94a0; font-size: .85rem; font-style: italic; }
-.none { color: #6b7684; font-size: .88rem; }
-ul.plain { list-style: none; margin: .3rem 0; padding: 0; font-size: .88rem; }
-ul.plain li { padding: .1rem 0; }
-@media (prefers-color-scheme: dark) {
-  body { color: #e6e9ec; background: #16181c; }
-  h2 { border-bottom-color: #2c3238; }
-  .ov, table, .file { background: #1d2025; border-color: #2c3238; }
-  th { background: #22262c; }
-  th, td { border-color: #2c3238; }
-  pre.raw { background: #14171a; border-color: #2c3238; }
-  .tag { background: #22262c; border-color: #39414a; color: #d5dae0; }
-  .sec, .tree li { color: #cdd3d9; }
-  .sub, .uid, .none, .trust { color: #98a2ad; }
-  .theme { background: #1d2025; border-color: #2c3238; }
-  .badge { background: #3a2f10; border-color: #7a5200; color: #ffd98a; }
-}
-"""
+_CSS = Path(__file__).with_name("report_style.css").read_text(encoding="utf-8")
+
+
+def _pipeline_issues(
+    collect: Collect, units: tuple[CollectedUnit, ...], dropped: int
+) -> tuple[int, list[str]]:
+    """Prose-failure count plus the warning reasons — one pass, two consumers."""
+
+    prose_failures = len(_prose_failures(collect, units))
+    reasons: list[str] = []
+    outstanding = int(collect.verify.get("outstanding", 0) or 0)
+    if outstanding:
+        reasons.append(f"지적 잔존 {outstanding}")
+    mismatch = int(collect.verify.get("counts_mismatch", 0) or 0)
+    if mismatch:
+        reasons.append(f"집계 불일치 {mismatch}")
+    unclassified = int(collect.classes.get(classes.UNCLASSIFIED, 0) or 0)
+    if unclassified:
+        reasons.append(f"분류 불확실 {unclassified}")
+    if prose_failures:
+        reasons.append(f"설명 생성 실패 파일 {prose_failures}")
+    refs = collect.refs_dropped + dropped
+    if refs:
+        reasons.append(f"refs 드롭 {refs}")
+    if collect.themes_dropped:
+        reasons.append(f"주제 드롭 {collect.themes_dropped}")
+    if collect.themes_failed:
+        reasons.append("주제 생성 실패")
+    return prose_failures, reasons
+
+
+def _hero_html(
+    collect: Collect, mr_iid: int, base_sha: str, head_sha: str, warning: bool
+) -> str:
+    dirs = sorted({entry.product_dir for entry in collect.file_blocks})
+    scope = " · ".join(dirs) if dirs else "(없음)"
+    status = (
+        '<div class="status"><i></i> PIPELINE WARNING</div>'
+        if warning
+        else '<div class="status ok"><i></i> ANALYSIS OK</div>'
+    )
+    hashline = ""
+    if base_sha and head_sha:
+        hashline = (
+            f'<span>base <span class="hash">{_e(base_sha)}</span></span>'
+            "<span>→</span>"
+            f'<span>head <span class="hash">{_e(head_sha)}</span></span>'
+            "<span>·</span>"
+            f"<span>{_e(scope)}</span>"
+        )
+    return (
+        '<section class="hero"><div class="hero-row"><div>'
+        '<div class="eyebrow">DOCUMENT CHANGE REPORT</div>'
+        f"<h1>MR !{_e(mr_iid)}</h1>"
+        f'<p class="hero-sub">{_e(scope)} 문서 변경을 '
+        "구조 · 의미 · 표현 단위로 분석한 리포트</p>"
+        f"</div>{status}</div>"
+        f'<div class="hashline">{hashline}</div>'
+        "</section>"
+    )
+
+
+def _stats_html(
+    collect: Collect,
+    units: tuple[CollectedUnit, ...],
+    warning: bool,
+    reasons: list[str],
+) -> str:
+    analysis_value = (
+        '<div class="value" style="font-size:24px;color:#ffd77e">WARN</div>'
+        if warning
+        else '<div class="value" style="font-size:24px;color:#8fe4aa">OK</div>'
+    )
+    cards = [
+        ("Files", str(len(collect.file_blocks)), "affected documents"),
+        ("Units", str(len(units)), "analyzed changes"),
+        (
+            "Semantic",
+            str(collect.classes.get(classes.MEANING, 0)),
+            f"{collect.value_changes} value-level changes",
+        ),
+    ]
+    parts = [
+        f'<div class="stat"><div class="label">{_e(label)}</div>'
+        f'<div class="value">{_e(value)}</div>'
+        f'<div class="subv">{_e(sub)}</div></div>'
+        for label, value, sub in cards
+    ]
+    parts.append(
+        '<div class="stat"><div class="label">Analysis</div>'
+        + analysis_value
+        + f'<div class="subv">{_e(reasons[0] if reasons else "all checks passed")}</div>'
+        + "</div>"
+    )
+    return (
+        '<section aria-label="MR summary" class="stats">'
+        + "".join(parts)
+        + "</section>"
+    )
+
+
+def _section(num: str, en: str, ko: str, note: str, body: str, sid: str = "") -> str:
+    id_attr = f' id="{_e(sid)}"' if sid else ""
+    return (
+        f'<section class="section"{id_attr}><div class="section-head">'
+        f'<div><div class="section-num">{_e(num)} / {_e(en)}</div>'
+        f"<h2>{_e(ko)}</h2></div>"
+        f'<div class="section-note">{_e(note)}</div></div>'
+        f"{body}</section>"
+    )
+
+
+def _matrix_html(collect: Collect) -> str:
+    if not collect.file_blocks:
+        return '<p class="none">변경된 파일 없음</p>'
+    head = (
+        '<tr><th rowspan="2">파일</th>'
+        + "".join(f'<th colspan="3">{_e(axis)}</th>' for axis in _AXES)
+        + "</tr><tr>"
+        + "".join(f'<th class="n">{_e(op)}</th>' for _ in _AXES for op in _OPS)
+        + "</tr>"
+    )
+    rows = []
+    for entry in collect.file_blocks:
+        cells = "".join(
+            f'<td class="n">'
+            f"{collect.matrix.get(entry.file_id, {}).get(axis, {}).get(op, 0)}</td>"
+            for axis in _AXES
+            for op in _OPS
+        )
+        rows.append(
+            f'<tr><td title="{_e(entry.path)}">{_e(_basename(entry.path))}</td>'
+            f"{cells}</tr>"
+        )
+    return (
+        '<div class="data-card"><div class="wrap"><table><thead>'
+        + head
+        + "</thead><tbody>"
+        + "".join(rows)
+        + "</tbody></table></div></div>"
+    )
+
+
+def _dominant_axis(members: list[CollectedUnit]) -> str:
+    """The axis a theme's members touch most — ties break to axis order."""
+
+    tally = dict.fromkeys(_AXES, 0)
+    for member in members:
+        for axis in member.axes or (member.klass,):
+            if axis in tally:
+                tally[axis] += 1
+    best = max(_AXES, key=lambda axis: (tally[axis], -_AXES.index(axis)))
+    return best if tally[best] else ""
+
+
+def _theme_delta(members: list[CollectedUnit], dominant: str) -> str:
+    """The card's one-line delta — value change or section count.
+
+    A 구조-dominant theme leads with how many sections came or went; any
+    other theme leads with its first value change. The loser is the
+    fallback, so a structural theme that also changed a value still shows
+    the value when no whole section moved.
+    """
+
+    def value_delta() -> str:
+        for member in members:
+            for change in member.changed:
+                return (
+                    '<div class="delta">'
+                    f'<span class="old">{_e(change.from_value)}</span>'
+                    '<span class="arrow">→</span>'
+                    f'<span class="new">{_e(change.to_value)}</span>'
+                    "</div>"
+                )
+        return ""
+
+    def section_delta() -> str:
+        adds = sum(1 for member in members if member.kind == "added")
+        dels = sum(1 for member in members if member.kind == "removed")
+        if adds >= dels and adds:
+            return f'<div class="delta"><span class="new">+ {adds}개 섹션</span></div>'
+        if dels:
+            return f'<div class="delta"><span class="old">- {dels}개 섹션</span></div>'
+        return ""
+
+    if dominant == classes.STRUCTURE:
+        return section_delta() or value_delta()
+    return value_delta() or section_delta()
+
+
+def _keys_html(collect: Collect, units: tuple[CollectedUnit, ...]) -> str:
+    """02 핵심 변경사항 — the themes satellite's grouping as key-cards.
+
+    The satellite writes a title, one line and member ids; the tag, delta
+    and file/unit counts are measured here from the members, never trusted
+    from prose. Member ids stay out — the appendix's 주제 · 유닛 대응 table
+    is where they live.
+    """
+
+    if not collect.themes:
+        if collect.themes_failed:
+            return '<p class="none">주제 생성 실패 — 05 분석 상태 참조</p>'
+        return '<p class="none">주제 없음</p>'
+    by_unit = {unit.unit_id: unit for unit in units}
+    path_of = {entry.file_id: entry.path for entry in collect.file_blocks}
+    cards: list[str] = []
+    for theme in sorted(collect.themes, key=lambda t: (-len(t.units), t.theme_id)):
+        members = [by_unit[u] for u in theme.units if u in by_unit]
+        files = sorted({path_of.get(m.file, m.file) for m in members})
+        dominant = _dominant_axis(members)
+        cards.append(
+            '<div class="key-card">'
+            f'<div class="k-tag">{_e(dominant or "변경")}</div>'
+            f"<strong>{_e(theme.title)}</strong>"
+            f"<p>{_e(_strip_ids(theme.line))}</p>"
+            + _theme_delta(members, dominant)
+            + f'<div class="k-meta">유닛 {len(theme.units)} · 파일 {len(files)}</div>'
+            + "</div>"
+        )
+    return '<div class="key-grid">' + "".join(cards) + "</div>"
+
+
+def _attention_html(
+    collect: Collect, units: tuple[CollectedUnit, ...], dropped: int
+) -> str:
+    """03 확인이 필요한 항목 — amber for reader-check items, blue for pipeline.
+
+    The template separates MR-content issues from pipeline state; the data
+    we actually have is pipeline state, so amber carries what a reader must
+    re-check by eye (분류 불확실 · 검증 지적 · 집계 불일치) and blue carries
+    degradation the run absorbed (드롭 · 생성 실패).
+    """
+
+    prose_failures = len(_prose_failures(collect, units))
+    primary: list[tuple[str, str]] = []
+    secondary: list[tuple[str, str]] = []
+    outstanding = int(collect.verify.get("outstanding", 0) or 0)
+    if outstanding:
+        primary.append(
+            (
+                f"검증 지적 {outstanding}건 잔존",
+                "verifier의 재분석 요구가 마지막 라운드까지 남았다 — 해당 유닛의 "
+                "설명을 사람이 직접 확인해야 한다.",
+            )
+        )
+    mismatch = int(collect.verify.get("counts_mismatch", 0) or 0)
+    if mismatch:
+        primary.append(
+            (
+                f"집계 불일치 {mismatch}건",
+                "파일 요약이 말한 카운트와 원자 집계가 어긋난다 — 05 분석 상태의 "
+                "표와 함께 확인.",
+            )
+        )
+    unclassified = int(collect.classes.get(classes.UNCLASSIFIED, 0) or 0)
+    if unclassified:
+        primary.append(
+            (
+                f"분류 불확실 {unclassified}유닛",
+                "축 분류가 확정되지 않은 유닛이 있다 — 05 분석 상태의 분류 불확실 "
+                "항목 참조.",
+            )
+        )
+    if collect.themes_dropped:
+        secondary.append(
+            (
+                f"주제 드롭 {collect.themes_dropped}",
+                "원자 단위 분석은 완료됐지만 상위 주제 묶음 일부가 멤버 게이트에서 "
+                "제외됐다.",
+            )
+        )
+    if collect.themes_failed:
+        secondary.append(
+            (
+                "주제 생성 실패",
+                "themes 위성 산출물을 읽지 못해 02 섹션이 주제 없이 렌더링됐다.",
+            )
+        )
+    if prose_failures:
+        secondary.append(
+            (
+                f"설명 생성 실패 파일 {prose_failures}",
+                "해당 파일의 설명·요약이 비어 있다 — 원문 · 값 · 구조 정보는 정상 "
+                "표기된다.",
+            )
+        )
+    refs = collect.refs_dropped + dropped
+    if refs:
+        secondary.append(
+            (
+                f"refs 드롭 {refs}",
+                "알 수 없는 파일을 가리키는 블록이 refs 게이트에서 제외됐다.",
+            )
+        )
+    cards = [
+        '<div class="alert"><div class="alert-top">'
+        f'<div class="alert-icon">!</div><h3>{_e(title)}</h3></div>'
+        f"<p>{_e(body)}</p></div>"
+        for title, body in primary
+    ]
+    cards += [
+        '<div class="alert secondary"><div class="alert-top">'
+        f'<div class="alert-icon">i</div><h3>{_e(title)}</h3></div>'
+        f"<p>{_e(body)}</p></div>"
+        for title, body in secondary
+    ]
+    if not cards:
+        cards.append(
+            '<div class="alert secondary"><div class="alert-top">'
+            '<div class="alert-icon">✓</div><h3>확인이 필요한 항목 없음</h3></div>'
+            "<p>모든 파이프라인 지표가 정상 범위다.</p></div>"
+        )
+    return '<div class="alert-grid">' + "".join(cards) + "</div>"
 
 
 def _tree_html(rows: list[TreeSection]) -> str:
@@ -424,20 +662,13 @@ def _tree_html(rows: list[TreeSection]) -> str:
     return f'<ul class="tree">{items}</ul>'
 
 
-def _raw(label: str, body: str) -> str:
-    if not body:
-        return f'<p class="miss">{_e(label)} 원문 없음</p>'
-    return f"<h5>{_e(label)}</h5><pre class=\"raw\">{_e(body)}</pre>"
-
-
-def _values_html(
+def _value_items(
     unit: CollectedUnit, ops: tuple[str, ...] | None = None
-) -> str:
+) -> list[str]:
     """Value/textual/prose rows of one unit, filtered to one operation.
 
-    3.2 shows only what was added, 3.3 only what was deleted, 3.4 only what
-    changed — a mixed unit contributes its part to each section instead of
-    repeating every row three times.
+    A mixed unit contributes its part to each card instead of repeating
+    every row — the 추가 card shows only what was added, and so on.
     """
 
     items: list[str] = []
@@ -458,37 +689,88 @@ def _values_html(
         if unit.added:
             items.append("추가된 값: " + _e(", ".join(unit.added)))
         items.extend("추가된 문장: " + _e(text) for text in unit.prose_added)
-        items.extend("추가된 문장: " + _e(text) for text in unit.prose_added)
-    if not items:
-        return ""
-    return '<ul class="vals">' + "".join(f"<li>{item}</li>" for item in items) + "</ul>"
+    return items
 
 
-def _unit_html(
+def _change_entries(
+    units: tuple[CollectedUnit, ...],
+) -> list[tuple[CollectedUnit, tuple[str, ...], str, tuple[str, ...]]]:
+    """Flatten the op groups into one stack — 추가 → 삭제 → 변경.
+
+    A changed-kind unit that also added or deleted text appears once per
+    operation it touches, marked 부분 — the same semantics the old 4.2/4.3/
+    4.4 split had, without the subsection headers.
+    """
+
+    entries: list[tuple[CollectedUnit, tuple[str, ...], str, tuple[str, ...]]] = []
+    for whole_kind, sides, op in (
+        ("added", ("after",), "추가"),
+        ("removed", ("before",), "삭제"),
+        ("", ("before", "after"), "변경"),
+    ):
+        if whole_kind:
+            whole = [unit for unit in units if unit.kind == whole_kind]
+            partial = [
+                unit for unit in units if unit.kind == "changed" and op in unit.ops
+            ]
+        else:
+            whole = [unit for unit in units if op in unit.ops]
+            partial = []
+        entries.extend((unit, sides, "", (op,)) for unit in whole)
+        entries.extend((unit, sides, "부분", (op,)) for unit in partial)
+    return entries
+
+
+def _change_card(
     unit: CollectedUnit,
     excerpt,
-    *,
+    index: int,
     sides: tuple[str, ...],
-    note: str = "",
-    ops: tuple[str, ...] | None = None,
+    note: str,
+    ops: tuple[str, ...],
 ) -> str:
-    note_html = f' <span class="tag">{_e(note)}</span>' if note else ""
-    parts = [
-        '<div class="unit">',
-        f'<p class="uid">'
-        f'<span class="tag">[{_e(" · ".join(unit.axes) or unit.klass)}]</span>'
-        f'{note_html}'
-        f' · <span class="sec">{_e(unit.section)}</span></p>',
-    ]
+    axes = tuple(axis for axis in (unit.axes or (unit.klass,)) if axis)
+    tag_text = " · ".join(axes) or unit.klass
+    pills = f'<span class="pill tag-{_e("-".join(axes))}">[{_e(tag_text)}]</span>'
+    if note:
+        pills += f'<span class="pill tag-부분">{_e(note)}</span>'
+    panes: list[str] = []
     for side in sides:
-        if side == "before":
-            parts.append(_raw("before", excerpt.before if excerpt else ""))
-        else:
-            parts.append(_raw("after", excerpt.after if excerpt else ""))
-    parts.append(_values_html(unit, ops))
-    parts.append(f'<p class="exp">설명 — {_e(_strip_ids(unit.explanation))}</p>')
-    parts.append("</div>")
-    return "".join(parts)
+        body = (excerpt.before if side == "before" else excerpt.after) if excerpt else ""
+        if not body:
+            continue
+        pane_cls = "before-pane" if side == "before" else "after-pane"
+        panes.append(
+            f'<div class="diff-pane {pane_cls}">'
+            f'<div class="diff-label">{side.upper()}</div>'
+            f"<pre>{_e(body)}</pre></div>"
+        )
+    if panes:
+        single = " single" if len(panes) == 1 else ""
+        grid = f'<div class="diff-grid{single}">' + "".join(panes) + "</div>"
+    else:
+        grid = '<p class="miss">원문 없음</p>'
+    values = _value_items(unit, ops)
+    value_box = ""
+    if values:
+        value_box = (
+            '<div class="value-box"><div class="value-label">Detected values</div>'
+            "<ul>" + "".join(f"<li>{item}</li>" for item in values) + "</ul></div>"
+        )
+    open_attr = " open" if index == 1 else ""
+    return (
+        f'<details class="change-card"{open_attr}><summary>'
+        '<div class="change-summary-main">'
+        f'<div class="change-kicker">CHANGE {index:02d}</div>'
+        f'<div class="change-title">{_e(unit.section)}</div></div>'
+        f'<div class="change-tags">{pills}</div></summary>'
+        '<div class="change-body">'
+        + grid
+        + value_box
+        + '<div class="explain"><div class="explain-label">WHAT CHANGED</div>'
+        + f"<p>설명 — {_e(_strip_ids(unit.explanation))}</p></div>"
+        + "</div></details>"
+    )
 
 
 def _file_html(
@@ -496,139 +778,57 @@ def _file_html(
     units: tuple[CollectedUnit, ...],
     excerpts: dict[str, object],
     structure: Structure | None,
+    index: int,
 ) -> str:
+    entries = _change_entries(units)
     parts = [
-        '<div class="file">',
+        f'<article class="file-card" id="file-{index}">',
+        '<header class="file-head"><div>',
+        f'<div class="eyebrow">FILE {index:02d}</div>',
         f"<h3>{_e(entry.path)}</h3>",
-        f'<p class="sub">{_e(entry.product_dir)} · 유닛 {entry.units}</p>',
-        f"<p>{_e(_strip_ids(entry.summary))}</p>",
-        "<h4>4.1 구조 변화</h4>",
+        f'<p class="pathline">{_e(entry.product_dir)} · 유닛 {len(units)}</p>',
+        "</div>",
+        f'<div class="file-count">{len(entries)}<span>changes</span></div>',
+        "</header>",
+        f'<p class="file-summary">{_e(_strip_ids(entry.summary))}</p>',
     ]
-    if structure is None:
-        parts.append('<p class="miss">05-structure 없음</p>')
-    else:
-        head_rows = _rows_of(structure.tree, entry.path)
-        base_rows = _rows_of(structure.base_tree, entry.path)
+    if structure is not None:
         notes = structure_notes(structure, entry.path)
-        parts.append(
-            '<div class="trees">'
-            f"<div><h5>before</h5>{_tree_html(base_rows)}</div>"
-            f"<div><h5>after</h5>{_tree_html(head_rows)}</div>"
-            "</div>"
-        )
-        parts.append(
-            '<ul class="notes">'
-            + "".join(f"<li>{_e(note)}</li>" for note in notes)
-            + "</ul>"
-            if notes
-            else '<p class="none">구조 변화 없음</p>'
-        )
-    for title, whole_kind, sides, op in (
-        ("4.2 추가된 내용", "added", ("after",), "추가"),
-        ("4.3 삭제된 내용", "removed", ("before",), "삭제"),
-        ("4.4 변경된 내용", "", ("before", "after"), "변경"),
-    ):
-        if whole_kind:
-            whole = [unit for unit in units if unit.kind == whole_kind]
-            partial = [unit for unit in units if unit.kind == "changed" and op in unit.ops]
-        else:
-            whole = [unit for unit in units if op in unit.ops]
-            partial = []
-        parts.append(f"<h4>{title}</h4>")
-        if not whole and not partial:
-            parts.append('<p class="none">없음</p>')
-            continue
-        for unit in whole:
+        if notes:
+            head_rows = _rows_of(structure.tree, entry.path)
+            base_rows = _rows_of(structure.base_tree, entry.path)
             parts.append(
-                _unit_html(
-                    unit, excerpts.get(unit.excerpt_ref), sides=sides, ops=(op,)
-                )
+                '<details class="structure-card"><summary>'
+                "<span>Document structure change</span>"
+                '<span class="muted">before / after outline</span>'
+                '</summary><div class="structure-body"><div class="trees">'
+                f"<div><h5>before</h5>{_tree_html(base_rows)}</div>"
+                f"<div><h5>after</h5>{_tree_html(head_rows)}</div>"
+                "</div>"
+                '<ul class="notes">'
+                + "".join(f"<li>{_e(note)}</li>" for note in notes)
+                + "</ul></div></details>"
             )
-        for unit in partial:
-            parts.append(
-                _unit_html(
-                    unit,
-                    excerpts.get(unit.excerpt_ref),
-                    sides=sides,
-                    note="부분",
-                    ops=(op,),
-                )
+    parts.append('<div class="change-stack">')
+    for number, (unit, sides, note, ops) in enumerate(entries, 1):
+        parts.append(
+            _change_card(
+                unit, excerpts.get(unit.excerpt_ref), number, sides, note, ops
             )
-    parts.append("</div>")
+        )
+    parts.append("</div></article>")
     return "".join(parts)
 
 
-def _matrix_html(collect: Collect) -> str:
-    if not collect.file_blocks:
-        return '<p class="none">변경된 파일 없음</p>'
-    head = (
-        "<tr><th rowspan=\"2\">파일</th>"
-        + "".join(f'<th colspan="3">{_e(axis)}</th>' for axis in _AXES)
-        + "</tr><tr>"
-        + "".join(f'<th class="n">{_e(op)}</th>' for _ in _AXES for op in _OPS)
-        + "</tr>"
-    )
-    rows = []
-    for entry in collect.file_blocks:
-        cells = "".join(
-            f'<td class="n">'
-            f"{collect.matrix.get(entry.file_id, {}).get(axis, {}).get(op, 0)}</td>"
-            for axis in _AXES
-            for op in _OPS
-        )
-        rows.append(
-            f'<tr><td title="{_e(entry.path)}">{_e(_basename(entry.path))}</td>'
-            f"{cells}</tr>"
-        )
-    return (
-        '<div class="wrap"><table><thead>'
-        + head
-        + "</thead><tbody>"
-        + "".join(rows)
-        + "</tbody></table></div>"
-    )
-
-
-def _themes_html(collect: Collect, units: tuple[CollectedUnit, ...]) -> str:
-    """Section 2 — the themes satellite's grouping, counts measured here.
-
-    The satellite writes a title, one line and member ids; file and unit
-    counts are derived from the members against this report's own units,
-    never trusted from prose. Member ids stay out of the prose — the
-    appendix's 주제 · 유닛 대응 table is where they live.
-    """
-
-    if not collect.themes:
-        if collect.themes_failed:
-            return '<p class="none">주제 생성 실패 — 5. 분석 상태 참조</p>'
-        return '<p class="none">주제 없음</p>'
-    by_unit = {unit.unit_id: unit for unit in units}
-    path_of = {entry.file_id: entry.path for entry in collect.file_blocks}
-    items: list[str] = []
-    for theme in sorted(collect.themes, key=lambda t: (-len(t.units), t.theme_id)):
-        files = sorted(
-            {
-                path_of.get(by_unit[u].file, by_unit[u].file)
-                for u in theme.units
-                if u in by_unit
-            }
-        )
-        items.append(
-            '<div class="theme">'
-            f"<h3>{_e(theme.title)}</h3>"
-            f"<p>{_e(_strip_ids(theme.line))}</p>"
-            f'<p class="sub">유닛 {len(theme.units)} · 파일 {len(files)}</p>'
-            "</div>"
-        )
-    return "".join(items)
-
-
-def _status_html(
-    collect: Collect, units: tuple[CollectedUnit, ...], dropped: int
+def _status_panel(
+    collect: Collect,
+    units: tuple[CollectedUnit, ...],
+    dropped: int,
+    prose_failures: int,
+    warning: bool,
 ) -> str:
-    """Section 5 — the pipeline's own bookkeeping, WARNING when degraded."""
+    """The pipeline's own bookkeeping, WARNING badge when degraded."""
 
-    prose_failures = len(_prose_failures(collect, units))
     rows: list[tuple[str, str]] = [
         ("검증 라운드", str(collect.verify.get("rounds", 0))),
         ("지적 잔존", str(collect.verify.get("outstanding", 0))),
@@ -646,19 +846,10 @@ def _status_html(
     )
     if confidence:
         rows.append(("신뢰도 분포", confidence))
-    warning = any(
-        (
-            collect.verify.get("outstanding", 0),
-            collect.verify.get("counts_mismatch", 0),
-            prose_failures,
-            collect.classes.get(classes.UNCLASSIFIED, 0),
-            collect.refs_dropped + dropped,
-            collect.themes_dropped,
-            collect.themes_failed,
-        )
-    )
     badge = '<span class="badge">WARNING</span>' if warning else ""
-    table = "".join(f"<tr><th>{_e(key)}</th><td>{_e(value)}</td></tr>" for key, value in rows)
+    table = "".join(
+        f"<tr><th>{_e(key)}</th><td>{_e(value)}</td></tr>" for key, value in rows
+    )
     uncertain: list[str] = [
         f"{unit.unit_id} — {classes.UNCLASSIFIED}"
         for unit in units
@@ -693,25 +884,33 @@ def _status_html(
             + "</ul>"
         )
 
+    trustbar = ""
+    if units and any(collect.confidence_dist.get(key, 0) for key in _CONF_KEYS):
+        high = collect.confidence_dist.get("high", 0)
+        pct = min(100, round(100 * high / len(units)))
+        trustbar = (
+            f'<div class="trustbar" '
+            f'title="high confidence {_e(high)}/{_e(len(units))}">'
+            f'<span style="width:{pct}%"></span></div>'
+        )
     return "".join(
         [
+            '<div class="analysis-panel">',
             f"<p>파이프라인 상태{badge}</p>",
             '<div class="wrap"><table><thead><tr><th>항목</th><th>값</th></tr>'
-            "</thead><tbody>"
-            + table
-            + "</tbody></table></div>",
+            "</thead><tbody>" + table + "</tbody></table></div>",
             "<h4>분류 불확실 항목</h4>",
             listing(uncertain),
             "<h4>부분 실패 목록</h4>",
             listing(partial),
+            trustbar,
+            "</div>",
         ]
     )
 
 
-def _appendix_html(
-    collect: Collect, units: tuple[CollectedUnit, ...], dropped: int
-) -> str:
-    """Section 6 — the criteria and the id mappings prose never carries."""
+def _appendix_panel(collect: Collect, units: tuple[CollectedUnit, ...]) -> str:
+    """The criteria and the id mappings prose never carries."""
 
     criteria = "".join(
         f"<tr><td>{_e(name)}</td><td>{_e(rule)}</td></tr>" for name, rule in CRITERIA
@@ -726,9 +925,10 @@ def _appendix_html(
         f"<td>{_e(', '.join(theme.units))}</td></tr>"
         for theme in collect.themes
     )
-
     return "".join(
         [
+            '<div class="appendix-panel">',
+            '<div class="eyebrow">REFERENCE</div>',
             "<h4>집계 기준</h4>",
             "<p>카운트는 원자 단위로 센다 — 헤딩 변화 1건 · 값 1개 · 표현 재작성 1건 · "
             "문장 묶음 1건이 각각 1로 센다. 추가·삭제 유닛에 병기된 값은 정보용이며 "
@@ -754,6 +954,7 @@ def _appendix_html(
                 if theme_rows
                 else '<p class="none">없음</p>'
             ),
+            "</div>",
         ]
     )
 
@@ -768,41 +969,88 @@ def render_report_html(
     head_sha: str = "",
     diff_url: str = "",
 ) -> str:
-    """One self-contained page — 6 sections, inline CSS, no external calls."""
+    """One self-contained page — hero + 5 sections, inline CSS, no calls."""
 
     units, dropped = gate(collect)
     by_ref = {unit.unit_id: unit for unit in (excerpts.units if excerpts else ())}
-    lines = overview_lines(
-        collect, mr_iid=mr_iid, base_sha=base_sha, head_sha=head_sha
+    prose_failures, reasons = _pipeline_issues(collect, units, dropped)
+    warning = bool(reasons)
+    link = (
+        f'<a href="{_e(diff_url)}">MR diff</a>' if diff_url else ""
     )
-    body = "".join(f"<p>{_e(line)}</p>" for line in lines[:-1])
-    body += f'<p class="trust">{_e(lines[-1])}</p>'
-    link = f' · <a href="{_e(diff_url)}">MR diff</a>' if diff_url else ""
     files_html = "".join(
         _file_html(
             entry,
             tuple(unit for unit in units if unit.file == entry.file_id),
             by_ref,
             structure,
+            index,
         )
-        for entry in collect.file_blocks
+        for index, entry in enumerate(collect.file_blocks, 1)
     )
     return "".join(
         [
-            "<!doctype html><html lang=\"ko\"><head><meta charset=\"utf-8\">",
+            '<!doctype html><html lang="ko"><head><meta charset="utf-8">',
             '<meta name="viewport" content="width=device-width, initial-scale=1">',
-            f"<title>mrdoc — MR !{_e(mr_iid)}</title><style>{_CSS}</style>",
+            f"<title>MR !{_e(mr_iid)} — Document Change Intelligence</title>"
+            f"<style>{_CSS}</style>",
             "</head><body>",
-            f"<h1>mrdoc 문서 변경 리포트 — MR !{_e(mr_iid)}</h1>",
-            f'<p class="sub">문서 변경 설명 리포트{link}</p>',
-            '<h2>1. 개요</h2><div class="ov">' + body + "</div>",
-            "<h2>2. 주요 변경사항</h2>" + _themes_html(collect, units),
-            "<h2>3. 변경 매트릭스</h2>"
-            + _matrix_html(collect),
-            "<h2>4. 파일별 상세</h2>"
-            + (files_html or '<p class="none">변경된 파일 없음</p>'),
-            "<h2>5. 분석 상태</h2>" + _status_html(collect, units, dropped),
-            "<h2>6. 부록</h2>" + _appendix_html(collect, units, dropped),
-            "</body></html>",
+            '<main class="page">',
+            '<div class="topbar"><div class="brand">MRDOC / CHANGE INTELLIGENCE</div>'
+            '<nav class="toplinks"><a href="#matrix">Matrix</a>'
+            '<a href="#changes">Changes</a><a href="#files">Files</a>'
+            '<a href="#quality">Quality</a></nav></div>',
+            _hero_html(collect, mr_iid, base_sha, head_sha, warning),
+            _stats_html(collect, units, warning, reasons),
+            _section(
+                "01",
+                "CHANGE MATRIX",
+                "변경 매트릭스",
+                "상세를 읽기 전에, MR 전체 변화의 분포부터 확인",
+                _matrix_html(collect),
+                "matrix",
+            ),
+            _section(
+                "02",
+                "WHAT CHANGED",
+                "핵심 변경사항",
+                "Diff보다 먼저, 사람이 알아야 할 변화부터",
+                _keys_html(collect, units),
+                "changes",
+            ),
+            _section(
+                "03",
+                "ATTENTION",
+                "확인이 필요한 항목",
+                "MR 내용 이슈와 분석 파이프라인 상태를 분리",
+                _attention_html(collect, units, dropped),
+            ),
+            _section(
+                "04",
+                "FILE CHANGES",
+                "파일별 상세",
+                "각 변경 카드를 펼치면 Before / After와 설명을 확인할 수 있음",
+                '<div class="file-list">'
+                + (files_html or '<p class="none">변경된 파일 없음</p>')
+                + "</div>",
+                "files",
+            ),
+            _section(
+                "05",
+                "ANALYSIS QUALITY",
+                "분석 상태",
+                "MR 문제와 분석 파이프라인 품질을 별도 확인"
+                + (f" · {link}" if link else ""),
+                '<div class="analysis-wrap">'
+                + _status_panel(collect, units, dropped, prose_failures, warning)
+                + _appendix_panel(collect, units)
+                + "</div>",
+                "quality",
+            ),
+            "<footer>"
+            f"<span>mrdoc — MR !{_e(mr_iid)} · navy-indigo / matrix-first</span>"
+            "<span>Evidence-first · progressive disclosure · navy-indigo theme</span>"
+            "</footer>",
+            "</main></body></html>",
         ]
     )
