@@ -346,6 +346,29 @@ def test_themes_plain_preamble_drift_is_salvaged() -> None:
     assert parse_themes(drifted) == parse_themes(rendered)
 
 
+def test_themes_single_backtick_fence_drift_is_salvaged() -> None:
+    """MR !40's drift: yaml blocks fenced with one backtick, not three."""
+
+    changeset, structure, _literals, _excerpts = _inputs()
+    base = _collect([_analysis(structure, changeset)])
+    known = [unit.unit_id for unit in base.units]
+    rendered = render_themes(
+        Themes(
+            mr_iid=40,
+            themes=(
+                Theme("t-01", "버전 값 갱신", "버전 값이 바뀌었다.", tuple(known[:2])),
+            ),
+        )
+    )
+    drifted = rendered.replace("```yaml", "`yaml").replace(
+        "```\n", "`\n"
+    )
+    assert parse_themes(drifted) == parse_themes(rendered)
+    gated = _collect([_analysis(structure, changeset)], themes_text=drifted)
+    assert [theme.theme_id for theme in gated.themes] == ["t-01"]
+    assert gated.themes_dropped == 0
+
+
 def test_themes_prose_preamble_is_still_rejected() -> None:
     rendered = render_themes(Themes(mr_iid=34))
     with pytest.raises(ValueError):

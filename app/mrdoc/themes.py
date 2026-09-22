@@ -23,6 +23,27 @@ from .frontmatter import (
 )
 
 _KV_LINE = re.compile(r"^[A-Za-z0-9_]+:")
+_TQ = chr(96) * 3  # triple backtick, assembled so patches carry no fence text
+
+
+def _salvaged_fences(text: str) -> str:
+    """Recover the drift where yaml blocks were fenced with one backtick.
+
+    Observed on MR !40: the satellite wrote single backticks around the
+    yaml block instead of the triple-backtick fence, so parse_sections
+    found no fields and every theme silently gated out as memberless.
+    A line that is exactly a backtick plus yaml, or a lone backtick, is
+    unambiguous -- promote it to the real fence.
+    """
+
+    out: list[str] = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped == chr(96) + "yaml" or stripped == chr(96):
+            out.append(_TQ + stripped[1:])
+        else:
+            out.append(line)
+    return "\n".join(out)
 
 
 def _salvaged_meta(text: str) -> dict[str, object] | None:
@@ -120,6 +141,7 @@ def render_themes(themes: Themes) -> str:
 def parse_themes(text: str) -> Themes:
     """Parse 45-themes.md back (ValueError on malformed frontmatter)."""
 
+    text = _salvaged_fences(text)
     meta = _parse_meta(text)
     sections = parse_sections(text)
 
