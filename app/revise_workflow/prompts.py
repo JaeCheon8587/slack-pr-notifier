@@ -91,10 +91,9 @@ def intent_prompt(
     base_sha: str,
     repo_slug: str,
     opinions: Sequence[Mapping[str, object]],
-    changed_files: Sequence[str],
     toc: Mapping[str, Sequence[str]],
 ) -> str:
-    """3a's user prompt: opinions + changed files + headings. No document bodies.
+    """3a's user prompt: opinions + headings. No document bodies.
 
     ``toc`` maps a posix document path to its heading paths, which is the
     whole of what this stage learns about the repository.
@@ -114,12 +113,6 @@ def intent_prompt(
         refs = opinion.get("question_refs")
         if refs:
             lines.append(f"question_refs: {refs}")
-
-    lines.append("\n[이번 MR 이 바꾼 파일]")
-    if changed_files:
-        lines.extend(f"- {path}" for path in changed_files)
-    else:
-        lines.append("- (없음)")
 
     lines.append("\n[문서 목차] — 당신이 아는 문서의 전부다")
     for path in sorted(toc):

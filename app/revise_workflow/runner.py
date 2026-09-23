@@ -257,7 +257,6 @@ def _node_intent(round_: _Round) -> None:
             base_sha=round_.base_sha,
             repo_slug=round_.repo_slug,
             opinions=round_.opinions,
-            changed_files=(),
             toc=toc,
         ),
         edit=False,
