@@ -13,13 +13,13 @@ paying for the two LLM calls before it. There is no place in this module
 where a model decides what runs next; the DAG is a fixed chain and the only
 branches are counters (`REINJECT_LIMIT`) and emptiness checks.
 
-Three of the seven nodes spawn a `claude` CLI (`intent` / `edit` / `verify`);
-the other four are pure functions in `nodes.py`. Each LLM stage returns the
-artifact markdown on stdout and this module parses it with the matching
-`schema.parse_*` before writing the canonical re-render to disk — **the parse
-is the validation**. A stage that answers with prose fails its node instead of
-poisoning the next one, which is mrdoc's "산출물이 있어야 성공" rule applied
-one level tighter (existence *and* shape).
+Three of the seven nodes spawn a `codex exec` call (`intent` / `edit` /
+`verify`); the other four are pure functions in `nodes.py`. Each LLM stage's
+last message is captured via `--output-last-message` and this module parses
+it with the matching `schema.parse_*` before writing the canonical re-render
+to disk — **the parse is the validation**. A stage that answers with prose
+fails its node instead of poisoning the next one, which is mrdoc's "산출물이
+있어야 성공" rule applied one level tighter (existence *and* shape).
 
 Two stages are short-circuited deterministically rather than called:
 
@@ -260,7 +260,6 @@ def _node_intent(round_: _Round) -> None:
             changed_files=(),
             toc=toc,
         ),
-        tools=(),
         edit=False,
     )
     intent = _stamp_identity(round_, _parse_or_fail("intent", schema.parse_intent, body))
@@ -312,7 +311,6 @@ def _node_edit(round_: _Round) -> None:
             workspace_posix=round_.workspace.as_posix(),
             retry_note=_retry_note(round_),
         ),
-        tools=("Read", "Edit", "Write"),
         edit=True,
     )
     receipt = _stamp_identity(round_, _parse_or_fail("edit", schema.parse_edit, body))
@@ -356,7 +354,6 @@ def _node_verify(round_: _Round) -> None:
             opinions=round_.opinions,
             diff_text=diff_text,
         ),
-        tools=(),
         edit=False,
     )
     verify = _stamp_identity(round_, _parse_or_fail("verify", schema.parse_verify, body))
@@ -384,8 +381,9 @@ def _node_anchor(round_: _Round) -> None:
 
 
 def _node_impact(round_: _Round) -> None:
+    intent = schema.parse_intent(_read(round_, "intent"))
     anchor = schema.parse_anchor(_read(round_, "anchor"))
-    impact = nodes.build_impact(anchor, _read_md_tree(round_.workspace))
+    impact = nodes.build_impact(intent, anchor, _read_md_tree(round_.workspace))
     _write(round_, "impact", schema.render_impact(impact))
     append_ledger(round_.directory, [f"impact done (candidates={impact.candidate_count})"])
 
@@ -454,6 +452,8 @@ def _node_summary(round_: _Round) -> None:
     gate = schema.parse_gate(_read(round_, "gate"))
     receipt = schema.parse_edit(_read(round_, "edit"))
     anchor = schema.parse_anchor(_read(round_, "anchor"))
+    impact = schema.parse_impact(_read(round_, "impact"))
+    intent = schema.parse_intent(_read(round_, "intent"))
 
     # Only an opinion whose target was actually located can be a 구현 누락.
     # One that never anchored is a 되물음 — re-injecting it would spend the
@@ -494,6 +494,31 @@ def _node_summary(round_: _Round) -> None:
     watch = list(summary.points_to_watch)
     if dropped:
         watch.append(f"3c 미반영 판정으로 되돌린 편집: {', '.join(dropped)}")
+    unverified_related = sorted(
+        {path for entry in impact.entries for path in entry.related_unverified}
+    )
+    if unverified_related:
+        watch.append(
+            "3a 지목 연관 문서 — 기계 증거(리터럴·링크) 없음: "
+            + ", ".join(unverified_related)
+        )
+    # The 'from' half of each substitution, searched outside the commit set:
+    # a value that legitimately lives elsewhere is not a failure, but it is
+    # exactly the "이걸 고치면 영향받는 다른 문서" a reviewer wants surfaced.
+    kept = set(committable)
+    residual: dict[str, list[str]] = {}
+    for opinion in intent.opinions:
+        swap = nodes.parse_replacement(opinion.수정방향)
+        if swap is None:
+            continue
+        for path, text in after.items():
+            if path not in kept and swap[0] in text:
+                residual.setdefault(swap[0], []).append(path)
+    for old in sorted(residual):
+        watch.append(
+            f"이전 값 {old!r} 잔존 — 커밋 범위 밖: "
+            + ", ".join(sorted(set(residual[old])))
+        )
     summary = replace(summary, commit_paths=committable, points_to_watch=tuple(watch))
 
     _write(round_, "summary", schema.render_summary(summary))
@@ -629,7 +654,7 @@ def _failed(settings: Settings, detail: str) -> ReviseResult:
 
 
 # ---------------------------------------------------------------------------
-# Stage invocation — one headless `claude` per LLM node
+# Stage invocation — one headless `codex exec` per LLM node
 # ---------------------------------------------------------------------------
 def _stage(
     round_: _Round,
@@ -637,57 +662,62 @@ def _stage(
     stage: str,
     system: str,
     prompt: str,
-    tools: tuple[str, ...],
     edit: bool,
 ) -> str:
-    """Run one CLI stage and return its stdout, fences stripped.
+    """Run one `codex exec` stage and return its last message, fences stripped.
 
-    Two flags here are load-bearing and both were established by measurement,
-    not preference (see `.orchestration/reports/smoke-staged-runner.md`):
+    The flag set maps the measured claude isolation onto codex (same pattern
+    as `app.mrdoc.satellites.satellite_executor`, which this replaces):
 
-    `--setting-sources ""` isolates the run from the operator's own Claude
-    configuration. Without it the machine's user/plugin settings load into
-    every stage: the first smoke run died with `Exceeded USD budget` on a
-    *trivial* prompt because ~20 plugin agents and skills were being pulled
-    into the system prompt, and a plugin `SessionEnd` hook was failing on top
-    of that. With it, the same prompt finishes inside the smallest budget and
-    stderr is empty. A production rail must not depend on whose laptop it runs
-    on.
+    `--ephemeral` is `--no-session-persistence`: no session files, no
+    resume — every stage is a one-shot process.
 
-    `--tools` is an explicit whitelist on every stage, `edit` included.
-    `--permission-mode acceptEdits` alone would leave 3b holding Grep, Glob,
-    Bash and Task — it could search (the design forbids it: an invented search
-    term has nothing to compare against) and could even spawn sub-agents.
-    3a gets nothing, 3b gets `Read Edit Write`, and 3c gets nothing either:
-    measured against identical input it cost $1.2174 over 2 turns holding
-    `Read` and $0.0287 over 1 turn without it, for the same verdict, and its
-    own hard limits already say the diff is the whole of its evidence.
+    `--sandbox read-only|workspace-write` replaces the `--tools` whitelist.
+    Codex grants no per-tool list, so a read stage can still read the
+    workspace and the edit stage can still shell inside it. What the
+    whitelist used to enforce (3a sees no bodies, 3c sees only the diff) now
+    rests on the HARD LIMITS alone — and on the gate, which still reverts
+    whatever escapes mechanically.
+
+    `--output-last-message` is the artifact channel: `codex exec` streams
+    thinking and tool calls to stdout, so the last agent message is written
+    to a file the runner reads back — the same reason mrdoc satellites
+    return files, not stdout.
+
+    `--ignore-user-config` is deliberately absent: the CLI's provider
+    routing lives in ~/.codex/config.toml, and ignoring it would cut every
+    stage off from the model. mrdoc's satellites make the same trade.
+
+    The system prompt rides on stdin ahead of the user body — `codex exec`
+    has no `--system-prompt`, and the satellite executor's
+    `system + --- + prompt` framing is the proven substitute.
     """
 
     settings = round_.settings
-    claude_bin = settings.claude_bin or shutil.which("claude")
-    if not claude_bin:
-        raise StageError("`claude` CLI not found on PATH")
+    codex_bin = settings.codex_bin or shutil.which("codex")
+    if not codex_bin:
+        raise StageError("`codex` CLI not found on PATH")
+
+    last = (round_.directory / f".{stage}.last.md").resolve()
+    last.unlink(missing_ok=True)
 
     cmd = [
-        claude_bin,
-        "-p",
-        "--setting-sources",
-        "",
-        "--disable-slash-commands",
-        "--no-session-persistence",
-        "--model",
-        settings.ai_model,
-        "--effort",
-        settings.ai_effort,
-        "--max-budget-usd",
-        str(settings.revise_stage_budget_usd),
-        "--system-prompt",
-        system,
+        codex_bin,
+        "exec",
+        "--skip-git-repo-check",
+        "--ephemeral",
+        "--sandbox",
+        "workspace-write" if edit else "read-only",
+        "--cd",
+        str(round_.workspace),
+        "-c",
+        f'model_reasoning_effort="{settings.revise_stage_effort}"',
+        "--output-last-message",
+        str(last),
     ]
-    if edit:
-        cmd += ["--permission-mode", "acceptEdits"]
-    cmd += ["--tools", *(tools or ("",))]
+    if settings.revise_stage_model:
+        cmd += ["--model", settings.revise_stage_model]
+    cmd += ["-"]
 
     env = {k: v for k, v in _process_env().items() if k.upper() not in _CREDENTIAL_ENV_KEYS}
     timeout = settings.revise_stage_timeout_seconds
@@ -696,7 +726,7 @@ def _stage(
     try:
         proc = subprocess.run(
             cmd,
-            input=prompt,
+            input=system + "\n\n---\n\n" + prompt,
             capture_output=True,
             text=True,
             encoding="utf-8",
@@ -715,7 +745,15 @@ def _stage(
         detail = git_workspace._redact(proc.stderr or proc.stdout or "no error output", secrets)
         raise StageError(f"stage {stage} exited {proc.returncode}: {detail[:600]}")
 
-    body = _strip_fence(proc.stdout)
+    body = ""
+    if last.is_file():
+        try:
+            body = last.read_text(encoding="utf-8")
+        except OSError:
+            body = ""
+    if not body.strip():
+        body = proc.stdout or ""
+    body = _strip_fence(body)
     if not body.strip():
         raise StageError(f"stage {stage} returned nothing")
     return body

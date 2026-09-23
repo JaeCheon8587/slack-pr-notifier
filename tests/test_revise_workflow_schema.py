@@ -87,7 +87,9 @@ def _intent() -> Intent:
         opinions=(
             Opinion(
                 opinion_id=41,
+                op="modify",
                 대상문서=("docs/install.md",),
+                연관문서=("docs/README.md", "docs/spec.md"),
                 범위="local",
                 대상주장="설치 절차 절의 요구 버전 표기가 3.2 로 되어 있다",
                 수정방향="3.2 → 4.0",
@@ -154,6 +156,7 @@ def _impact() -> Impact:
                         "install.md#2-설치-절차",
                     ),
                 ),
+                related_unverified=("docs/spec.md",),
             ),
         ),
         required=_required(),
@@ -375,6 +378,14 @@ def test_an_empty_required_field_is_refused_on_both_sides(key) -> None:
 def test_frontmatter_count_disagreeing_with_the_blocks_is_refused() -> None:
     text = render_intent(_intent()).replace("opinions: 1", "opinions: 2")
     with pytest.raises(ValueError, match="opinions"):
+        parse_intent(text)
+
+
+def test_an_unknown_op_kind_is_refused() -> None:
+    """`op` is a closed enum — a fourth kind fails the stage, not the data."""
+
+    text = render_intent(_intent()).replace("op: modify", "op: tweak")
+    with pytest.raises(ValueError, match="op"):
         parse_intent(text)
 
 

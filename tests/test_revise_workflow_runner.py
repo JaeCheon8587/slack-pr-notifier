@@ -1,6 +1,6 @@
 """Drive `StagedRunner`'s wave loop with a scripted CLI and a faked git.
 
-The `claude` subprocess and every `app.git_workspace` call are replaced; the
+The `codex` subprocess and every `app.git_workspace` call are replaced; the
 loop, the node handlers, the re-injection budget and the result assembly are
 the real ones. The fake stage writer builds its stdout with the *production*
 renderers (`schema.render_intent` / `render_edit` / `render_verify`) exactly
@@ -46,11 +46,13 @@ def _settings(tmp_path: Path) -> Settings:
     return Settings(
         _env_file=None,
         workspace_root=str(tmp_path / "ws"),
-        claude_bin="claude",
+        codex_bin="codex",
         ai_model="m",
         ai_effort="high",
         revise_stage_budget_usd=0.5,
         revise_stage_timeout_seconds=60,
+        revise_stage_model="",
+        revise_stage_effort="high",
         revise_max_changed_files=10,
         revise_max_changed_lines=400,
     )
@@ -71,7 +73,9 @@ def _intent() -> schema.Intent:
         opinions=(
             schema.Opinion(
                 opinion_id=41,
+                op="modify",
                 대상문서=(DOC,),
+                연관문서=(),
                 범위="local",
                 대상주장="대상 버전은 3.2 이다",
                 수정방향="3.2 → 4.0",
@@ -127,13 +131,13 @@ class _Proc:
         self.returncode = returncode
 
 
-def _stage_of(cmd: list[str]) -> str:
-    """Which stage a command line belongs to, read from its system prompt."""
+def _stage_of(kwargs: dict) -> str:
+    """Which stage a call belongs to, read from the system prompt on stdin."""
 
-    system = cmd[cmd.index("--system-prompt") + 1]
-    if "revise-intent" in system:
+    text = kwargs["input"]
+    if "revise-intent" in text:
         return "intent"
-    if "revise-edit" in system:
+    if "revise-edit" in text:
         return "edit"
     return "verify"
 
@@ -141,14 +145,20 @@ def _stage_of(cmd: list[str]) -> str:
 def _script(
     monkeypatch, workspace: Path, *, replies: dict[str, str], calls: list[str], edited=True
 ):
-    """Replace the CLI: record the stage, optionally edit the doc, reply."""
+    """Replace the CLI: record the stage, optionally edit the doc, reply.
+
+    The artifact travels through `--output-last-message`, the same channel
+    the real `codex exec` uses — stdout itself stays empty.
+    """
 
     def fake_run(cmd, **kwargs):
-        stage = _stage_of(cmd)
+        stage = _stage_of(kwargs)
         calls.append(stage)
         if stage == "edit" and edited:
             (workspace / DOC).write_text(DOC_TEXT.replace("3.2", "4.0"), encoding="utf-8")
-        return _Proc(replies[stage])
+        out = Path(cmd[cmd.index("--output-last-message") + 1])
+        out.write_text(replies[stage], encoding="utf-8")
+        return _Proc("")
 
     monkeypatch.setattr(runner.subprocess, "run", fake_run)
 
@@ -309,7 +319,9 @@ def test_missing_anchor_short_circuits_both_calls_and_asks_back(monkeypatch, tmp
         opinions=(
             schema.Opinion(
                 opinion_id=41,
+                op="modify",
                 대상문서=(DOC,),
+                연관문서=(),
                 범위="local",
                 대상주장="존재하지 않는 절",
                 수정방향="A → B",
@@ -434,7 +446,9 @@ def test_child_env_carries_no_app_secret(monkeypatch, tmp_path):
 
     def fake_run(cmd, **kwargs):
         seen["env"] = kwargs["env"]
-        return _Proc(schema.render_intent(_intent()))
+        out = Path(cmd[cmd.index("--output-last-message") + 1])
+        out.write_text(schema.render_intent(_intent()), encoding="utf-8")
+        return _Proc("")
 
     monkeypatch.setattr(runner.subprocess, "run", fake_run)
     runner.StagedRunner(_settings(tmp_path)).run(workspace, OPINIONS, SESSION, 900)
@@ -443,39 +457,40 @@ def test_child_env_carries_no_app_secret(monkeypatch, tmp_path):
     assert seen["env"]["ANTHROPIC_API_KEY"] == "sk-keep"
 
 
-def test_read_only_stages_get_no_edit_permission(monkeypatch, tmp_path):
+def test_stage_sandbox_modes_and_command_shape(monkeypatch, tmp_path):
     workspace = _workspace(tmp_path)
     _fake_git(monkeypatch, workspace, tmp_path)
     commands: dict[str, list[str]] = {}
 
     def fake_run(cmd, **kwargs):
-        stage = _stage_of(cmd)
+        stage = _stage_of(kwargs)
         commands[stage] = cmd
         if stage == "edit":
             (workspace / DOC).write_text(DOC_TEXT.replace("3.2", "4.0"), encoding="utf-8")
-        return _Proc(
+        out = Path(cmd[cmd.index("--output-last-message") + 1])
+        out.write_text(
             {
                 "intent": schema.render_intent(_intent()),
                 "edit": schema.render_edit(_receipt()),
                 "verify": schema.render_verify(_verify()),
-            }[stage]
+            }[stage],
+            encoding="utf-8",
         )
+        return _Proc("")
 
     monkeypatch.setattr(runner.subprocess, "run", fake_run)
     runner.StagedRunner(_settings(tmp_path)).run(workspace, OPINIONS, SESSION, 900)
 
-    assert "--permission-mode" not in commands["intent"]
-    assert commands["intent"][commands["intent"].index("--tools") + 1] == ""
-    # 3c holds nothing either: its own hard limits say the diff is the whole of
-    # its evidence, and measured on identical input the Read grant cost
-    # $1.2174 / 2 turns against $0.0287 / 1 turn for the same verdict.
-    assert commands["verify"][commands["verify"].index("--tools") + 1] == ""
-    assert "acceptEdits" in commands["edit"]
-    # The edit stage is whitelisted too: acceptEdits alone would leave it
-    # Grep/Glob/Bash/Task, and the design forbids giving any stage a search.
-    assert commands["edit"][commands["edit"].index("--tools") + 1 :] == ["Read", "Edit", "Write"]
+    # The sandbox flag is the codex equivalent of the old tools whitelist:
+    # read stages cannot write, the edit stage can write inside the workspace.
+    assert commands["intent"][commands["intent"].index("--sandbox") + 1] == "read-only"
+    assert commands["verify"][commands["verify"].index("--sandbox") + 1] == "read-only"
+    assert commands["edit"][commands["edit"].index("--sandbox") + 1] == "workspace-write"
     for stage, cmd in commands.items():
-        assert cmd[cmd.index("--setting-sources") + 1] == "", stage
+        assert cmd[1] == "exec", stage
+        assert "--ephemeral" in cmd and "--skip-git-repo-check" in cmd, stage
+        assert "--output-last-message" in cmd, stage
+        assert cmd[-1] == "-", "the prompt rides on stdin"
 
 
 def test_intent_prompt_shows_headings_but_no_document_body(monkeypatch, tmp_path):
@@ -484,8 +499,10 @@ def test_intent_prompt_shows_headings_but_no_document_body(monkeypatch, tmp_path
     seen: dict[str, str] = {}
 
     def fake_run(cmd, **kwargs):
-        seen.setdefault(_stage_of(cmd), kwargs["input"])
-        return _Proc(schema.render_intent(_intent()))
+        seen.setdefault(_stage_of(kwargs), kwargs["input"])
+        out = Path(cmd[cmd.index("--output-last-message") + 1])
+        out.write_text(schema.render_intent(_intent()), encoding="utf-8")
+        return _Proc("")
 
     monkeypatch.setattr(runner.subprocess, "run", fake_run)
     runner.StagedRunner(_settings(tmp_path)).run(workspace, OPINIONS, SESSION, 900)
@@ -502,17 +519,20 @@ def test_verify_prompt_never_carries_the_edit_receipt(monkeypatch, tmp_path):
     seen: dict[str, str] = {}
 
     def fake_run(cmd, **kwargs):
-        stage = _stage_of(cmd)
+        stage = _stage_of(kwargs)
         seen[stage] = kwargs["input"]
         if stage == "edit":
             (workspace / DOC).write_text(DOC_TEXT.replace("3.2", "4.0"), encoding="utf-8")
-        return _Proc(
+        out = Path(cmd[cmd.index("--output-last-message") + 1])
+        out.write_text(
             {
                 "intent": schema.render_intent(_intent()),
                 "edit": schema.render_edit(_receipt()),
                 "verify": schema.render_verify(_verify()),
-            }[stage]
+            }[stage],
+            encoding="utf-8",
         )
+        return _Proc("")
 
     monkeypatch.setattr(runner.subprocess, "run", fake_run)
     runner.StagedRunner(_settings(tmp_path)).run(workspace, OPINIONS, SESSION, 900)

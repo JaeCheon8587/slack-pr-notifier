@@ -105,7 +105,14 @@ class Settings(BaseSettings):
     # Nominal worst case is 3x this per round; actual observed spend for a
     # full round is ~$0.75, comparable to the $0.42 of the single-call runner
     # it replaces (.orchestration/reports/smoke-claude-runner.md).
+    # Retained for configuration compatibility — the staged runner's stages
+    # are now `codex exec` calls, which have no per-call budget flag.
     revise_stage_budget_usd: float = 1.5
+    # The staged runner's three LLM calls are `codex exec` invocations
+    # (revise_workflow.runner._stage): empty model -> the CLI's configured
+    # default, effort -> `-c model_reasoning_effort=...` on every stage.
+    revise_stage_model: str = ""
+    revise_stage_effort: str = "high"
     revise_max_changed_files: int = 10
     revise_max_changed_lines: int = 400
     revise_clarify_limit: int = 2
@@ -166,7 +173,7 @@ class Settings(BaseSettings):
     # (app.revise_workflow.runner.StagedRunner: the 3a/3b/3c staged workflow
     # of docs/revise-workflow.html, imported lazily by
     # ``app.revise_executor._select_runner`` so this module stays importable
-    # while that package does not exist yet). Reuses `claude_bin` above for
+    # while that package does not exist yet). Reuses `codex_bin` above for
     # the executable path — no separate setting needed. The default stays
     # "stub" so nothing about the current rail changes by adding "staged".
     ai_runner: str = "stub"

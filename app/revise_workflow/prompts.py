@@ -62,7 +62,15 @@ INTENT_SYSTEM = (
     "애매하면 local 로 둔다 — 동반 변경은 기계가 따로 찾는다.\n"
     "6. 같은 것을 말하는 의견이 여럿이면 통합에 그 opinion_id 들을 적는다. "
     "서로 모순되면 충돌해소에 어느 쪽을 택했는지와 이유를 한 줄로 쓴다.\n"
-    "7. 템플릿에 없는 필드나 섹션을 만들지 않는다."
+    "7. 모든 의견을 create | modify | delete 로 분류한다. create 는 새 내용이나 "
+    "섹션의 추가, modify 는 기존 내용의 변경, delete 는 기존 내용의 제거다. "
+    "변경이 아닌 의견(단순 질문·논의)은 가장 가까운 변경 의도로 해석하고, "
+    "해석할 수 없으면 search_terms 를 비워 대상 미확인으로 보낸다 — 억지 분류는 "
+    "거짓 검증 기준을 만든다.\n"
+    "8. 연관문서에는 목차 제목만 보고 이 변경이 함께 영향을 줄 수 있어 보이는 "
+    "문서 경로를 적는다. 의심 수준이지 확정이 아니다 — 기계가 리터럴·링크 증거로 "
+    "검증하고, 증거가 없으면 후보가 되지 않는다. 목차에 없는 경로는 쓰지 않는다.\n"
+    "9. 템플릿에 없는 필드나 섹션을 만들지 않는다."
 )
 
 _INTENT_TASK = (
@@ -159,7 +167,8 @@ EDIT_SYSTEM = (
 _EDIT_TASK = (
     "[할 일] 각 의견의 앵커를 스펙의 수정방향대로 고치고, 동반 후보를 채택할지 "
     "정해 함께 고친다. 그 다음 무엇을 했는지 영수증으로 적는다.\n"
-    "[도구] 파일 편집이 허용돼 있다. 검색 도구는 없다 — 위치는 이미 확정돼 있다.\n"
+    "[도구] 파일 읽기·편집이 허용돼 있다. 위치는 이미 확정돼 있다 — 창 밖을 "
+    "읽거나 검색하지 않는다.\n"
     "[출력] 편집을 마친 뒤, 아래 템플릿 그대로의 마크다운 본문만 출력한다. "
     "코드펜스로 감싸지 말고, 설명 문장을 앞뒤에 붙이지 않는다."
 )
@@ -292,8 +301,10 @@ def _fence(body: str) -> str:
 def _render_intent_digest(intent: Intent) -> str:
     lines: list[str] = []
     for opinion in intent.opinions:
-        lines.append(f"opinion_id={opinion.opinion_id} 범위={opinion.범위}")
+        lines.append(f"opinion_id={opinion.opinion_id} op={opinion.op} 범위={opinion.범위}")
         lines.append(f"  대상문서: {', '.join(opinion.대상문서) or '(미정)'}")
+        if opinion.연관문서:
+            lines.append(f"  연관문서: {', '.join(opinion.연관문서)}")
         lines.append(f"  대상주장: {opinion.대상주장}")
         lines.append(f"  수정방향: {opinion.수정방향}")
         if opinion.근거:

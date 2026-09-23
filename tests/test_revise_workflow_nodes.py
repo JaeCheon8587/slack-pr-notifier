@@ -77,6 +77,7 @@ def _intent(
     수정방향: str = "3.2 → 4.0",
     search_terms: tuple[str, ...] = ("2. 설치 절차", "요구 버전: 3.2"),
     대상문서: tuple[str, ...] = ("docs/install.md",),
+    연관문서: tuple[str, ...] = (),
     opinion_id: int = 41,
 ) -> Intent:
     return Intent(
@@ -87,7 +88,9 @@ def _intent(
         opinions=(
             Opinion(
                 opinion_id=opinion_id,
+                op="modify",
                 대상문서=대상문서,
+                연관문서=연관문서,
                 범위="local",
                 대상주장="요구 버전 표기가 3.2 로 되어 있다",
                 수정방향=수정방향,
@@ -168,7 +171,8 @@ def test_normalized_match_is_used_only_when_exact_finds_nothing() -> None:
 
 def test_impact_reverse_searches_literals_and_inbound_links() -> None:
     tree = _tree()
-    impact = build_impact(build_anchor(_intent(), tree), tree)
+    intent = _intent()
+    impact = build_impact(intent, build_anchor(intent, tree), tree)
     entry = impact.entries[0]
     assert entry.anchor is not None
     assert ("kv", "요구 버전", "3.2") in [
@@ -185,7 +189,8 @@ def test_impact_reverse_searches_literals_and_inbound_links() -> None:
 
 def test_every_candidate_carries_its_evidence() -> None:
     tree = _tree()
-    impact = build_impact(build_anchor(_intent(), tree), tree)
+    intent = _intent()
+    impact = build_impact(intent, build_anchor(intent, tree), tree)
     for candidate in impact.entries[0].candidates:
         assert candidate.via in ("literal", "link")
         assert candidate.match
@@ -194,16 +199,18 @@ def test_every_candidate_carries_its_evidence() -> None:
 
 def test_the_anchor_unit_is_never_its_own_companion() -> None:
     tree = _tree()
-    anchor = build_anchor(_intent(), tree)
-    impact = build_impact(anchor, tree)
+    intent = _intent()
+    anchor = build_anchor(intent, tree)
+    impact = build_impact(intent, anchor, tree)
     own = anchor.entries[0].unit_id
     assert all(candidate.unit_id != own for candidate in impact.entries[0].candidates)
 
 
 def test_a_missing_anchor_gets_no_impact_entry() -> None:
     tree = _tree()
-    anchor = build_anchor(_intent(search_terms=("9. 배포 파이프라인",)), tree)
-    assert build_impact(anchor, tree).entries == ()
+    intent = _intent(search_terms=("9. 배포 파이프라인",))
+    anchor = build_anchor(intent, tree)
+    assert build_impact(intent, anchor, tree).entries == ()
 
 
 def test_a_file_level_link_without_a_fragment_is_not_a_section_link() -> None:
@@ -211,8 +218,27 @@ def test_a_file_level_link_without_a_fragment_is_not_a_section_link() -> None:
         "docs/install.md": _install(),
         "docs/README.md": "# 개요\n[설치](install.md) 를 본다.\n",
     }
-    impact = build_impact(build_anchor(_intent(), tree), tree)
+    intent = _intent()
+    impact = build_impact(intent, build_anchor(intent, tree), tree)
     assert impact.entries[0].links_in == ()
+
+
+def test_related_docs_without_evidence_are_reported_not_promoted() -> None:
+    """3a's 연관문서 guess is checked against the same mechanical evidence.
+
+    README carries real literal+link evidence, so it is a candidate — not an
+    unverified related. spec.md exists but shares nothing, and ghost.md does
+    not exist at all: both land in `related_unverified`, suspicion reported
+    rather than silently dropped.
+    """
+
+    tree = _tree()
+    tree["docs/spec.md"] = "# 사양\n관련 없는 내용이다.\n"
+    intent = _intent(연관문서=("docs/README.md", "docs/spec.md", "docs/ghost.md"))
+    impact = build_impact(intent, build_anchor(intent, tree), tree)
+    entry = impact.entries[0]
+    assert {candidate.file for candidate in entry.candidates} == {"docs/README.md"}
+    assert entry.related_unverified == ("docs/ghost.md", "docs/spec.md")
 
 
 # --------------------------------------------------------------------------
@@ -224,7 +250,7 @@ def _gate(changed_paths, **kwargs):
     base, head = _tree("3.2"), _tree("4.0")
     intent = kwargs.pop("intent", _intent())
     anchor = build_anchor(intent, head)
-    impact = build_impact(anchor, head)
+    impact = build_impact(intent, anchor, head)
     return build_gate(
         intent,
         anchor,
@@ -314,7 +340,7 @@ def test_a_plain_text_swap_has_no_sets_and_is_judged_by_text() -> None:
     gate = build_gate(
         intent,
         anchor,
-        build_impact(anchor, head),
+        build_impact(intent, anchor, head),
         ["docs/install.md"],
         base,
         head,
@@ -337,7 +363,7 @@ def test_a_plain_text_swap_that_did_not_happen_still_fails() -> None:
     gate = build_gate(
         intent,
         anchor,
-        build_impact(anchor, {"docs/install.md": body}),
+        build_impact(intent, anchor, {"docs/install.md": body}),
         ["docs/install.md"],
         {"docs/install.md": body},
         {"docs/install.md": body},

@@ -303,22 +303,31 @@ def _via_rank(via: str) -> int:
     return 0 if via == "literal" else 1
 
 
-def build_impact(anchor: Anchor, head_tree: dict[str, str]) -> Impact:
+def build_impact(intent: Intent, anchor: Anchor, head_tree: dict[str, str]) -> Impact:
     """Reverse-search the anchor unit's literals and inbound links.
 
     Two evidence kinds, both recorded on the candidate: `literal` (the same
     value lives in another unit) and `link` (another unit links to the anchor
     section). A candidate with no evidence is never produced — the machine
     finds, 3b decides.
+
+    3a's `연관문서` guesses are checked against the same evidence. The scan
+    itself is already repo-wide, so a related file with real evidence was a
+    candidate anyway; what this adds is the negative report — a related file
+    that produced no candidate lands in `related_unverified`, suspicion the
+    machine could not confirm, carried to the report instead of dropped.
     """
 
     units = _index(head_tree)
     by_unit = {unit.unit_id: unit for unit in units}
     literals_by_unit = {unit.unit_id: extract_literals(unit.text) for unit in units}
+    opinions = {opinion.opinion_id: opinion for opinion in intent.opinions}
     entries: list[ImpactEntry] = []
     for entry in anchor.entries:
         if entry.status != "FOUND" or not entry.unit_id:
             continue
+        opinion = opinions.get(entry.opinion_id)
+        related = {_posix(path) for path in (opinion.연관문서 if opinion else ())}
         unit = by_unit.get(entry.unit_id)
         if unit is None:
             entries.append(
@@ -328,6 +337,7 @@ def build_impact(anchor: Anchor, head_tree: dict[str, str]) -> Impact:
                     literals=(),
                     links_in=(),
                     candidates=(),
+                    related_unverified=tuple(sorted(related)),
                 )
             )
             continue
@@ -374,6 +384,7 @@ def build_impact(anchor: Anchor, head_tree: dict[str, str]) -> Impact:
             found.values(),
             key=lambda row: (row.file, row.line, row.unit_id, _via_rank(row.via), row.match),
         )
+        candidate_files = {candidate.file for candidate in candidates}
         entries.append(
             ImpactEntry(
                 opinion_id=entry.opinion_id,
@@ -387,6 +398,9 @@ def build_impact(anchor: Anchor, head_tree: dict[str, str]) -> Impact:
                     sorted(links_in, key=lambda row: (row.file, row.line, row.target))
                 ),
                 candidates=tuple(candidates),
+                related_unverified=tuple(
+                    sorted(path for path in related if path not in candidate_files)
+                ),
             )
         )
     unanchored = [entry.opinion_id for entry in entries if entry.anchor is None]

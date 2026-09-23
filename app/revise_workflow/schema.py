@@ -60,6 +60,11 @@ _BLOCK_SEQ = re.compile(r"^\s*-(\s|$)")
 #: The four fixed uppercase fields, in render order.
 REQUIRED_KEYS: tuple[str, ...] = ("STATUS", "UNCOVERED", "UNCERTAIN", "CONFIDENCE")
 
+#: The change kinds 3a must commit to — the design's step 2 (생성/수정/삭제 분류).
+#: A closed enum, enforced at parse: a stage that invents a fourth kind fails
+#: the node rather than drifting the contract.
+OP_KINDS: tuple[str, ...] = ("create", "modify", "delete")
+
 #: What a LITERAL check can say about how many occurrences changed: nothing.
 #: `extract_literals` dedups on (kind, key, value), so occurrence counts are
 #: gone by the time the gate sees them — see `nodes.build_gate`.
@@ -321,6 +326,13 @@ def _as_str(value: object) -> str:
     return str(value)
 
 
+def _as_op(value: object, where: str) -> str:
+    op = _as_str(value)
+    if op not in OP_KINDS:
+        raise ValueError(f"{where}: op must be one of {OP_KINDS}, got {op!r}")
+    return op
+
+
 def _as_int(value: object) -> int:
     if isinstance(value, bool) or not isinstance(value, (int, str)):
         raise ValueError(f"expected an integer, got {value!r}")
@@ -436,10 +448,19 @@ def _parse_required(meta: Mapping[str, object], where: str) -> Required:
 
 @dataclass(frozen=True)
 class Opinion:
-    """One structured opinion — the 8 fields of §S4② plus `search_terms`."""
+    """One structured opinion — the 8 fields of §S4② plus `op`, `연관문서`
+    and `search_terms`.
+
+    `op` is the create/modify/delete classification the design's step 2 asks
+    for; `연관문서` is 3a's suspicion-level list of documents the change may
+    also touch — the impact node verifies those mechanically and reports the
+    ones no evidence confirmed.
+    """
 
     opinion_id: int
+    op: str  # create | modify | delete — OP_KINDS
     대상문서: tuple[str, ...]
+    연관문서: tuple[str, ...]
     범위: str  # local | cross-doc
     대상주장: str
     수정방향: str
@@ -482,7 +503,9 @@ def render_intent(intent: Intent) -> str:
                 str(opinion.opinion_id),
                 {
                     "opinion_id": opinion.opinion_id,
+                    "op": opinion.op,
                     "대상문서": list(opinion.대상문서),
+                    "연관문서": list(opinion.연관문서),
                     "범위": opinion.범위,
                     "대상주장": opinion.대상주장,
                     "수정방향": opinion.수정방향,
@@ -509,7 +532,9 @@ def parse_intent(text: str) -> Intent:
         opinions.append(
             Opinion(
                 opinion_id=_as_int(_need(fields, "opinion_id", spot)),
+                op=_as_op(_need(fields, "op", spot), spot),
                 대상문서=_as_strs(_need(fields, "대상문서", spot), spot, "대상문서"),
+                연관문서=_as_strs(_need(fields, "연관문서", spot), spot, "연관문서"),
                 범위=_as_str(_need(fields, "범위", spot)),
                 대상주장=_as_str(_need(fields, "대상주장", spot)),
                 수정방향=_as_str(_need(fields, "수정방향", spot)),
@@ -748,6 +773,9 @@ class ImpactEntry:
     literals: tuple[ImpactLiteral, ...]
     links_in: tuple[LinkIn, ...]
     candidates: tuple[ImpactCandidate, ...]
+    #: 3a가 연관 문서로 지목했으나 리터럴·링크 증거를 찾지 못한 경로들 — 후보가
+    #: 되지 못한 의심으로, 버리지 않고 보고로 넘긴다.
+    related_unverified: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -822,6 +850,7 @@ def render_impact(impact: Impact) -> str:
                         }
                         for candidate in entry.candidates
                     ],
+                    "related_unverified": list(entry.related_unverified),
                 },
             )
         )
@@ -877,6 +906,9 @@ def parse_impact(text: str) -> Impact:
                         match=_as_str(row.get("match")),
                     )
                     for row in _as_maps(_need(fields, "candidates", spot), spot, "candidates")
+                ),
+                related_unverified=_as_strs(
+                    fields.get("related_unverified"), spot, "related_unverified"
                 ),
             )
         )
@@ -1576,7 +1608,9 @@ def intent_template(*, mr_iid: int, project_id: str, round: int, base_sha: str) 
             opinions=(
                 Opinion(
                     opinion_id=_ph("opinion_id"),
+                    op=_ph("create | modify | delete"),
                     대상문서=(_ph("목차에 있는 경로"),),
+                    연관문서=(),
                     범위=_ph("local | cross-doc"),
                     대상주장=_ph("의견이 지목한 현재 서술"),
                     수정방향=_ph("A → B"),
