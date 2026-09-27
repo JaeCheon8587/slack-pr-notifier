@@ -1,4 +1,4 @@
-"""The seven revise artifacts — dataclasses, parsers, renderers, templates.
+"""The eight revise artifacts — dataclasses, parsers, renderers, templates.
 
 docs/revise-workflow.html Part 3 is the field contract; this module is its
 only implementation. The empty prompt templates come out of the same
@@ -36,7 +36,7 @@ Field names are the artifact keys verbatim, Korean ones included
 no key mapping table to fall out of date; `from`/`to` are the one exception
 because they are Python keywords (mrdoc's `ChangedValue` does the same).
 
-Round-trip contract: `parse_x(render_x(x)) == x` for all seven. Parsers
+Round-trip contract: `parse_x(render_x(x)) == x` for all eight. Parsers
 coerce every scalar to the dataclass's declared type, so a numeric-looking
 string field (`project_id="1009"`, a digits-only sha) survives the trip.
 """
@@ -64,6 +64,16 @@ REQUIRED_KEYS: tuple[str, ...] = ("STATUS", "UNCOVERED", "UNCERTAIN", "CONFIDENC
 #: A closed enum, enforced at parse: a stage that invents a fourth kind fails
 #: the node rather than drifting the contract.
 OP_KINDS: tuple[str, ...] = ("create", "modify", "delete")
+
+#: What the spec gate decided per opinion. `ok` goes on to 3b; the other four
+#: never reach an LLM again this round — `already_applied` is closed as
+#: applied, `spec_error` re-injects 3a (budget permitting), `clarify` and
+#: `missing` go back to the human.
+SPEC_DECISIONS: tuple[str, ...] = ("ok", "already_applied", "spec_error", "clarify", "missing")
+
+#: How strongly the anchor unit matched the opinion's search terms — the
+#: best tier any one term reached inside that unit (`nodes._match_term`).
+ANCHOR_TIERS: tuple[str, ...] = ("exact", "normalized", "partial")
 
 #: What a LITERAL check can say about how many occurrences changed: nothing.
 #: `extract_literals` dedups on (kind, key, value), so occurrence counts are
@@ -728,6 +738,142 @@ def parse_anchor(text: str) -> Anchor:
 
 
 # --------------------------------------------------------------------------
+# 15-spec.md — tool, the pre-edit spec gate
+# --------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class SpecEntry:
+    """One input opinion, checked against its own text and the anchor section.
+
+    `from_value`/`to_value` are the substitution 3b and the gate act on —
+    the code-resolved A, not 3a's guess (`a_source` says where A came from:
+    `opinion` | `spec` | `code`). `host` is the opinion this one was merged
+    into via 통합 (0 when none); a hosted entry follows its host's decision.
+    """
+
+    opinion_id: int
+    decision: str  # SPEC_DECISIONS
+    op: str = ""
+    from_value: str = ""  # artifact key 'from' — a Python keyword
+    to_value: str = ""  # artifact key 'to'
+    a_source: str = ""
+    occurrences: int = 0
+    anchor_tier: str = ""  # ANCHOR_TIERS, '' when no anchor
+    host: int = 0
+    alternatives: tuple[str, ...] = ()
+    a_candidates: tuple[str, ...] = ()
+    notes: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class Spec:
+    mr_iid: int
+    round: int
+    entries: tuple[SpecEntry, ...]
+    required: Required
+
+    def ids(self, decision: str) -> tuple[int, ...]:
+        return tuple(entry.opinion_id for entry in self.entries if entry.decision == decision)
+
+    def entry(self, opinion_id: int) -> SpecEntry | None:
+        return next((entry for entry in self.entries if entry.opinion_id == opinion_id), None)
+
+    def counts(self) -> dict[str, int]:
+        return {decision: len(self.ids(decision)) for decision in SPEC_DECISIONS}
+
+
+def _as_decision(value: object, where: str) -> str:
+    decision = _as_str(value)
+    if decision not in SPEC_DECISIONS:
+        raise ValueError(f"{where}: decision must be one of {SPEC_DECISIONS}, got {decision!r}")
+    return decision
+
+
+def _as_tier(value: object, where: str) -> str:
+    tier = _as_str(value)
+    if tier and tier not in ANCHOR_TIERS:
+        raise ValueError(f"{where}: anchor_tier must be one of {ANCHOR_TIERS}, got {tier!r}")
+    return tier
+
+
+def render_spec(spec: Spec) -> str:
+    """Render 15-spec.md — one SPEC block per input opinion."""
+
+    parts = [
+        render_frontmatter(
+            {
+                "mr_iid": spec.mr_iid,
+                "round": spec.round,
+                "opinions": len(spec.entries),
+                "decisions": spec.counts(),
+                **_render_required(spec.required),
+            }
+        )
+    ]
+    for entry in spec.entries:
+        parts.append("")
+        parts.append(
+            _render_block(
+                "SPEC",
+                str(entry.opinion_id),
+                {
+                    "opinion_id": entry.opinion_id,
+                    "decision": entry.decision,
+                    "op": entry.op or None,
+                    "from": entry.from_value or None,
+                    "to": entry.to_value or None,
+                    "a_source": entry.a_source or None,
+                    "occurrences": entry.occurrences,
+                    "anchor_tier": entry.anchor_tier or None,
+                    "host": entry.host,
+                    "alternatives": list(entry.alternatives),
+                    "a_candidates": list(entry.a_candidates),
+                    "notes": list(entry.notes),
+                },
+            )
+        )
+    return "\n".join(parts) + "\n"
+
+
+def parse_spec(text: str) -> Spec:
+    """Parse 15-spec.md back."""
+
+    where = "15-spec.md"
+    meta = parse_frontmatter(text)
+    required = _parse_required(meta, where)
+    entries: list[SpecEntry] = []
+    for block in _of_type(_parse_blocks(text), "SPEC"):
+        fields = block.fields
+        spot = block.where
+        entries.append(
+            SpecEntry(
+                opinion_id=_as_int(_need(fields, "opinion_id", spot)),
+                decision=_as_decision(_need(fields, "decision", spot), spot),
+                op=_as_str(fields.get("op")),
+                from_value=_as_str(fields.get("from")),
+                to_value=_as_str(fields.get("to")),
+                a_source=_as_str(fields.get("a_source")),
+                occurrences=_as_int(fields.get("occurrences") or 0),
+                anchor_tier=_as_tier(fields.get("anchor_tier"), spot),
+                host=_as_int(fields.get("host") or 0),
+                alternatives=_as_strs(fields.get("alternatives"), spot, "alternatives"),
+                a_candidates=_as_strs(fields.get("a_candidates"), spot, "a_candidates"),
+                notes=_as_strs(fields.get("notes"), spot, "notes"),
+            )
+        )
+    spec = Spec(
+        mr_iid=_as_int(_need(meta, "mr_iid", where)),
+        round=_as_int(_need(meta, "round", where)),
+        entries=tuple(entries),
+        required=required,
+    )
+    _check(meta, "opinions", len(spec.entries), where)
+    _check(meta, "decisions", spec.counts(), where)
+    return spec
+
+
+# --------------------------------------------------------------------------
 # 20-impact.md — tool
 # --------------------------------------------------------------------------
 
@@ -1106,10 +1252,17 @@ class LiteralSets:
 
 @dataclass(frozen=True)
 class LiteralText:
-    """`section_text` + `in` — the only check that sees plain-text swaps."""
+    """`section_text` + `in` — the only check that sees plain-text swaps.
+
+    `a_in_base_text` closes the vacuous pass: an A the base section never
+    held is "absent from head" without any edit, so B merely appearing used
+    to pass the check. Defaults True so artifacts written before the field
+    existed still parse.
+    """
 
     a_in_head_text: bool
     b_in_head_text: bool
+    a_in_base_text: bool = True
 
 
 @dataclass(frozen=True)
@@ -1220,6 +1373,7 @@ def render_gate(gate: Gate) -> str:
                         }
                     ),
                     "text": {
+                        "a_in_base_text": check.text.a_in_base_text,
                         "a_in_head_text": check.text.a_in_head_text,
                         "b_in_head_text": check.text.b_in_head_text,
                     },
@@ -1300,6 +1454,11 @@ def parse_gate(text: str) -> Gate:
                 text=LiteralText(
                     a_in_head_text=_as_bool(text_map.get("a_in_head_text")),
                     b_in_head_text=_as_bool(text_map.get("b_in_head_text")),
+                    a_in_base_text=(
+                        True
+                        if text_map.get("a_in_base_text") is None
+                        else _as_bool(text_map.get("a_in_base_text"))
+                    ),
                 ),
                 occurrences=_as_str(_need(fields, "occurrences", spot)),
                 result=_as_str(_need(fields, "result", spot)),

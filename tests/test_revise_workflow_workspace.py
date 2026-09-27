@@ -42,6 +42,7 @@ def test_artifact_names_are_the_design_file_names(tmp_path) -> None:
     assert {key: path.name for key, path in paths.items()} == {
         "intent": "00-intent.md",
         "anchor": "10-anchor.md",
+        "spec": "15-spec.md",
         "impact": "20-impact.md",
         "edit": "30-edit.md",
         "gate": "35-gate.md",
@@ -73,9 +74,15 @@ def test_resume_skips_completed_nodes(tmp_path) -> None:
     directory = _dir(tmp_path)
     directory.mkdir(parents=True)
     paths = artifact_paths(directory)
-    for key in ("intent", "anchor", "impact", "edit"):
+    for key in ("intent", "anchor", "spec", "impact", "edit"):
         paths[key].write_text("x", encoding="utf-8")
     assert runnable_nodes(derive_state(directory)) == ["gate"]
+
+
+def test_spec_sits_between_anchor_and_impact() -> None:
+    assert NODES.index("anchor") < NODES.index("spec") < NODES.index("impact")
+    assert DEPS["spec"] == ("anchor",)
+    assert DEPS["impact"] == ("spec",)
 
 
 def test_runnability_is_direct_deps_only(tmp_path) -> None:

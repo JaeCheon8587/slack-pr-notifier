@@ -14,7 +14,9 @@ This package holds the deterministic half:
 - `schema`    — the seven artifacts' dataclasses, parsers and renderers. The
   renderers also produce the empty templates the prompts carry, so a prompt
   and its parser physically cannot drift.
-- `nodes`     — the four tool nodes: anchor / impact / gate / summary-extract.
+- `nodes`     — the five tool nodes: anchor / spec / impact / gate /
+  summary-extract. `spec` checks 3a's spec against the opinion text and the
+  anchor section before 3b is called, and resolves the current value A.
 
 Everything here is a pure function: no subprocess, no git, no network, no
 Settings, no module state. The gate never calls git — it takes

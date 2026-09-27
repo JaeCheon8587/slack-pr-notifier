@@ -1,4 +1,4 @@
-"""Tests for app/revise_workflow/schema.py — the seven artifacts' codec.
+"""Tests for app/revise_workflow/schema.py — the eight artifacts' codec.
 
 No agent is faked here: the artifacts are built as dataclasses and pushed
 through the production renderers, which is also how the prompt templates are
@@ -44,6 +44,8 @@ from app.revise_workflow.schema import (
     LiteralText,
     Opinion,
     Required,
+    Spec,
+    SpecEntry,
     Summary,
     Unprocessed,
     Verdict,
@@ -56,6 +58,7 @@ from app.revise_workflow.schema import (
     parse_gate,
     parse_impact,
     parse_intent,
+    parse_spec,
     parse_summary,
     parse_verify,
     render_anchor,
@@ -63,6 +66,7 @@ from app.revise_workflow.schema import (
     render_gate,
     render_impact,
     render_intent,
+    render_spec,
     render_summary,
     render_verify,
     verify_template,
@@ -279,9 +283,44 @@ def _summary() -> Summary:
     )
 
 
+def _spec() -> Spec:
+    return Spec(
+        mr_iid=11,
+        round=1,
+        entries=(
+            SpecEntry(
+                opinion_id=41,
+                decision="ok",
+                op="modify",
+                from_value="3.2",
+                to_value="4.0",
+                a_source="code",
+                occurrences=2,
+                anchor_tier="exact",
+                alternatives=("docs/README.md § 개요",),
+                notes=("스펙의 현재 값 '3.1' 을 절의 같은 종류 값 '3.2' 로 교정했다",),
+            ),
+            SpecEntry(opinion_id=42, decision="ok", op="modify", host=41),
+            SpecEntry(
+                opinion_id=43,
+                decision="clarify",
+                op="modify",
+                from_value="3.1",
+                to_value="4.0",
+                anchor_tier="partial",
+                a_candidates=("3.2", "3.3"),
+                notes=("대상 절에 바꿀 수 있는 현재 값이 여럿이다: 3.2, 3.3",),
+            ),
+            SpecEntry(opinion_id=44, decision="missing"),
+        ),
+        required=_required(),
+    )
+
+
 ROUND_TRIPS = (
     ("intent", _intent, render_intent, parse_intent),
     ("anchor", _anchor, render_anchor, parse_anchor),
+    ("spec", _spec, render_spec, parse_spec),
     ("impact", _impact, render_impact, parse_impact),
     ("edit", _edit, render_edit, parse_edit),
     ("gate", _gate, render_gate, parse_gate),
@@ -387,6 +426,25 @@ def test_an_unknown_op_kind_is_refused() -> None:
     text = render_intent(_intent()).replace("op: modify", "op: tweak")
     with pytest.raises(ValueError, match="op"):
         parse_intent(text)
+
+
+def test_an_unknown_spec_decision_is_refused() -> None:
+    text = render_spec(_spec()).replace("decision: missing", "decision: maybe")
+    with pytest.raises(ValueError, match="decision"):
+        parse_spec(text)
+
+
+def test_spec_decision_counts_are_derived_and_checked() -> None:
+    text = render_spec(_spec())
+    assert "decisions: {ok: 2, already_applied: 0, spec_error: 0, clarify: 1, missing: 1}" in text
+    with pytest.raises(ValueError, match="decisions"):
+        parse_spec(text.replace("clarify: 1, missing: 1", "clarify: 0, missing: 2"))
+
+
+def test_a_gate_written_before_a_in_base_text_existed_still_parses() -> None:
+    text = render_gate(_gate()).replace("a_in_base_text: true, ", "")
+    assert "a_in_base_text" not in text
+    assert all(check.text.a_in_base_text for check in parse_gate(text).literals)
 
 
 def test_quoted_values_keep_their_commas_and_colons() -> None:

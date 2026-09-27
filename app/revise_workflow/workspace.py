@@ -26,6 +26,7 @@ from pathlib import Path
 ARTIFACT_FILES: dict[str, str] = {
     "intent": "00-intent.md",
     "anchor": "10-anchor.md",
+    "spec": "15-spec.md",
     "impact": "20-impact.md",
     "edit": "30-edit.md",
     "gate": "35-gate.md",
@@ -38,7 +39,11 @@ ARTIFACT_FILES: dict[str, str] = {
 DEPS: dict[str, tuple[str, ...]] = {
     "intent": (),
     "anchor": ("intent",),
-    "impact": ("anchor",),
+    # The spec gate checks 3a's spec against the opinion text and the anchor
+    # section before anything downstream is built on it — a wrong A caught
+    # here costs no 3b call.
+    "spec": ("anchor",),
+    "impact": ("spec",),
     "edit": ("impact",),
     "gate": ("edit",),
     "verify": ("gate",),
@@ -49,6 +54,7 @@ DEPS: dict[str, tuple[str, ...]] = {
 NODES: tuple[str, ...] = (
     "intent",
     "anchor",
+    "spec",
     "impact",
     "edit",
     "gate",
