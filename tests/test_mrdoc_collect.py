@@ -282,6 +282,7 @@ def test_artifact_carries_exactly_the_declared_fields() -> None:
         "textual",
         "prose_added",
         "prose_removed",
+        "audit",  # the final audit's verdict on this 설명 — declared, not a ruling
     ]
     assert list(blocks[collect.file_blocks[0].file_id]) == [
         "path",

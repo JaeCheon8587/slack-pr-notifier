@@ -14,7 +14,12 @@ from dataclasses import replace
 
 from app.mrdoc.analysis import AnalysisUnit, FileAnalysis
 from app.mrdoc.changeset import build_changeset
-from app.mrdoc.collect import build_collect, parse_collect, render_collect
+from app.mrdoc.collect import (
+    EXPLANATION_FAILED,
+    build_collect,
+    parse_collect,
+    render_collect,
+)
 from app.mrdoc.excerpt import build_excerpts
 from app.mrdoc.levelcheck import build_levelcheck
 from app.mrdoc.literals import build_literals
@@ -261,6 +266,36 @@ def test_slack_summary_lists_top_themes_before_the_trust_line() -> None:
     assert "주요 주제: 버전 정책 · 문서 개편" in lines
     assert lines[-2].startswith("주요 주제: ")
     assert "[리포트 신뢰도]" in lines[-1]
+
+
+def test_failed_audit_prints_a_dash_not_a_zero() -> None:
+    """No audit means the counts are unknown — 0 would claim a clean check."""
+
+    collect, _structure, _excerpts = _pipeline()  # verifier_text '' — unreadable
+    assert collect.verify["status"] == "failed"
+    trust = overview_lines(collect, mr_iid=18)[-1]
+    assert "검증 실패" in trust
+    assert "지적 잔존 —" in trust and "집계 불일치 —" in trust
+    # owed a verdict = units with a 설명; new.md's unit has none to audit
+    explained = [u for u in collect.units if u.explanation != EXPLANATION_FAILED]
+    assert 0 < len(explained) < len(collect.units)
+    assert f"미검증 {len(explained)}" in trust
+    page = _page()
+    assert "<h3>검증 실패</h3>" in page  # the 03 card, not a silent zero
+    assert "<th>검증 상태</th><td>실패</td>" in page
+    assert 'class="pill tag-audit-none">미검증<' in page
+
+
+def test_collect_written_before_coverage_reads_as_ok() -> None:
+    """An old 50-collect has no status — absence is not evidence of failure."""
+
+    collect, _structure, _excerpts = _pipeline()
+    legacy = replace(
+        collect, verify={"rounds": 1, "outstanding": 0, "counts_mismatch": 0}
+    )
+    trust = overview_lines(legacy, mr_iid=18)[-1]
+    assert "검증 실패" not in trust
+    assert "지적 잔존 0" in trust and "미검증 0" in trust
 
 
 def test_strip_ids_removes_hashes_from_prose() -> None:

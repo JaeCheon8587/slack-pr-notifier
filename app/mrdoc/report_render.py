@@ -28,6 +28,7 @@ from pathlib import Path
 from . import classes
 from .collect import (
     _CONF_KEYS,
+    AUDIT_UNAUDITED,
     EXPLANATION_FAILED,
     SUMMARY_FAILED,
     Collect,
@@ -36,6 +37,12 @@ from .collect import (
 )
 from .excerpt import Excerpts
 from .structure import Structure, TreeSection
+from .verifier import VERIFY_FAILED
+
+#: What a count prints when the audit that would have produced it failed —
+#: a zero there would claim a check that never happened.
+UNKNOWN = "—"
+_AUDIT_LABELS = {"invented": "지어냄", "omitted": "빠뜨림"}
 
 _AXES = (classes.STRUCTURE, classes.MEANING, classes.EXPRESSION)
 _OPS = ("추가", "삭제", "변경")
@@ -157,6 +164,38 @@ def _prose_failures(
     return tuple(sorted(failed))
 
 
+def _verify_view(collect: Collect) -> tuple[bool, int, int, int]:
+    """(audit failed, outstanding, counts mismatch, unaudited) from 50-collect.
+
+    An artifact written before coverage existed has no status and reads as
+    ok — the absence of the field is not evidence of a failed audit.
+    """
+
+    verify = collect.verify
+    failed = str(verify.get("status") or "") == VERIFY_FAILED
+    return (
+        failed,
+        int(verify.get("outstanding", 0) or 0),
+        int(verify.get("counts_mismatch", 0) or 0),
+        int(verify.get("unaudited", 0) or 0),
+    )
+
+
+def _count(value: int, failed: bool) -> str:
+    return UNKNOWN if failed else str(value)
+
+
+def _orphans(collect: Collect) -> list[str]:
+    """Findings aimed at an id no unit or file carries — counted, never re-mapped.
+
+    They stay in 지적 잔존 (the verifier did complain) but no card can wear
+    the mark, so 05 lists them by the id the verifier wrote.
+    """
+
+    known = collect.valid_ids()
+    return [target for target in collect.fix_targets if target not in known]
+
+
 def overview_lines(
     collect: Collect,
     *,
@@ -191,13 +230,16 @@ def overview_lines(
     ]
     for entry in collect.file_blocks:
         lines.append(f"{_basename(entry.path)}: {_strip_ids(entry.summary)}")
+    failed, outstanding, mismatch, unaudited = _verify_view(collect)
     lines.append(
         "[리포트 신뢰도] "
         + " · ".join(
             [
                 f"설명 생성 실패 파일 {len(_prose_failures(collect, units))}",
-                f"지적 잔존 {collect.verify.get('outstanding', 0)}",
-                f"집계 불일치 {collect.verify.get('counts_mismatch', 0)}",
+                *(["검증 실패"] if failed else []),
+                f"지적 잔존 {_count(outstanding, failed)}",
+                f"집계 불일치 {_count(mismatch, failed)}",
+                f"미검증 {unaudited}",
                 f"분류 불확실 {counts.get(classes.UNCLASSIFIED, 0)}",
                 f"refs 드롭 {collect.refs_dropped + dropped}",
             ]
@@ -346,12 +388,15 @@ def _pipeline_issues(
 
     prose_failures = len(_prose_failures(collect, units))
     reasons: list[str] = []
-    outstanding = int(collect.verify.get("outstanding", 0) or 0)
+    failed, outstanding, mismatch, unaudited = _verify_view(collect)
+    if failed:
+        reasons.append("검증 실패")
     if outstanding:
         reasons.append(f"지적 잔존 {outstanding}")
-    mismatch = int(collect.verify.get("counts_mismatch", 0) or 0)
     if mismatch:
         reasons.append(f"집계 불일치 {mismatch}")
+    if unaudited:
+        reasons.append(f"미검증 {unaudited}")
     unclassified = int(collect.classes.get(classes.UNCLASSIFIED, 0) or 0)
     if unclassified:
         reasons.append(f"분류 불확실 {unclassified}")
@@ -572,16 +617,38 @@ def _attention_html(
     prose_failures = len(_prose_failures(collect, units))
     primary: list[tuple[str, str]] = []
     secondary: list[tuple[str, str]] = []
-    outstanding = int(collect.verify.get("outstanding", 0) or 0)
+    failed, outstanding, mismatch, unaudited = _verify_view(collect)
+    if failed:
+        primary.append(
+            (
+                "검증 실패",
+                "verifier 검사지를 읽지 못했거나 감사한 유닛이 없다 — 이 리포트의 "
+                "설명은 원문 대조를 받지 않았다. 지적 잔존 · 집계 불일치는 알 수 없어 "
+                "'—'로 표시한다.",
+            )
+        )
+    elif unaudited:
+        primary.append(
+            (
+                f"미검증 {unaudited}유닛",
+                "verifier가 감사하지 않은 설명이 있다 — 04 섹션에서 '미검증' 표시가 "
+                "붙은 카드를 원문과 대조해 확인.",
+            )
+        )
     if outstanding:
+        orphans = len(_orphans(collect))
         primary.append(
             (
                 f"검증 지적 {outstanding}건 잔존",
-                "verifier의 재분석 요구가 마지막 라운드까지 남았다 — 해당 유닛의 "
-                "설명을 사람이 직접 확인해야 한다.",
+                "verifier의 재분석 요구가 마지막 라운드까지 남았다 — 04 섹션에서 "
+                "'검증 지적' 표시가 붙은 카드의 설명을 사람이 직접 확인해야 한다."
+                + (
+                    f" 가리키는 대상이 없는 지적 {orphans}건은 05 부분 실패 목록에 있다."
+                    if orphans
+                    else ""
+                ),
             )
         )
-    mismatch = int(collect.verify.get("counts_mismatch", 0) or 0)
     if mismatch:
         primary.append(
             (
@@ -721,6 +788,23 @@ def _change_entries(
     return entries
 
 
+def _audit_pill(unit: CollectedUnit, flagged: bool) -> str:
+    """The card's audit state — 검증 지적 outranks 미검증, ok shows nothing.
+
+    The report tells the reader to check these units by hand; without the
+    mark on the card itself they had a count and no way to find them.
+    """
+
+    if flagged:
+        label = "검증 지적"
+        if unit.audit in _AUDIT_LABELS:
+            label += " · " + _AUDIT_LABELS[unit.audit]
+        return f'<span class="pill tag-audit-flag">{_e(label)}</span>'
+    if unit.audit == AUDIT_UNAUDITED:
+        return '<span class="pill tag-audit-none">미검증</span>'
+    return ""
+
+
 def _change_card(
     unit: CollectedUnit,
     excerpt,
@@ -728,12 +812,14 @@ def _change_card(
     sides: tuple[str, ...],
     note: str,
     ops: tuple[str, ...],
+    flagged: bool = False,
 ) -> str:
     axes = tuple(axis for axis in (unit.axes or (unit.klass,)) if axis)
     tag_text = " · ".join(axes) or unit.klass
     pills = f'<span class="pill tag-{_e("-".join(axes))}">[{_e(tag_text)}]</span>'
     if note:
         pills += f'<span class="pill tag-부분">{_e(note)}</span>'
+    pills += _audit_pill(unit, flagged)
     panes: list[str] = []
     for side in sides:
         body = (excerpt.before if side == "before" else excerpt.after) if excerpt else ""
@@ -757,7 +843,13 @@ def _change_card(
             '<div class="value-box"><div class="value-label">Detected values</div>'
             "<ul>" + "".join(f"<li>{item}</li>" for item in values) + "</ul></div>"
         )
-    open_attr = " open" if index == 1 else ""
+    # a flagged card opens by itself — it is the one the reader was sent to
+    open_attr = " open" if index == 1 or flagged else ""
+    audit_note = ""
+    if flagged and unit.audit_why:
+        audit_note = (
+            f'<p class="audit-note">검증 근거 — {_e(_strip_ids(unit.audit_why))}</p>'
+        )
     return (
         f'<details class="change-card"{open_attr}><summary>'
         '<div class="change-summary-main">'
@@ -768,8 +860,9 @@ def _change_card(
         + grid
         + value_box
         + '<div class="explain"><div class="explain-label">WHAT CHANGED</div>'
-        + f"<p>설명 — {_e(_strip_ids(unit.explanation))}</p></div>"
-        + "</div></details>"
+        + f"<p>설명 — {_e(_strip_ids(unit.explanation))}</p>"
+        + audit_note
+        + "</div></div></details>"
     )
 
 
@@ -779,8 +872,14 @@ def _file_html(
     excerpts: dict[str, object],
     structure: Structure | None,
     index: int,
+    flagged: frozenset[str] = frozenset(),
 ) -> str:
     entries = _change_entries(units)
+    summary_flag = (
+        ' <span class="pill tag-audit-flag">요약 검증 지적</span>'
+        if entry.file_id in flagged
+        else ""
+    )
     parts = [
         f'<article class="file-card" id="file-{index}">',
         '<header class="file-head"><div>',
@@ -790,7 +889,7 @@ def _file_html(
         "</div>",
         f'<div class="file-count">{len(entries)}<span>changes</span></div>',
         "</header>",
-        f'<p class="file-summary">{_e(_strip_ids(entry.summary))}</p>',
+        f'<p class="file-summary">{_e(_strip_ids(entry.summary))}{summary_flag}</p>',
     ]
     if structure is not None:
         notes = structure_notes(structure, entry.path)
@@ -813,7 +912,13 @@ def _file_html(
     for number, (unit, sides, note, ops) in enumerate(entries, 1):
         parts.append(
             _change_card(
-                unit, excerpts.get(unit.excerpt_ref), number, sides, note, ops
+                unit,
+                excerpts.get(unit.excerpt_ref),
+                number,
+                sides,
+                note,
+                ops,
+                flagged=unit.unit_id in flagged,
             )
         )
     parts.append("</div></article>")
@@ -829,10 +934,13 @@ def _status_panel(
 ) -> str:
     """The pipeline's own bookkeeping, WARNING badge when degraded."""
 
+    failed, outstanding, mismatch, unaudited = _verify_view(collect)
     rows: list[tuple[str, str]] = [
+        ("검증 상태", "실패" if failed else "정상"),
         ("검증 라운드", str(collect.verify.get("rounds", 0))),
-        ("지적 잔존", str(collect.verify.get("outstanding", 0))),
-        ("집계 불일치", str(collect.verify.get("counts_mismatch", 0))),
+        ("지적 잔존", _count(outstanding, failed)),
+        ("집계 불일치", _count(mismatch, failed)),
+        ("미검증", str(unaudited)),
         ("설명 생성 실패 파일", str(prose_failures)),
         ("분류 불확실", str(collect.classes.get(classes.UNCLASSIFIED, 0))),
         ("refs 드롭", str(collect.refs_dropped + dropped)),
@@ -874,6 +982,18 @@ def _status_panel(
         for unit in units
         if unit.explanation == EXPLANATION_FAILED
     ]
+    partial += [
+        f"{unit.unit_id} — 미검증" for unit in units if unit.audit == AUDIT_UNAUDITED
+    ]
+    flagged = set(collect.fix_targets)
+    partial += [
+        f"{unit.unit_id} — 검증 지적"
+        + (f" ({_AUDIT_LABELS[unit.audit]})" if unit.audit in _AUDIT_LABELS else "")
+        + (f": {unit.audit_why}" if unit.audit_why else "")
+        for unit in units
+        if unit.unit_id in flagged
+    ]
+    partial += [f"{target} — 검증 지적 (가리키는 대상 없음)" for target in _orphans(collect)]
 
     def listing(items: list[str]) -> str:
         if not items:
@@ -978,6 +1098,10 @@ def render_report_html(
     link = (
         f'<a href="{_e(diff_url)}">MR diff</a>' if diff_url else ""
     )
+    # the verifier sometimes writes file ids with an f- prefix
+    flagged = frozenset(collect.fix_targets) | {
+        target[2:] for target in collect.fix_targets if target.startswith("f-")
+    }
     files_html = "".join(
         _file_html(
             entry,
@@ -985,6 +1109,7 @@ def render_report_html(
             by_ref,
             structure,
             index,
+            flagged,
         )
         for index, entry in enumerate(collect.file_blocks, 1)
     )

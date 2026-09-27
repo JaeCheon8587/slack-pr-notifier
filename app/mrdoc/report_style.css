@@ -191,6 +191,9 @@ a { color: inherit; }
 .pill.tag-의미, .pill[class*="의미"] { color:#9ddfff; border-color:rgba(107,213,255,.32); background:rgba(107,213,255,.07); }
 .pill.tag-표현, .pill[class*="표현"] { color:#c6ced8; }
 .pill.tag-부분 { color:#ffd786; border-color:rgba(255,200,87,.28); background:rgba(255,200,87,.055); }
+.pill.tag-audit-flag { color:#ffb1b7; border-color:rgba(240,126,134,.42); background:rgba(240,126,134,.085); }
+.pill.tag-audit-none { color:#ffd786; border-color:rgba(255,200,87,.28); background:transparent; border-style:dashed; }
+.file-summary .pill { margin-left:6px; vertical-align:middle; }
 
 .change-body { padding:0 22px 22px; }
 .diff-grid { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
@@ -215,6 +218,7 @@ pre {
 .explain { margin-top:12px; }
 .explain-label { color:var(--dim); font-size:10px; letter-spacing:.1em; font-weight:900; }
 .explain p { margin:5px 0 0; color:#aebac7; }
+.explain p.audit-note { color:#ffb1b7; }
 
 .trees { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
 .trees h5 { margin:0 0 8px; color:var(--muted); font-size:10px; letter-spacing:.11em; text-transform:uppercase; }

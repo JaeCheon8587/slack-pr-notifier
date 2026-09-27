@@ -14,7 +14,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
+from .analysis import load_analyses_split
+from .changeset import Changeset, parse_changeset
 from .levelcheck import parse_levelcheck
+from .structure import Structure, parse_structure
 from .verifier import parse_verifier
 from .workspace import artifact_paths, fix_rounds_used
 
@@ -136,23 +139,111 @@ def _parse_or_none(path: Path, parser):  # type: ignore[no-untyped-def]
         return None  # an unreadable gate flags nothing; collect still renders
 
 
-def fix_targets(work_dir: Path) -> tuple[str, ...]:
-    """Units owed a rewritten 설명 — 두 게이트가 지목한 것의 합집합.
+#: missing_prose reasons — the fix prompt prints them next to the target.
+REASON_EXPLANATION_MISSING = "explanation_missing (설명)"
+REASON_SUMMARY_MISSING = "summary_missing (FILE_SUMMARY)"
+REASON_SUMMARY_UNKNOWN_REFS = "summary_unknown_refs (FILE_SUMMARY)"
 
-    doc-verifier names units whose 설명 invented or omitted something; the
-    levelcheck vocab gate names units whose 설명 used a banned word. Both are
-    "this prose has to be written again", so both feed the one re-call rather
-    than each asking for its own round.
+
+def _missing_prose(
+    paths: dict[str, Path],
+    structure: Structure | None,
+    changeset: Changeset | None,
+) -> dict[str, str]:
+    if structure is None or changeset is None:
+        return {}
+    analyses, _failed = load_analyses_split(paths["analysis_dir"])
+    known = {unit.unit_id for unit in structure.changed}
+    explained = {
+        unit.unit_id
+        for analysis in analyses
+        for unit in analysis.units
+        if unit.explanation.strip()
+    }
+    reasons: dict[str, str] = {}
+    for unit in structure.changed:
+        if unit.unit_id not in explained:
+            reasons[unit.unit_id] = REASON_EXPLANATION_MISSING
+    by_file = {analysis.file_id: analysis for analysis in analyses}
+    for entry in changeset.files:
+        analysis = by_file.get(entry.fid)
+        if analysis is None or not analysis.summary.strip():
+            reasons[entry.fid] = REASON_SUMMARY_MISSING
+        elif any(ref not in known for ref in analysis.summary_refs):
+            reasons[entry.fid] = REASON_SUMMARY_UNKNOWN_REFS
+    return reasons
+
+
+def missing_prose(work_dir: Path) -> dict[str, str]:
+    """Prose the report would print as 생성 실패 — target id -> reason.
+
+    The report's partial-failure rules, applied while a re-call can still
+    help: a unit 05 produced that no 20-analysis block explains, and a file
+    whose FILE_SUMMARY is empty or cites an id 05 never produced (collect
+    drops such a summary whole). Every target is an id from the tool's own
+    list, so asking for it again guesses nothing — the orphan block that left
+    the gap is still dropped, never re-mapped onto a real unit. A 20-analysis
+    file that does not parse lands here too: none of its units is explained,
+    which is how a broken file gets rewritten whole.
     """
 
     paths = artifact_paths(work_dir)
+    return _missing_prose(
+        paths,
+        _parse_or_none(paths["structure"], parse_structure),
+        _parse_or_none(paths["changeset"], parse_changeset),
+    )
+
+
+def _addressable(
+    targets: tuple[str, ...],
+    structure: Structure | None,
+    changeset: Changeset | None,
+) -> list[str]:
+    """Verifier picks that name a real unit or file — f- prefix stripped.
+
+    A FIX aimed at an id 05 never produced (the analyzer's typo, copied into
+    the audit) has no block to rewrite. Passed on, it made the fix mission
+    refuse and the whole run abort over one unaddressable FIX; dropped here,
+    it still counts as 지적 잔존 because collect reads the FIX blocks itself.
+    """
+
+    if structure is None or changeset is None:
+        return list(targets)  # nothing to check against — pass through
+    units = {unit.unit_id for unit in structure.changed}
+    files = {entry.fid for entry in changeset.files}
+    kept: list[str] = []
+    for target in targets:
+        if target in units or target in files:
+            kept.append(target)
+        elif target.startswith("f-") and target[2:] in files:
+            # doc-verifier's template once showed file ids that way.
+            kept.append(target[2:])
+    return kept
+
+
+def fix_targets(work_dir: Path) -> tuple[str, ...]:
+    """Units and files owed rewritten prose — 세 게이트가 지목한 것의 합집합.
+
+    doc-verifier names units whose 설명 invented or omitted something (its
+    fidelity verdicts count even where the FIX copy is missing); the
+    levelcheck vocab gate names units whose 설명 used a banned word; and
+    missing_prose names what never arrived at all. All three are "this prose
+    has to be written (again)", so all feed the one re-call rather than each
+    asking for its own round — the cap stays FIX_ROUND_MAX either way.
+    """
+
+    paths = artifact_paths(work_dir)
+    structure = _parse_or_none(paths["structure"], parse_structure)
+    changeset = _parse_or_none(paths["changeset"], parse_changeset)
     targets: list[str] = []
     report = _parse_or_none(paths["verifier"], parse_verifier)
     if report is not None:
-        targets.extend(report.fix_targets())
+        targets.extend(_addressable(report.flagged_targets(), structure, changeset))
     check = _parse_or_none(paths["levelcheck"], parse_levelcheck)
     if check is not None:
         targets.extend(row.unit_id for row in check.units if row.vocab_violation)
+    targets.extend(_missing_prose(paths, structure, changeset))
     return tuple(dict.fromkeys(targets))
 
 
@@ -165,12 +256,32 @@ def fix_round_due(work_dir: Path) -> tuple[str, ...]:
     return fix_targets(work_dir)
 
 
+def round_gate(work_dir: Path, gate: str) -> Path:
+    """The verifier/levelcheck file the open re-call answers to.
+
+    close_fix_round moves the live gates aside before the satellite runs, so
+    by then the findings live in this round's archive. The live file only
+    wins while it still exists — i.e. before the round has been opened.
+    """
+
+    paths = artifact_paths(work_dir)
+    if paths[gate].is_file():
+        return paths[gate]
+    return paths.get(f"{gate}_r{fix_rounds_used(work_dir)}", paths[gate])
+
+
 def fix_spec(
     work_dir: Path, *, wave: int, budget_usd: float, targets: tuple[str, ...]
 ) -> SpecBlock:
-    """The analyzer re-call — SCOPE names units, never a file batch."""
+    """The analyzer re-call — SCOPE names targets, never a file batch.
+
+    READ names the gates' archive for the round about to open, not the live
+    files: close_fix_round removes those before the satellite starts, and a
+    READ path that no longer exists sends the satellite in blind.
+    """
 
     paths = artifact_paths(work_dir)
+    round_no = fix_rounds_used(work_dir) + 1
     return SpecBlock(
         wave=wave,
         agent="analyzer",
@@ -179,8 +290,8 @@ def fix_spec(
             paths["structure"],
             paths["literals"],
             paths["excerpt"],
-            paths["levelcheck"],
-            paths["verifier"],
+            paths.get(f"levelcheck_r{round_no}", paths["levelcheck"]),
+            paths.get(f"verifier_r{round_no}", paths["verifier"]),
         ),
         budget_usd=budget_usd,
         return_path=paths["analysis_dir"],
@@ -211,6 +322,43 @@ def close_fix_round(work_dir: Path) -> None:
                 paths[live].read_text(encoding="utf-8"), encoding="utf-8"
             )
             paths[live].unlink()
+
+
+def snapshot_analysis(work_dir: Path) -> dict[str, bytes]:
+    """Every 20-analysis file as bytes — what revert_fix_round puts back."""
+
+    directory = artifact_paths(work_dir)["analysis_dir"]
+    if not directory.is_dir():
+        return {}
+    return {path.name: path.read_bytes() for path in directory.iterdir() if path.is_file()}
+
+
+def revert_fix_round(work_dir: Path, snapshot: dict[str, bytes]) -> None:
+    """Undo a failed re-call: 20-analysis as it was, this round's gates live again.
+
+    The satellite writes straight into 20-analysis, so by the time its result
+    is rejected the files on disk may already be the broken rewrite. Putting
+    the snapshot back leaves the report exactly as good as it was before the
+    round — 설명 생성 실패 where prose was missing, 지적 잔존 where a FIX
+    went unanswered — instead of no report at all. The marker is not rolled
+    back: a failure still spends the round, so the loop stays finite.
+    Reinstating the archived gates rather than re-running them is sound
+    because the prose they audited is byte-identical again.
+    """
+
+    paths = artifact_paths(work_dir)
+    directory = paths["analysis_dir"]
+    directory.mkdir(parents=True, exist_ok=True)
+    for path in directory.iterdir():
+        if path.is_file() and path.name not in snapshot:
+            path.unlink()
+    for name, data in snapshot.items():
+        (directory / name).write_bytes(data)
+    round_no = fix_rounds_used(work_dir)
+    for live in ("verifier", "levelcheck"):
+        archived = paths.get(f"{live}_r{round_no}")
+        if archived is not None and archived.is_file():
+            paths[live].write_bytes(archived.read_bytes())
 
 
 def next_specs(
@@ -292,6 +440,11 @@ def next_specs(
                 )
             )
         elif node == "themes":
+            if fix_round_due(work_dir):
+                # A re-call is still owed: grouping now would describe prose
+                # the round is about to replace. Only reachable after a failed
+                # round was reverted (or a crash between verifier and round).
+                continue
             specs.append(
                 SpecBlock(
                     wave=wave,
