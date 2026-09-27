@@ -214,7 +214,7 @@ footer{border-top:1px solid var(--line);padding-top:20px;font-family:"IBM Plex M
 <div class="shell">
 <aside class="rail">
   <div class="rail-brand">revise</div>
-  <div class="rail-sub">슬랙 [의견] → 문서 수정 커밋<br>v1 · 2026-09-04 · 구현 · 스모크 3/3</div>
+  <div class="rail-sub">슬랙 [의견] → 문서 수정 커밋<br>v1.2 · 2026-09-27 · 스펙 게이트 · codex</div>
   <nav id="nav">
     <div class="rail-part">Part 1</div>
     <a href="#agents"><span class="mono">1</span>에이전트</a>
@@ -222,14 +222,16 @@ footer{border-top:1px solid var(--line);padding-top:20px;font-family:"IBM Plex M
     <a href="#pipeline"><span class="mono">2</span>고정 DAG</a>
     <a href="#consume"><span class="mono">2.1</span>산출물 소비 관계</a>
     <a href="#mapping"><span class="mono">2.2</span>원안 8단계 매핑</a>
-    <a href="#gate"><span class="mono">2.3</span>결정론 게이트</a>
-    <a href="#rounds"><span class="mono">2.4</span>라운드 회계</a>
-    <a href="#reuse"><span class="mono">2.5</span>재사용 지점</a>
-    <a href="#limits"><span class="mono">2.6</span>구조적 제약</a>
+    <a href="#spec"><span class="mono">2.3</span>스펙 게이트</a>
+    <a href="#gate"><span class="mono">2.4</span>결정론 게이트</a>
+    <a href="#rounds"><span class="mono">2.5</span>라운드 회계</a>
+    <a href="#reuse"><span class="mono">2.6</span>재사용 지점</a>
+    <a href="#limits"><span class="mono">2.7</span>구조적 제약</a>
     <div class="rail-part">Part 3</div>
     <a href="#templates"><span class="mono">3</span>산출물 템플릿</a>
     <a href="#t00"><span class="mono">00</span>intent</a>
     <a href="#t10"><span class="mono">10</span>anchor</a>
+    <a href="#t15"><span class="mono">15</span>spec</a>
     <a href="#t20"><span class="mono">20</span>impact</a>
     <a href="#t30"><span class="mono">30</span>edit</a>
     <a href="#t35"><span class="mono">35</span>gate</a>
@@ -251,12 +253,13 @@ footer{border-top:1px solid var(--line);padding-top:20px;font-family:"IBM Plex M
   <div class="eyebrow">사내 docs-pipeline · revise 구간 설계</div>
   <h1>리바이스 루프 LLM 워크플로우</h1>
   <p class="dek">슬랙 [의견]이 관문을 통과하면 지금은 <b>헤드리스 <code>claude</code> 1회 호출</b>로 끝난다. 그 단발 구조에서는 사람이 말한 부분이 <b>실제로 있는지</b>, 같이 고쳐야 할 곳이 <b>있는지</b>, 「반영했다」는 보고가 <b>사실인지</b> 아무도 확인하지 않는다. 이 문서는 그 셋을 각각 단계로 세우되 <b>판단만 LLM에게 주고 검색 · 존재검사 · 대조는 결정론 도구가 하게</b> 만드는 설계다.</p>
+  <p class="dek">v1.2 는 편집 <b>전</b>에 한 겹을 더 둔다. 3a 는 목차만 보고 스펙을 쓰므로 본문에 대한 주장은 전부 추측이다. <a class="inline" href="#spec">스펙 게이트</a>가 그 스펙을 의견 원문 · 앵커 절과 기계로 대조하고, 치환의 <b>현재 값 A 는 코드가 절에서 확정</b>한 뒤에야 3b 를 부른다.</p>
   <div class="meta">
-    <span><b>노드</b> 7 (LLM 3 · 툴 4)</span>
-    <span><b>LLM 호출</b> 3 + Python 오케스트레이터</span>
+    <span><b>노드</b> 8 (LLM 3 · 툴 5)</span>
+    <span><b>LLM 호출</b> 최대 3 (<code>codex exec</code>) + Python 오케스트레이터</span>
     <span><b>재투입 예산</b> 라운드당 2</span>
     <span><b>대상</b> .md / .mdx 전용</span>
-    <span><b>상태</b> 구현 · 스모크 3/3</span>
+    <span><b>상태</b> 구현 · 단위 586 · 스모크 3/3(v1)</span>
   </div>
 </div>
 
@@ -277,31 +280,43 @@ footer{border-top:1px solid var(--line);padding-top:20px;font-family:"IBM Plex M
   <dl class="fields">
     <dt>대상 범위</dt><dd><b>문서(.md/.mdx) 전용</b></dd>
     <dt>대상 못 찾음</dt><dd><b>라운드를 소모하지 않고 슬랙으로 되물음</b></dd>
-    <dt>LLM 호출 수</dt><dd><b>3회</b> — 구조화(3a) / 편집(3b) / 검증(3c)</dd>
-    <dt>부분 실패</dt><dd><b>성공분만 커밋</b>, 실패분은 3c 판정문을 사유로 남김</dd>
+    <dt>LLM 호출 수</dt><dd><b>최대 3회</b> — 구조화(3a) / 편집(3b) / 검증(3c). 스펙 게이트를 통과한 의견이 없으면 3b · 3c 는 부르지 않는다</dd>
+    <dt>부분 실패</dt><dd><b>성공분만 커밋</b>, 실패분은 3c 판정문(또는 스펙 게이트 사유)을 사유로 남김</dd>
+    <dt>현재 값 A</dt><dd><b>코드가 결정</b> — 원문 명시 &gt; 3a 의 A &gt; 절 안 같은 종류 유일 값. 여럿이면 되물음</dd>
+    <dt>약한 앵커</dt><dd><b>진행 + 주의 표기</b> — 편집은 하고 리포트 주의 항목에 싣는다</dd>
+    <dt>다중 출현</dt><dd><b>절 안 전부 치환</b> — 스펙 게이트가 센 개수를 3b 에게 알린다</dd>
+    <dt>이미 반영</dt><dd><b>반영 완료 처리</b> — 편집 없이 applied. 단 앵커가 강할 때만</dd>
   </dl>
   <div class="note">「라운드 1 차감」은 <b><code>round</code>를 증가시키지 않는다</b>로 해석했다(음수 방지) — <a class="inline" href="#open">미결 1</a>.</div>
+  <h4>개정 이력</h4>
+  <dl class="fields">
+    <dt>v1 · 09-04</dt><dd>3a/3b/3c 3단 + 결정론 4노드, headless <code>claude</code>. 스모크 3/3 (<code>.orchestration/reports/smoke-staged-runner.md</code>)</dd>
+    <dt>v1.1 · 09-23</dt><dd>단계 호출을 <b><code>codex exec</code></b> 로 전환. 3a 스펙에 <code>op</code>(create|modify|delete) · <code>연관문서</code> 추가, impact 가 연관문서를 기계 검증해 <code>related_unverified</code> 로 보고 (<code>abe95b0</code>)</dd>
+    <dt>v1.2 · 09-27</dt><dd><b>편집 전 스펙 게이트</b> <code>15-spec.md</code> 추가, 원인별 재투입, 게이트에 <code>a_in_base_text</code> (<code>ed11c90</code>)</dd>
+  </dl>
 </div>
 
 <hr class="rule">
 
 <section id="agents">
   <div class="part-head"><span class="part-num">Part 1</span><h2>에이전트 — 누가 무엇을 쓰나</h2></div>
-  <p class="part-note">LLM 자리는 3개 — 구조화(3a) / 선별+편집(3b) / 대조 검증(3c). 세 자리는 각각 <strong>별도 headless 호출</strong>이고, 사이의 존재검사 · 역검색 · 게이트 · 추출은 Python 결정론 노드다. 도구 목록이 집행 수단이다 — 프롬프트로 금지하는 것과 도구를 안 주는 것은 다르다.</p>
+  <p class="part-note">LLM 자리는 3개 — 구조화(3a) / 선별+편집(3b) / 대조 검증(3c). 세 자리는 각각 <strong>별도 <code>codex exec</code> 호출</strong>이고, 사이의 존재검사 · 스펙 대조 · 역검색 · 게이트 · 추출은 Python 결정론 노드다. 집행 수단은 <b>샌드박스와 게이트</b>다 — 프롬프트로 금지하는 것과 기계가 막거나 되돌리는 것은 다르다.</p>
 
   <div class="tw">
   <table>
-    <thead><tr><th>에이전트</th><th>실행</th><th>effort</th><th>tools</th><th>차단</th></tr></thead>
+    <thead><tr><th>에이전트</th><th>실행</th><th>effort</th><th>sandbox</th><th>막는 것</th></tr></thead>
     <tbody>
-      <tr><td><strong>오케스트레이터</strong> <code>StagedRunner</code></td><td class="num">Python</td><td class="num">—</td><td>headless <code>claude</code> ×3 · 결정론 노드 · git</td><td>LLM 아님 — 노드 루프 + 재투입 예산만</td></tr>
-      <tr><td><strong>3a INTENT</strong></td><td class="num">headless claude</td><td class="num">high</td><td>없음 — <code>--tools ""</code>, 텍스트 in/out</td><td>전부 (Read · Grep · Edit · Write · Bash)</td></tr>
-      <tr><td><strong>3b EDIT</strong></td><td class="num">headless claude</td><td class="num">high</td><td><code>--tools Read Edit Write</code> + <code>--permission-mode acceptEdits</code></td><td>Grep · Glob · Bash · Task. 지목 파일 밖 수정은 게이트가 되돌림</td></tr>
-      <tr><td><strong>3c VERIFY</strong></td><td class="num">headless claude</td><td class="num">high</td><td>없음 — <code>--tools ""</code>, diff 가 증거의 전부 <span class="gate p">실측 개정</span></td><td>전부 (Read 포함)</td></tr>
+      <tr><td><strong>오케스트레이터</strong> <code>StagedRunner</code></td><td class="num">Python</td><td class="num">—</td><td><code>codex exec</code> ×≤3 · 결정론 노드 5 · git</td><td>LLM 아님 — 노드 루프 + 재투입 예산만</td></tr>
+      <tr><td><strong>3a INTENT</strong></td><td class="num">codex exec</td><td class="num">high</td><td><code>read-only</code>, 텍스트 in/out</td><td>쓰기 전부. 본문 읽기는 HARD LIMIT 로만</td></tr>
+      <tr><td><strong>3b EDIT</strong></td><td class="num">codex exec</td><td class="num">high</td><td><code>workspace-write</code> (<code>--cd</code> 워크스페이스)</td><td>워크스페이스 밖 쓰기. 지목 파일 밖 수정은 게이트가 되돌림</td></tr>
+      <tr><td><strong>3c VERIFY</strong></td><td class="num">codex exec</td><td class="num">high</td><td><code>read-only</code>, diff 가 증거의 전부</td><td>쓰기 전부. diff 밖 읽기는 HARD LIMIT 로만</td></tr>
     </tbody>
   </table>
   </div>
 
-  <div class="note"><b><code>--setting-sources ""</code> 는 선택이 아니다 <span class="gate p">실측 추가</span></b> — 없으면 실행하는 사람의 사용자 · 플러그인 설정이 매 단계 시스템 프롬프트로 딸려 들어온다. 첫 스모크는 <b>「1+1」 수준의 프롬프트에서 예산 초과로 죽었고</b>, stderr 에는 플러그인 <code>SessionEnd</code> 훅 실패만 찍혀 원인을 가렸다. 격리 후 같은 프롬프트가 가장 작은 예산 안에서 끝나고 stderr 가 비었다. 프로덕션 레일은 <b>누구의 노트북에서 도느냐에 좌우돼선 안 된다.</b></div>
+  <div class="note"><b>codex 전환 <span class="gate p">v1.1</span></b> — 단계 호출은 <code>codex exec --skip-git-repo-check --ephemeral --sandbox read-only|workspace-write --cd &lt;ws&gt; -c model_reasoning_effort="high" --output-last-message &lt;file&gt; -</code> 이다(<code>runner._stage</code>). 시스템 프롬프트는 stdin 앞머리(<code>system + --- + prompt</code>)로 싣고, 산출물은 stdout 이 아니라 <code>--output-last-message</code> 파일로 회수한다 — mrdoc 위성과 같은 방식. <code>--ignore-user-config</code> 는 <b>일부러 뺐다</b>: 프로바이더 라우팅이 <code>~/.codex/config.toml</code> 에 있어 무시하면 모델에 닿지 않는다. <b>codex 는 도구별 목록을 주지 않는다.</b> 아래 claude 시절의 도구 화이트리스트가 하던 일(3a 본문 차단 · 3c diff 한정)은 이제 HARD LIMITS 와 게이트만이 떠받친다 — <a class="inline" href="#open">미결 7</a>.</div>
+
+  <div class="note"><b><code>--setting-sources ""</code> 는 선택이 아니다 <span class="gate p">v1 claude 실측</span></b> — 없으면 실행하는 사람의 사용자 · 플러그인 설정이 매 단계 시스템 프롬프트로 딸려 들어온다. 첫 스모크는 <b>「1+1」 수준의 프롬프트에서 예산 초과로 죽었고</b>, stderr 에는 플러그인 <code>SessionEnd</code> 훅 실패만 찍혀 원인을 가렸다. 격리 후 같은 프롬프트가 가장 작은 예산 안에서 끝나고 stderr 가 비었다. 프로덕션 레일은 <b>누구의 노트북에서 도느냐에 좌우돼선 안 된다.</b></div>
 
   <div class="card">
     <div class="card-top"><span class="card-name">StagedRunner</span><span class="kind tool">PYTHON</span></div>
@@ -327,29 +342,31 @@ footer{border-top:1px solid var(--line);padding-top:20px;font-family:"IBM Plex M
     <div class="card-top"><span class="card-name">3a INTENT</span><span class="kind llm">LLM</span></div>
     <div class="card-ref">구조화 — 의견 원문을 검증 가능한 스펙으로 <code>app/revise_workflow/prompts.py</code></div>
     <dl class="fm">
-      <div><dt>실행</dt><dd>headless claude</dd></div><div><dt>도구</dt><dd class="no">없음 (--tools "")</dd></div><div><dt>I/O</dt><dd>텍스트 in/out</dd></div><div><dt>출력</dt><dd>00-intent.md</dd></div>
+      <div><dt>실행</dt><dd>codex exec</dd></div><div><dt>sandbox</dt><dd class="no">read-only</dd></div><div><dt>I/O</dt><dd>텍스트 in/out</dd></div><div><dt>출력</dt><dd>00-intent.md</dd></div>
     </dl>
     <dl class="io">
-      <dt>입력</dt><dd>의견 원문 + 변경 파일 목록 + <b>헤딩 목차만</b> (<code>markdown_tree.parse_sections</code> 로 생성). 문서 본문 · diff 전문은 주지 않는다</dd>
-      <dt>출력</dt><dd>의견별 <code>{opinion_id, 대상문서[], 범위: local|cross-doc, 대상주장, 수정방향, 근거, 통합[], 충돌해소, search_terms[]}</code></dd>
+      <dt>입력</dt><dd>의견 원문 + 변경 파일 목록 + <b>헤딩 목차만</b> (<code>markdown_tree.parse_sections</code> 로 생성). 문서 본문 · diff 전문은 주지 않는다. 스펙 게이트에 반려된 뒤라면 <b>반려 사유</b></dd>
+      <dt>출력</dt><dd>의견별 <code>{opinion_id, op: create|modify|delete, 대상문서[], 연관문서[], 범위: local|cross-doc, 대상주장, 수정방향, 근거, 통합[], 충돌해소, search_terms[]}</code></dd>
     </dl>
     <h4>HARD LIMITS</h4>
     <ol class="hl">
       <li><b>목차에 없는 파일을 지목하지 않는다.</b><span class="alt">컨텍스트 0이면 앵커를 지어낸다. 목차는 지어낼 여지를 막고 지시어(「이 부분」·「여기」)는 해석 가능하게 남긴다</span></li>
       <li><b><code>search_terms</code>는 원문에 그대로 있을 문자열만.</b><span class="alt">자기가 지어낸 요약문 금지 — 이 문자열이 다음 단계에서 기계가 검증할 <b>유일한</b> 앵커다</span></li>
       <li><b>수정 방법을 스스로 확장하지 않는다.</b><span class="alt">의견에 없는 개선은 쓰지 않는다</span></li>
+      <li><b>치환은 「A → B」, B 는 의견 원문에 있는 값만.</b><span class="alt"><span class="gate p">v1.2</span> 목표 값을 말하지 않은 의견은 치환 형태로 쓰지 않는다. <b>A 는 기계가 문서에서 다시 확정한다</b> — 목차만 본 3a 의 A 는 추측이고, 스펙 게이트가 B 의 출처를 원문과 대조해 없으면 반려한다</span></li>
     </ol>
-    <div class="note">필드 8개는 <code>docs/mr-review-pipeline.html</code> §S4② 3a 의 기존 스펙을 그대로 유지하고 <code>search_terms</code>만 추가한 것이다.</div>
+    <div class="note">필드는 <code>docs/mr-review-pipeline.html</code> §S4② 3a 의 기존 스펙 8개를 그대로 유지하고 <code>op</code> · <code>연관문서</code>(v1.1) · <code>search_terms</code> 를 추가한 것이다. <code>연관문서</code>는 목차만 보고 적은 <b>의심</b>이다 — impact 가 리터럴 · 링크 증거로 검증하고, 증거 없는 경로는 후보가 되지 않고 <code>related_unverified</code> 로 리포트에 남는다.</div>
+    <div class="note"><b>재투입된 3a 는 반려 사유를 받는다 <span class="gate p">v1.2</span></b> — 같은 의견 · 같은 목차면 같은 추측이 나온다. 스펙 게이트의 지적이 <code>[재투입 — 이전 스펙이 기계 대조에서 반려됐다. 아래 지적을 해소한다]</code> 절로 다음 프롬프트에 실린다.</div>
   </div>
 
   <div class="card">
     <div class="card-top"><span class="card-name">3b EDIT</span><span class="kind llm">LLM</span></div>
     <div class="card-ref">선별 + 동반 변경 + 편집 — 원안 4·5번을 한 호출로</div>
     <dl class="fm">
-      <div><dt>실행</dt><dd>headless claude</dd></div><div><dt>도구</dt><dd>Read Edit Write</dd></div><div><dt>권한</dt><dd>acceptEdits</dd></div><div><dt>출력</dt><dd>30-edit.md</dd></div>
+      <div><dt>실행</dt><dd>codex exec</dd></div><div><dt>sandbox</dt><dd>workspace-write</dd></div><div><dt>대상</dt><dd>스펙 ok 의견만</dd></div><div><dt>출력</dt><dd>30-edit.md</dd></div>
     </dl>
     <dl class="io">
-      <dt>입력</dt><dd><code>00-intent.md</code> + <code>10-anchor.md</code> + <code>20-impact.md</code> + 앵커 유닛의 <b>±20줄 창</b></dd>
+      <dt>입력</dt><dd><b>유효 뷰</b>의 <code>00-intent.md</code> · <code>10-anchor.md</code>(스펙 ok 의견만, 수정방향은 확정 A → B) + <code>15-spec.md</code> <b>확정 치환</b> + <code>20-impact.md</code> + 앵커 유닛의 <b>±20줄 창</b></dd>
       <dt>출력</dt><dd><code>30-edit.md</code> 영수증 — 처리한 opinion_id / 못 한 것 + 사유 / 만진 파일 목록</dd>
       <dt>부수효과</dt><dd>워크스페이스 md 파일 수정</dd>
     </dl>
@@ -359,17 +376,18 @@ footer{border-top:1px solid var(--line);padding-top:20px;font-family:"IBM Plex M
       <li><b>파일 통독 금지. 같은 파일 재Read 금지.</b><span class="alt">읽을 범위는 주어진 라인 창이 전부다</span></li>
       <li><b>못 한 의견은 반드시 사유와 함께 남긴다.</b><span class="alt">침묵은 누락으로 처리된다</span></li>
     </ol>
-    <div class="note"><b>Grep 을 주지 않는다 <span class="gate p">실측</span></b> — <code>acceptEdits</code> 만으로는 Grep · Glob · Bash · Task 가 열려 있다. 검색어 생성은 대조할 대상이 없어 검증이 불가능하므로 <b><code>--tools</code> 화이트리스트를 명시</b>한다.</div>
+    <div class="note"><b>3b 는 A 를 고르지 않는다 <span class="gate p">v1.2</span></b> — 프롬프트의 <code>[확정 치환] 15-spec.md</code> 절이 <code>opinion_id=41 '3.2' → '4.0' · 절 안 2곳 — 전부 바꾼다</code> 처럼 기계가 절에서 확정한 값과 개수를 준다. 게이트가 <b>이 값으로</b> 검증한다. 스펙 게이트를 통과한 의견이 하나도 없으면 3b 를 부르지 않고 영수증을 합성한다(<code>edit skipped</code>).</div>
+    <div class="note"><b>Grep 을 주지 않는다 <span class="gate p">v1 claude 실측</span></b> — <code>acceptEdits</code> 만으로는 Grep · Glob · Bash · Task 가 열려 있다. 검색어 생성은 대조할 대상이 없어 검증이 불가능하므로 <b><code>--tools</code> 화이트리스트를 명시</b>했다. codex 의 <code>workspace-write</code> 는 셸을 막지 않으므로 이 차단은 지금 HARD LIMIT 와 게이트의 되돌림에만 기댄다.</div>
   </div>
 
   <div class="card">
     <div class="card-top"><span class="card-name">3c VERIFY</span><span class="kind llm">LLM</span></div>
     <div class="card-ref">대조 검증 — 고치지 않는다. 판정만 한다</div>
     <dl class="fm">
-      <div><dt>실행</dt><dd>headless claude</dd></div><div><dt>도구</dt><dd class="no">없음 (--tools "")</dd></div><div><dt>판정 축</dt><dd>의견 원문</dd></div><div><dt>출력</dt><dd>40-verify.md</dd></div>
+      <div><dt>실행</dt><dd>codex exec</dd></div><div><dt>sandbox</dt><dd class="no">read-only</dd></div><div><dt>판정 축</dt><dd>의견 원문</dd></div><div><dt>출력</dt><dd>40-verify.md</dd></div>
     </dl>
     <dl class="io">
-      <dt>입력</dt><dd>의견 <b>원문</b> + <code>00-intent.md</code> + <code>git diff</code>(md 경로 한정). <b><code>30-edit.md</code>는 주지 않는다</b></dd>
+      <dt>입력</dt><dd><b>스펙 ok 의견의</b> 원문 + 유효 뷰 <code>00-intent.md</code> + <code>git diff</code>(md 경로 한정). <b><code>30-edit.md</code>는 주지 않는다</b></dd>
       <dt>출력</dt><dd>의견별 <code>applied|partial|unapplied</code> + 근거(파일:라인) + 판정문</dd>
     </dl>
     <h4>HARD LIMITS</h4>
@@ -379,29 +397,33 @@ footer{border-top:1px solid var(--line);padding-top:20px;font-family:"IBM Plex M
       <li><b>애매하면 partial 이나 unapplied 로 둔다.</b><span class="alt">확신 없는 applied 는 거짓 영수증이고, 부당한 통과 하나가 이 계층을 없앤다</span></li>
       <li><b>판정마다 근거를 파일 · 라인 · before/after 로 지목한다.</b><span class="alt">지목할 diff 가 없으면 그 의견은 applied 가 아니다</span></li>
     </ol>
-    <div class="note"><b>도구를 안 주는 것이 유일한 집행 수단이다 <span class="gate p">실측 개정</span></b> — 3c 는 「diff 가 증거의 전부」라고 자기 HARD LIMIT 에 적어 두고도 <code>Read</code> 를 들고 있었다. 같은 입력 실측: <code>Read</code> 有 <b>$1.2174 / 2턴</b>, 無 <b>$0.0287 / 1턴</b>, <b>판정은 동일</b>. 42배를 주고 산 것이 없었다.</div>
+    <div class="note"><b>스펙 게이트가 막은 의견은 3c 에 보내지 않는다 <span class="gate p">v1.2</span></b> — 편집을 요청받지 않은 의견을 3c 에 보이면 <code>unapplied</code> 가 나와 <b>아무도 요청받지 않은 편집을 재투입</b>하거나, 이미 반영된 의견이면 「문서가 이미 사람이 원한 대로다」라는 사실이 그 판정에 가려진다. 그 판정은 <code>nodes.spec_verdict</code> 가 코드로 낸다 — 이미 반영 → <code>applied</code>(근거 없음), clarify · missing · spec_error → <code>unapplied</code> + 사유. 판정은 입력 순서대로 합쳐지고, 보낼 의견이 없거나 diff 가 비면 3c 호출 없이 합성한다(<code>verify skipped</code>).</div>
+    <div class="note"><b>도구를 안 주는 것이 유일한 집행 수단이다 <span class="gate p">v1 claude 실측</span></b> — 3c 는 「diff 가 증거의 전부」라고 자기 HARD LIMIT 에 적어 두고도 <code>Read</code> 를 들고 있었다. 같은 입력 실측: <code>Read</code> 有 <b>$1.2174 / 2턴</b>, 無 <b>$0.0287 / 1턴</b>, <b>판정은 동일</b>. 42배를 주고 산 것이 없었다.</div>
     <div class="note">파이썬 오케스트레이터가 3c 판정과 3b 영수증을 대조하고 <b>불일치 시 3c를 신뢰</b>한다 — 워커의 「했다」는 주장이지 증거가 아니다.</div>
   </div>
 
   <h3 id="reinject">재투입 예산</h3>
+  <p class="lede"><span class="gate p">v1.2</span> 원인 분류는 <b>실패한 검사가 정한다</b> — 판단이 없다. 어느 검사가 걸렸는지가 곧 어디로 돌아갈지다.</p>
   <div class="tw">
   <table>
-    <thead><tr><th>원인</th><th>재투입 대상</th></tr></thead>
+    <thead><tr><th>걸린 검사</th><th>원인</th><th>재투입 대상</th></tr></thead>
     <tbody>
-      <tr><td>구현 누락 (스펙은 맞는데 안 고침)</td><td><b>3b</b> — 3c 근거를 첨부해 재투입</td></tr>
-      <tr><td>스펙 모호 · 모순</td><td><b>3a</b> — 해당 의견만 재투입 후 갱신 스펙으로 3b 재실행</td></tr>
+      <tr><td><a class="inline" href="#spec">스펙 게이트</a> <code>spec_error</code></td><td>스펙 모순 — B 가 원문에 없음, create 인데 치환, id 누락 · 중복 · 날조 등</td><td><b>3a</b> — 반려 사유를 다음 3a 프롬프트에 첨부</td></tr>
+      <tr><td><a class="inline" href="#gate">결정론 게이트</a> 리터럴 미치환</td><td>구현 누락 — A → B 는 스펙 게이트가 이미 절에서 확인했다</td><td><b>3b</b> — 게이트 근거를 첨부</td></tr>
+      <tr><td>3c <code>unapplied</code> · <code>partial</code></td><td>코드가 귀속할 수 없음</td><td>첫 번째는 <b>3b</b>, 그다음은 <b>3a</b> (에스컬레이션)</td></tr>
     </tbody>
   </table>
   </div>
-  <div class="note"><b>라운드당 합산 2회 한정, 사람 라운드는 소모하지 않는다.</b> 소진되면 정직 표기 후 전진 — 모든 경로가 「성공」 또는 「표기 후 진행」으로 끝나 무한 루프가 없다 (<code>docs/mr-review-pipeline.html</code> §S4② 수렴 규칙 그대로). 예산은 <b>ledger 에서 센다</b> — 재개해도 살아남는다.</div>
-  <div class="note"><b>앵커를 못 찾은 의견은 재투입 대상이 아니다 <span class="gate p">실측</span></b> — MISSING 은 <b>되물음</b>이지 구현 누락이 아니다. 재투입 대상은 <code>FOUND</code> 였던 의견으로만 한정한다.</div>
+  <div class="note"><b>라운드당 합산 2회 한정, 사람 라운드는 소모하지 않는다.</b> 세 원인이 <b>한 예산을 나눠 쓴다.</b> 소진되면 정직 표기 후 전진 — 모든 경로가 「성공」 또는 「표기 후 진행」으로 끝나 무한 루프가 없다 (<code>docs/mr-review-pipeline.html</code> §S4② 수렴 규칙 그대로). 예산은 <b>ledger 에서 센다</b> — 재개해도 살아남는다. 스펙 반려가 예산을 소진하면 그 의견은 더 가지 않고 <code>unapplied</code> + 사유로 마감한다.</div>
+  <div class="note"><b>에스컬레이션은 스펙 재투입을 세지 않는다 <span class="gate p">v1.2</span></b> — 스펙 재투입은 3b 가 아니라 3a 를 다시 돌린 것이라 「앞선 편집 시도」가 아니다. 이걸 세면 스펙 반려 한 번 뒤의 첫 3c 미반영이 3b 를 건너뛰고 곧장 3a 로 간다. 같은 이유로 3b 재투입 메모(<code>_retry_note</code>)에는 스펙 반려 줄을 싣지 않는다 — 3b 가 답할 지적이 아니다.</div>
+  <div class="note"><b>재투입 대상은 3b 에 실제로 보낸 의견뿐이다 <span class="gate p">실측 · v1.2 확장</span></b> — MISSING 과 clarify 는 <b>되물음</b>, 이미 반영은 <b>종결</b>이지 구현 누락이 아니다. 3c 미반영 재투입은 유효 뷰(스펙 ok · <code>FOUND</code>)의 의견으로만 한정한다.</div>
 </section>
 
 <hr class="rule">
 
 <section id="pipeline">
   <div class="part-head"><span class="part-num">Part 2</span><h2>워크플로우 — 고정 DAG</h2></div>
-  <p class="part-note">7개 노드가 한 줄로 이어진 고정 사슬이다. 분기가 없고, 다음에 무엇이 도는지는 <strong>산출물 파일의 존재</strong>만으로 결정된다 (<code>app/mrdoc/dispatch.py:87 derive_state</code> 패턴의 축소판).</p>
+  <p class="part-note">8개 노드가 한 줄로 이어진 고정 사슬이다. 분기가 없고, 다음에 무엇이 도는지는 <strong>산출물 파일의 존재</strong>만으로 결정된다 (<code>app/mrdoc/dispatch.py:87 derive_state</code> 패턴의 축소판).</p>
 
   <div class="filters">
     <span class="lbl">필터</span>
@@ -416,11 +438,12 @@ footer{border-top:1px solid var(--line);padding-top:20px;font-family:"IBM Plex M
     <tbody>
       <tr data-kind="llm" data-opt="0"><td>1</td><td class="nm">intent</td><td><span class="kind llm">LLM</span></td><td class="out"><a href="#t00">00-intent.md</a></td><td>의견 원문 + 목차 → 의견별 구조화 스펙. <code>search_terms</code> 를 뽑는다</td></tr>
       <tr data-kind="tool" data-opt="0"><td>2</td><td class="nm">anchor</td><td><span class="kind tool">TOOL</span></td><td class="out"><a href="#t10">10-anchor.md</a></td><td><code>search_terms</code> 를 섹션 인덱스에서 검색 → (file, section_id, line). 0건이면 <b>MISSING + 근접 후보 3개</b></td></tr>
-      <tr data-kind="tool" data-opt="0"><td>3</td><td class="nm">impact</td><td><span class="kind tool">TOOL</span></td><td class="out"><a href="#t20">20-impact.md</a></td><td>앵커 유닛의 리터럴 · 링크를 head 트리 전체에서 <b>역검색</b> → 동반 변경 후보</td></tr>
-      <tr data-kind="llm" data-opt="0"><td>4</td><td class="nm">edit</td><td><span class="kind llm">LLM</span></td><td class="out"><a href="#t30">30-edit.md</a></td><td>후보 중 진짜 대상 <b>선별</b> → 동반 변경 채택/기각 → 파일 편집 → 영수증</td></tr>
-      <tr data-kind="tool" data-opt="0"><td>5</td><td class="nm">gate</td><td><span class="kind tool">TOOL</span></td><td class="out"><a href="#t35">35-gate.md</a></td><td>경로 화이트리스트 · 리터럴 실증 · 규모 상한 · 잔여물. <b>위반분을 되돌린다</b></td></tr>
-      <tr data-kind="llm" data-opt="0"><td>6</td><td class="nm">verify</td><td><span class="kind llm">LLM</span></td><td class="out"><a href="#t40">40-verify.md</a></td><td>의견 원문 대비 diff 를 대조해 <code>applied|partial|unapplied</code> 판정</td></tr>
-      <tr data-kind="tool" data-opt="0"><td>7</td><td class="nm">summary</td><td><span class="kind tool">TOOL</span></td><td class="out"><a href="#t50">50-summary.md</a></td><td>리포트 3슬롯 추출 + <b>커밋 대상 좁히기</b>(성공 의견이 만진 파일만)</td></tr>
+      <tr data-kind="tool" data-opt="0"><td>3</td><td class="nm">spec</td><td><span class="kind tool">TOOL</span></td><td class="out"><a href="#t15">15-spec.md</a></td><td><span class="gate p">v1.2</span> 3a 스펙을 의견 원문 · 앵커 절과 <b>대조</b>, 치환의 현재 값 A 를 절에서 <b>확정</b> → 의견별 <code>ok · already_applied · spec_error · clarify · missing</code>. <code>spec_error</code> 면 3a 재투입</td></tr>
+      <tr data-kind="tool" data-opt="0"><td>4</td><td class="nm">impact</td><td><span class="kind tool">TOOL</span></td><td class="out"><a href="#t20">20-impact.md</a></td><td>스펙 ok 의견의 앵커 유닛 리터럴 · 링크를 head 트리 전체에서 <b>역검색</b> → 동반 변경 후보. 3a 연관문서 중 증거 없는 것은 <code>related_unverified</code></td></tr>
+      <tr data-kind="llm" data-opt="0"><td>5</td><td class="nm">edit</td><td><span class="kind llm">LLM</span></td><td class="out"><a href="#t30">30-edit.md</a></td><td>확정 치환 기준으로 후보 중 진짜 대상 <b>선별</b> → 동반 변경 채택/기각 → 파일 편집 → 영수증. ok 의견이 없으면 <b>호출 없이 합성</b></td></tr>
+      <tr data-kind="tool" data-opt="0"><td>6</td><td class="nm">gate</td><td><span class="kind tool">TOOL</span></td><td class="out"><a href="#t35">35-gate.md</a></td><td>경로 화이트리스트 · 리터럴 실증(A 가 base 절에 있었나 포함) · 규모 상한 · 잔여물. <b>위반분을 되돌린다</b></td></tr>
+      <tr data-kind="llm" data-opt="0"><td>7</td><td class="nm">verify</td><td><span class="kind llm">LLM</span></td><td class="out"><a href="#t40">40-verify.md</a></td><td>스펙 ok 의견만 원문 대비 diff 를 대조해 <code>applied|partial|unapplied</code> 판정. 나머지는 <b>코드 판정</b>, diff 가 비면 호출 없이 합성</td></tr>
+      <tr data-kind="tool" data-opt="0"><td>8</td><td class="nm">summary</td><td><span class="kind tool">TOOL</span></td><td class="out"><a href="#t50">50-summary.md</a></td><td>리포트 3슬롯 추출 + <b>커밋 대상 좁히기</b>(성공 의견이 만진 파일만) + 스펙 주의 항목</td></tr>
     </tbody>
   </table>
   </div>
@@ -430,6 +453,7 @@ footer{border-top:1px solid var(--line);padding-top:20px;font-family:"IBM Plex M
 <pre>&lt;workspace_root&gt;/.revise/&lt;project_id&gt;/&lt;mr_iid&gt;/r&lt;round&gt;/
   00-intent.md     <span class="c">3a 산출 — 의견별 구조화 스펙</span>
   10-anchor.md     <span class="c">기계 — 앵커 확정 / MISSING + 후보 3개</span>
+  15-spec.md       <span class="c">기계 — 스펙 대조 · 현재 값 A 확정 · 의견별 결정</span>
   20-impact.md     <span class="c">기계 — 동반 변경 후보 (리터럴 · 링크 근거)</span>
   30-edit.md       <span class="c">3b 영수증</span>
   35-gate.md       <span class="c">기계 게이트 결과</span>
@@ -446,17 +470,19 @@ footer{border-top:1px solid var(--line);padding-top:20px;font-family:"IBM Plex M
   <table>
     <thead><tr><th>산출물</th><th>쓰는 노드</th><th>읽는 곳</th></tr></thead>
     <tbody>
-      <tr><td class="out">00-intent.md</td><td>3a</td><td>anchor · impact · edit · <b>verify(참고용)</b> · 재투입 시 3a 갱신 대상</td></tr>
-      <tr><td class="out">10-anchor.md</td><td>anchor</td><td>impact · edit(라인 창) · gate(화이트리스트) · 재투입 대상 판정</td></tr>
-      <tr><td class="out">20-impact.md</td><td>impact</td><td>edit(동반 후보) · gate(화이트리스트)</td></tr>
+      <tr><td class="out">00-intent.md</td><td>3a</td><td>anchor · spec · (유효 뷰로) impact · edit · gate · <b>verify(참고용)</b> · summary · 재투입 시 3a 갱신 대상</td></tr>
+      <tr><td class="out">10-anchor.md</td><td>anchor</td><td>spec(앵커 절) · (유효 뷰로) impact · edit(라인 창) · gate(화이트리스트) · 재투입 대상 판정 · 실행기 반환(<code>clarify</code>)</td></tr>
+      <tr><td class="out">15-spec.md</td><td>spec</td><td><b>유효 뷰</b>(아래) · edit(확정 치환 · 합성 영수증) · verify(3c 에 보낼 의견 선별 · 코드 판정) · summary(주의 항목) · 실행기 반환(<code>clarify</code> 현재 값 후보)</td></tr>
+      <tr><td class="out">20-impact.md</td><td>impact</td><td>edit(동반 후보) · gate(화이트리스트) · summary(<code>related_unverified</code>)</td></tr>
       <tr><td class="out">30-edit.md</td><td>3b</td><td><b>오케스트레이터만</b> — 3c 에게 주지 않는다. 커밋 파일을 의견에 귀속시키는 데 쓴다</td></tr>
       <tr><td class="out">35-gate.md</td><td>gate</td><td>summary · 오케스트레이터(되돌림 실행)</td></tr>
       <tr><td class="out">40-verify.md</td><td>3c</td><td>summary · 실행기 반환(<code>unapplied</code>) · <code>applied_round</code> 기록 판단</td></tr>
       <tr><td class="out">50-summary.md</td><td>summary</td><td><code>report.html</code> 3슬롯 · 경로 한정 커밋</td></tr>
-      <tr><td class="out">ledger.md</td><td>전 노드</td><td>사람 · <b>재투입 예산 카운트</b>(재개해도 살아남는다)</td></tr>
+      <tr><td class="out">ledger.md</td><td>전 노드</td><td>사람 · <b>재투입 예산 카운트</b>(재개해도 살아남는다) · 재투입된 3a/3b 의 지적 메모</td></tr>
     </tbody>
   </table>
   </div>
+  <div class="note"><b>유효 뷰 <span class="gate p">v1.2</span></b> — <code>nodes.effective_view(intent, anchor, spec)</code> 는 스펙 <code>ok</code> 의견만 남기고 수정방향을 <b>확정 A → B</b> 로 다시 쓴 intent · anchor 다. spec 뒤의 모든 노드가 원본 대신 이것을 읽는다. <code>00-intent.md</code> 원본은 건드리지 않는다 — 3a 가 무엇을 추측했는지는 그대로 남아야 대조할 수 있다.</div>
   <h3 id="mapping">원안 8단계 → 실제 실행 단위</h3>
   <div class="tw">
   <table>
@@ -464,6 +490,7 @@ footer{border-top:1px solid var(--line);padding-top:20px;font-family:"IBM Plex M
     <tbody>
       <tr><td>1. 의견 구조화 (코드 참고 X)</td><td>⚠️ 수정</td><td><b>LLM 3a</b> — 본문 대신 <b>목차</b></td><td>00-intent.md</td></tr>
       <tr><td>2. 대상 존재 검사</td><td>⚠️ 담당 변경</td><td>LLM → <b>기계</b> (섹션 인덱스 + 문자열 검색)</td><td>10-anchor.md</td></tr>
+      <tr><td>— 스펙 대조 (원안에 없음)</td><td>🆕 v1.2 추가</td><td><b>기계</b> — 1번 산출을 원문 · 앵커 절과 대조, 현재 값 A 확정</td><td>15-spec.md</td></tr>
       <tr><td>3. 연관 부분 탐색</td><td>⚠️ 담당 변경</td><td>LLM → <b>기계</b> (리터럴 역검색 + 링크 추적)</td><td>20-impact.md</td></tr>
       <tr><td>4. 동반 변경 판정</td><td>✅ 유지</td><td>3번 결과 중 <b>선별만</b> LLM. 5번과 한 호출</td><td>30-edit.md</td></tr>
       <tr><td>5. 반영</td><td>✅ 유지</td><td><b>LLM 3b</b> — 앵커 ±20줄 창 한정</td><td>파일 수정</td></tr>
@@ -477,6 +504,52 @@ footer{border-top:1px solid var(--line);padding-top:20px;font-family:"IBM Plex M
   <div class="note"><b>왜 2 · 3 · 4번을 LLM 에게 주면 안 되는가.</b> 같은 결론이 <code>docs/mrdoc-pipeline.html</code> 에 이미 명문화돼 있다 — 「<b>경계는 하나다 — 두 문자열의 대조로 환원되면 툴이다.</b> 존재하나 · 개수 맞나 · 원문에 있나 · 공집합이냐 · 같냐」, 그리고 「<b>Grep 을 아무 위성에도 주지 않는다</b> — 검색은 툴이 리터럴로 한다. Grep 이 있으면 LLM 이 검색어를 짓기 시작하고, 검색어 생성은 대조할 대상이 없어 검증이 불가능하다」.</div>
   <div class="note"><b>왜 8단계가 LLM 8회가 아닌가.</b> <code>ai_max_budget_usd</code>는 CLI 호출당 적용된다(8회 = 최대 $8/라운드) · <code>revise_wall_clock_seconds</code> 위에 스위퍼가 있다 · 단계마다 컨텍스트를 다시 실어 보내는 비용이 붙는다. <b>3회로 8단계를 전부 덮는다.</b></div>
 
+  <h3 id="spec">스펙 게이트 — 편집 전에 무엇을 확인하나 <span class="gate p">v1.2</span></h3>
+  <p class="lede">3a 는 <b>목차만 보고</b> 스펙을 쓴다. 그러니 문서 본문에 대한 주장 — 특히 치환의 현재 값 A — 은 전부 추측이다. <code>15-spec.md</code> 는 확인할 수 있는 추측은 확인하고, <b>계산할 수 있는 A 는 계산한 뒤에야</b> 3b 에 돈을 쓴다. LLM 없이 의견 원문과 앵커 절의 문자열 · 리터럴 대조만 쓴다.</p>
+  <div class="note"><b>왜 편집 뒤가 아니라 앞인가.</b> v1 에서 3a 가 <code>3.1 → 4.0</code> 이라고 잘못 옮기고 문서에는 <code>3.2</code> 가 있으면, 3b 는 없는 값을 찾아 헤매거나 엉뚱한 곳을 고친다. 게이트는 「A 가 head 에 없다」를 보고 통과시킨다 — <b>A 는 원래 없었으니 사라진 게 당연하다</b>(공허한 통과). 편집 뒤의 검사는 잘못된 스펙을 기준으로 채점할 뿐 스펙 자체를 의심하지 않는다.</div>
+  <div class="tw">
+  <table>
+    <thead><tr><th>#</th><th>검사</th><th>방법</th><th>걸리면</th></tr></thead>
+    <tbody>
+      <tr><td class="num">1</td><td><b>의견 id 커버리지</b></td><td>입력 의견마다 SPEC 블록이 정확히 1개인가. <code>통합</code>으로 합쳐진 의견은 호스트의 결정을 따른다</td><td><code>spec_error</code> — 빠진 id · 중복 블록 · 입력에 없는 id</td></tr>
+      <tr><td class="num">2</td><td><b>앵커</b></td><td><code>10-anchor.md</code> 에서 <code>FOUND</code> 인가</td><td><code>missing</code> — 기존 되물음 경로</td></tr>
+      <tr><td class="num">3</td><td><b>op 모순</b></td><td><code>op: create</code> 인데 수정방향이 치환인가</td><td><code>spec_error</code></td></tr>
+      <tr><td class="num">4</td><td><b>목표 값 B 의 출처</b></td><td>B 가 의견 <b>원문</b>에 있는가 (리터럴 동치 포함). A == B 인가</td><td><code>spec_error</code> — 「3a 가 만든 값」</td></tr>
+      <tr><td class="num">5</td><td><b>현재 값 A 확정</b></td><td>① 원문이 명시한 값 ② 절에 있고 원문과 모순 없는 3a 의 A ③ 절 안에서 B 와 같은 종류(unit · kv 는 키까지)인 유일한 값 — 순서대로</td><td>후보 여럿 → <code>clarify</code>. A 도 B 도 절에 없으면 <code>spec_error</code></td></tr>
+      <tr><td class="num">6</td><td><b>이미 반영</b></td><td>A 는 절에 없고 B 는 있는가</td><td>강한 앵커면 <code>already_applied</code>, 약하거나 동점이면 <code>spec_error</code></td></tr>
+      <tr><td class="num">7</td><td><b>앵커 강도</b></td><td><code>search_terms</code> 가 절에 <code>exact</code> · <code>normalized</code> · <code>partial</code> 중 어디까지 맞나, 같은 수준으로 맞는 다른 절(<code>alternatives</code>)이 있나</td><td>통과 — <code>partial</code> 이나 동점이면 <b>주의 표기</b></td></tr>
+      <tr><td class="num">8</td><td><b>출현 횟수</b></td><td>절 안의 A 개수. 숫자 경계를 지킨다 — <code>3.2</code> 는 <code>13.2</code> · <code>3.2.1</code> 안에 없다</td><td>통과 — 2곳 이상이면 「전부 바꾼다」를 3b 에 전달</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <div class="tw">
+  <table>
+    <thead><tr><th>decision</th><th>다음에 일어나는 일</th><th>3b</th><th>3c</th></tr></thead>
+    <tbody>
+      <tr><td><code>ok</code></td><td>유효 뷰에 남아 확정 A → B 로 편집 · 게이트 · 검증</td><td>보냄</td><td>보냄</td></tr>
+      <tr><td><code>already_applied</code></td><td>편집 없이 <code>applied</code> 판정(근거 없음) → <code>applied_round</code> 기록. 리포트에 「이미 반영」</td><td>—</td><td>—</td></tr>
+      <tr><td><code>spec_error</code></td><td>반려 사유를 붙여 <b>3a 재투입</b>(예산 안). 소진되면 <code>unapplied</code> + 사유</td><td>—</td><td>—</td></tr>
+      <tr><td><code>clarify</code></td><td><b>되물음</b> — 「'4.0'(으)로 바꿀 현재 값이 대상 절에 여럿입니다. 어느 값인가요?」 + 후보 A 값</td><td>—</td><td>—</td></tr>
+      <tr><td><code>missing</code></td><td>기존 되물음 — 근접 후보 3개</td><td>—</td><td>—</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <h4>사람이 정한 네 가지</h4>
+  <dl class="fields">
+    <dt>A 를 누가</dt><dd><b>코드가 결정</b>한다. 3a 의 A 는 목차만 본 추측이라 채점 기준으로 쓸 수 없다. 코드가 고친 A 는 주의 항목에 「스펙의 현재 값 '3.1' 을 절의 같은 종류 값 '3.2' 로 교정했다」로 남는다</dd>
+    <dt>약한 앵커</dt><dd><b>진행 + 주의 표기</b>. 막으면 고칠 수 있던 의견까지 사람에게 되돌아가고, 조용히 진행하면 엉뚱한 절을 고친 사실이 묻힌다 — 「약한 앵커」 · 「모호한 앵커」 줄이 리포트에 실린다</dd>
+    <dt>다중 출현</dt><dd><b>절 안 전부 치환</b>. 개수는 스펙 게이트가 세서 3b 에 준다. 절 밖의 같은 값은 impact 의 동반 후보다</dd>
+    <dt>이미 반영</dt><dd><b>반영 완료 처리</b>. 편집할 것이 없는 의견을 미반영으로 두면 다음 라운드에 계속 돌아온다</dd>
+  </dl>
+  <h4>구현하며 정한 것</h4>
+  <ul class="plain">
+    <li><b>이미 반영은 강한 앵커일 때만</b> — 약한 앵커에서 「B 가 있다」는 엉뚱한 절을 본 결과일 수 있다. 확신 없는 applied 는 거짓 영수증이다</li>
+    <li><b>원문이 명시한 값은 유사값으로 대체하지 않는다</b> — 사람이 <code>3.2</code> 라고 썼는데 절에 <code>13.2</code> 만 있으면 A 는 미정이다. 사람의 말이 추론보다 위다</li>
+    <li><b><code>create</code> + 치환은 모순</b> — 새로 만드는 내용에는 바꿀 현재 값이 없다</li>
+    <li><b>막힌 의견은 3c 에 보내지 않는다</b> — 판정은 코드가 낸다(<a class="inline" href="#agents">3c 카드</a>)</li>
+    <li><b>스펙 반려와 게이트 · 3c 재투입은 예산 2 를 공유하되, 에스컬레이션은 스펙 반려를 세지 않는다</b> — <a class="inline" href="#reinject">재투입 예산</a></li>
+  </ul>
+
   <h3 id="gate">결정론 게이트 — 이 설계의 핵심</h3>
   <p class="lede"><code>35-gate.md</code>가 LLM 보고를 믿지 않고 기계로 확인한다. 게이트는 <b>판정하고, 되돌린다</b> — 그 판정을 근거로 무엇을 커밋할지는 오케스트레이터가 정한다.</p>
   <div class="tw">
@@ -484,7 +557,7 @@ footer{border-top:1px solid var(--line);padding-top:20px;font-family:"IBM Plex M
     <thead><tr><th>#</th><th>검사</th><th>방법</th><th>위반 시</th></tr></thead>
     <tbody>
       <tr><td class="num">1</td><td><b>경로 화이트리스트</b></td><td><code>git diff --name-only</code> 가 전부 <code>.md/.mdx</code> 이고 전부 앵커/동반 후보 파일 집합 안인가</td><td><span class="gate r">부분</span> 벗어난 <b>그 파일만</b> 되돌린다</td></tr>
-      <tr><td class="num">2</td><td><b>리터럴 실증</b></td><td>의견이 「A → B」 치환을 요구했다면 <code>extract_literals</code> 로 차집합 확인</td><td><span class="gate r">부분</span> 해당 의견을 <code>failed_opinion_ids</code> 로</td></tr>
+      <tr><td class="num">2</td><td><b>리터럴 실증</b></td><td>의견이 「A → B」 치환을 요구했다면(A 는 스펙 게이트가 확정한 값) <code>extract_literals</code> 차집합 + 절 평문 검사</td><td><span class="gate r">부분</span> 해당 의견을 <code>failed_opinion_ids</code> 로 → 3b 재투입</td></tr>
       <tr><td class="num">3</td><td><b>규모 상한</b></td><td>변경 파일 수 / 라인 수 상한 초과</td><td><span class="gate b">전량</span> 전량 되돌리고 <code>kind=failed</code></td></tr>
       <tr><td class="num">4</td><td><b>잔여물 검사</b></td><td>워크스페이스에 untracked 파일이 생겼는가</td><td><span class="gate r">부분</span> 삭제. <code>checkout -B</code> 는 untracked 를 지우지 않는다</td></tr>
     </tbody>
@@ -495,11 +568,17 @@ footer{border-top:1px solid var(--line);padding-top:20px;font-family:"IBM Plex M
     <div class="bar"><span class="f">리터럴 실증</span><span class="flow">세 항의 차집합을 직접 조립한다</span></div>
 <pre>A <span class="k">∈</span> literals(base 유닛)   <span class="c"># 옛 값이 있었고</span>
 A <span class="k">∉</span> literals(head 유닛)   <span class="c"># 사라졌고</span>
-B <span class="k">∈</span> literals(head 유닛)   <span class="c"># 새 값이 생겼다</span></pre>
+B <span class="k">∈</span> literals(head 유닛)   <span class="c"># 새 값이 생겼다</span>
+
+<span class="c"># 평문 병행 — 리터럴이 아니어도 항상 본다 (v1.2: 첫 줄 추가)</span>
+A <span class="k">in</span> text(base 유닛)       <span class="c"># a_in_base_text — 없으면 fail</span>
+A <span class="k">not in</span> text(head 유닛)   <span class="c"># a_in_head_text = false</span>
+B <span class="k">in</span> text(head 유닛)       <span class="c"># b_in_head_text = true</span></pre>
   </div>
 
-  <div class="note"><b>⚠️ 함정 1 — 출현 횟수가 사라진다.</b> <code>extract_literals</code> 는 <code>(kind, key, value)</code> 로 <b>완전 dedup</b> 한다. 「3곳 중 3곳 다 치환됐나」는 판정 불가 — <b>「그 값이 head 유닛에 더는 없다」까지만</b> 말할 수 있다. 템플릿의 <code>occurrences</code> 가 <code>unavailable</code> 인 이유다.</div>
-  <div class="note"><b>⚠️ 함정 2 — 평문 용어 교체는 안 걸린다.</b> 리터럴 5종(kv/unit/bool/code/link) <b>밖</b>의 평문 교체는 아예 잡히지 않는다 → <code>markdown_tree.section_text</code> + 문자열 <code>in</code> 검사를 <b>병행</b>해야 한다. 템플릿의 <code>text</code> 슬롯이 그것이다.</div>
+  <div class="note"><b>⚠️ 함정 1 — 출현 횟수가 사라진다.</b> <code>extract_literals</code> 는 <code>(kind, key, value)</code> 로 <b>완전 dedup</b> 한다. 「3곳 중 3곳 다 치환됐나」는 게이트에서 판정 불가 — <b>「그 값이 head 유닛에 더는 없다」까지만</b> 말할 수 있다. 템플릿의 <code>occurrences</code> 가 <code>unavailable</code> 인 이유다. <span class="gate p">v1.2</span> 대신 스펙 게이트가 편집 <b>전</b> base 절에서 A 를 직접 세어(<code>_count</code>) 3b 에게 「N곳 — 전부 바꾼다」를 준다. 「하나라도 남았나」는 게이트의 <code>a_in_head_text</code> 가 잡는다.</div>
+  <div class="note"><b>⚠️ 함정 2 — 평문 용어 교체는 안 걸린다.</b> 리터럴 6종(kv/unit/version/bool/code/link) <b>밖</b>의 평문 교체는 아예 잡히지 않는다 → <code>markdown_tree.section_text</code> + 문자열 <code>in</code> 검사를 <b>병행</b>해야 한다. 템플릿의 <code>text</code> 슬롯이 그것이다.</div>
+  <div class="note"><b>⚠️ 함정 3 — 공허한 통과 <span class="gate p">v1.2 에서 막음</span></b> — A 가 base 절에 <b>원래 없었다면</b> 「A 가 head 에 없다」는 아무것도 증명하지 않는다. 평문 검사는 리터럴이 아닌 A 에서 <code>sets</code> 없이 혼자 판정하므로 여기서 새어 나갔다. 이제 <code>a_in_base_text</code> 가 거짓이면 <code>fail</code> 이고 STATUS 에 「치환 전 값이 base 절에 없음 N건」이 붙는다. 스펙 게이트가 A 를 절에서 확정하므로 정상 경로에서는 걸리지 않는다 — <b>스펙 게이트를 우회한 산출물에 대한 백스톱</b>이다. 필드가 없는 v1 산출물은 <code>true</code> 로 읽는다.</div>
   <div class="note"><b>⚠️ <code>UnitLiterals.changed</code> 를 믿지 말 것.</b> 같은 키의 값이 여러 개일 때 정렬 후 위치로 zip 해 from→to 를 만들기 때문에 <b>매핑이 어긋날 수 있다.</b> 단일 치환 검증에는 위 3항 차집합을 직접 조립한다.</div>
 
   <h3 id="rounds">라운드 회계 — 되물음</h3>
@@ -507,8 +586,9 @@ B <span class="k">∈</span> literals(head 유닛)   <span class="c"># 새 값�
   <table>
     <thead><tr><th>상황</th><th>처리</th></tr></thead>
     <tbody>
-      <tr><td>전부 MISSING + 커밋 없음</td><td><code>round</code> <b>증가 없이</b> <code>revising→reviewing</code> CAS, 재알림에 질문 + 후보 3개</td></tr>
-      <tr><td>일부만 MISSING</td><td>커밋이 났으므로 라운드 정상 소모. 못 찾은 의견은 unapplied + 질문 첨부</td></tr>
+      <tr><td>되물음(MISSING · 스펙 <code>clarify</code>) + 커밋 없음</td><td><code>round</code> <b>증가 없이</b> <code>revising→reviewing</code> CAS, 재알림에 질문 + 후보(MISSING 은 근접 절 3개, clarify 는 현재 값 후보)</td></tr>
+      <tr><td>일부만 되물음</td><td>커밋이 났으므로 라운드 정상 소모. 되물은 의견은 unapplied + 질문 첨부</td></tr>
+      <tr><td>이미 반영 <span class="gate p">v1.2</span></td><td>편집 없이 <code>applied</code> — <code>applied_round</code> 가 기록돼 다음 라운드에 다시 포함되지 않는다. 되물음이 아니므로 라운드 회계에 영향 없음</td></tr>
       <tr><td>되물음 상한</td><td><code>event_log</code> 에 <code>kind='clarify'</code> 를 남기고 <b>세션당 2회</b>. 초과 시 그 의견만 <code>last_verdict="대상 미확인 — 재질문 한도 소진"</code> 으로 마감하고 라운드 정상 진행</td></tr>
     </tbody>
   </table>
@@ -552,7 +632,7 @@ B <span class="k">∈</span> literals(head 유닛)   <span class="c"># 새 값�
       <tr><td class="num">2</td><td><b>새 세션 상태를 만들지 않는다</b></td><td><code>review_session.status</code> 에 <code>CHECK</code> 제약(<code>app/db.py:41</code>) + 마이그레이션 코드 부재 → 테이블 재생성 필요</td></tr>
       <tr><td class="num">3</td><td><b>DB 컬럼을 추가하지 않는다</b></td><td>같은 이유. <code>question_refs</code> · <code>last_verdict</code> 는 이미 있고 비어 있으니 그것을 쓴다</td></tr>
       <tr><td class="num">4</td><td>실행기 반환 계약 유지</td><td><code>{kind: ok|failed, unapplied: [{opinion_id, reason}]}</code> — 코어가 이 모양에 의존</td></tr>
-      <tr><td class="num">5</td><td><code>applied_round</code> 는 3c 「반영」 판정에만 기록</td><td>NULL = 다음 라운드 자동 재포함 (재제출 불필요)</td></tr>
+      <tr><td class="num">5</td><td><code>applied_round</code> 는 「반영」 판정에만 기록 — 3c 의 <code>applied</code> 또는 스펙 게이트의 <code>already_applied</code></td><td>NULL = 다음 라운드 자동 재포함 (재제출 불필요)</td></tr>
       <tr><td class="num">6</td><td>타이머 불변식 유지</td><td>큐 대기 &lt; 세션 벽시계 &lt; 스위퍼 임계값. 단계를 늘리면 <b>셋 다</b> 올려야 한다</td></tr>
       <tr><td class="num">7</td><td>LLM 산출 텍스트는 DB/슬랙 전에 마스킹</td><td><code>_redact(text, _redaction_secrets(settings))</code> + 슬랙 노출 300자 캡</td></tr>
       <tr><td class="num">8</td><td>프롬프트에 넘기는 경로는 <code>Path.as_posix()</code></td><td>Windows 백슬래시가 JSON 파싱을 깨뜨린 실측 있음</td></tr>
@@ -583,6 +663,7 @@ mr_iid: 11
 project_id: "1009"
 round: 1
 base_sha: <span class="k">a1b2c3d</span>
+opinions: 1
 STATUS: "OK"
 UNCOVERED: "none"
 UNCERTAIN: "none"
@@ -593,18 +674,22 @@ CONFIDENCE: "high — 목차에서 대상 절 확인"
 
 ```yaml
 opinion_id: 41
+op: modify
 대상문서: [docs/install.md]
+연관문서: [docs/ops.md]
 범위: local
 대상주장: "설치 절차가 런타임 3.2 를 요구한다고 서술"
 수정방향: "3.2 → 4.0"
 근거: "설치 절차의 3.2 버전 표기를 4.0으로 고쳐 주세요"
 통합: []
 충돌해소: none
-search_terms: ["3.2", "설치 절차"]
+search_terms: ["설치 절차", "3.2"]
 ```</pre>
   </div>
   <dl class="fields">
-    <dt>수정방향</dt><dd><b><code>A → B</code> 정확히 이 형태.</b> 게이트의 리터럴 실증이 이 문자열을 파싱해 차집합을 만든다</dd>
+    <dt>op</dt><dd><code>create</code> | <code>modify</code> | <code>delete</code> — 닫힌 열거형, 파서가 거부한다. <code>create</code> 에 치환을 적으면 스펙 게이트가 반려한다</dd>
+    <dt>수정방향</dt><dd><b><code>A → B</code> 정확히 이 형태.</b> B 는 의견 원문의 값이어야 한다. <b>A 는 스펙 게이트가 절에서 다시 확정</b>하고, 이후 노드는 그 값으로 차집합을 만든다</dd>
+    <dt>연관문서</dt><dd>목차만 보고 적은 <b>의심</b>. impact 가 증거로 검증하고, 증거 없는 경로는 <code>related_unverified</code></dd>
     <dt>범위</dt><dd><code>local</code> | <code>cross-doc</code> 둘 중 하나</dd>
     <dt>search_terms</dt><dd><b>원문에 그대로 있을 문자열만.</b> 다음 노드가 이것으로 앵커를 찾는다</dd>
     <dt>통합</dt><dd>중복 의견 id 배열. 없으면 <code>[]</code></dd>
@@ -615,12 +700,13 @@ search_terms: ["3.2", "설치 절차"]
 <pre>---
 mr_iid: 11
 round: 1
-found: 1
+opinions: 1
+resolved: 1
 missing: 0
 STATUS: OK
 UNCOVERED: none
 UNCERTAIN: none
-CONFIDENCE: "high — 섹션 인덱스 대조만 사용"
+CONFIDENCE: "high — parse_sections 섹션 인덱스의 문자열 검색만 사용"
 ---
 
 ## ANCHOR 41
@@ -628,40 +714,110 @@ CONFIDENCE: "high — 섹션 인덱스 대조만 사용"
 ```yaml
 opinion_id: 41
 status: FOUND
-unit_id: u-45361e55
-hits: [{term: "3.2", file: docs/install.md, section_id: s-3e7a, line: 31}]
-window: {file: docs/install.md, start: 11, end: 51}
-candidates: []
+hits: [{term: "설치 절차", file: docs/install.md, section_id: s-14fc3548, line: 3}, {term: 3.2, file: docs/install.md, section_id: s-14fc3548, line: 5}]
+unit_id: u-49a49ee8
+window: {file: docs/install.md, lines: 1-8}
 ```</pre>
   </div>
   <dl class="fields">
     <dt>status</dt><dd><code>FOUND</code> | <code>MISSING</code>. <code>MISSING</code> 이면 <b>되물음</b>으로 가고 편집 대상에서 빠진다</dd>
-    <dt>candidates</dt><dd><code>MISSING</code> 일 때만 채운다 — <b>근접 후보 3개</b>. 슬랙 되물음에 그대로 실린다</dd>
-    <dt>window</dt><dd>3b 에게 줄 <b>±20줄 창</b>. 이 범위가 3b 가 읽을 수 있는 전부다</dd>
+    <dt>candidates</dt><dd><code>MISSING</code> 일 때만 나온다 — <b>근접 후보 3개</b>. 슬랙 되물음에 그대로 실린다</dd>
+    <dt>window</dt><dd>3b 에게 줄 <b>±20줄 창</b>(파일 경계에서 잘린다). 이 범위가 3b 가 읽을 수 있는 전부다</dd>
   </dl>
+
+  <div class="codewrap" id="t15">
+    <div class="bar"><span class="f">15-spec.md</span><span class="flow">기계 — 대조 · A 확정</span><span class="kind tool">TOOL 산출</span></div>
+<pre>---
+mr_iid: 11
+round: 1
+opinions: 1
+decisions: {ok: 1, already_applied: 0, spec_error: 0, clarify: 0, missing: 0}
+STATUS: OK
+UNCOVERED: none
+UNCERTAIN: none
+CONFIDENCE: "high — 의견 원문과 앵커 절의 문자열·리터럴 대조만 사용"
+---
+
+## SPEC 41
+
+```yaml
+opinion_id: 41
+decision: ok
+op: modify
+from: <span class="k">3.2</span>
+to: <span class="k">4.0</span>
+a_source: opinion
+occurrences: 2
+anchor_tier: exact
+host: 0
+alternatives: []
+a_candidates: []
+notes: ["현재 값이 절 안에 2곳 — 전부 바꾼다"]
+```</pre>
+  </div>
+  <dl class="fields">
+    <dt>decision</dt><dd><code>ok</code> | <code>already_applied</code> | <code>spec_error</code> | <code>clarify</code> | <code>missing</code> — 닫힌 열거형. frontmatter <code>decisions</code> 는 블록과 대조되고 어긋나면 파싱이 실패한다</dd>
+    <dt>from / to</dt><dd><b>3b 와 게이트가 쓰는 치환.</b> <code>ok</code> 면 <code>from</code> 은 3a 의 추측이 아니라 <b>코드가 절에서 확정한 A</b>, 절에 적힌 표기 그대로다. 그 밖의 결정에서는 3a 가 쓴 값을 기록으로 남긴 것이다</dd>
+    <dt>a_source</dt><dd>A 가 어디서 왔나 — <code>opinion</code>(원문 명시) | <code>spec</code>(3a 의 A 를 절에서 확인) | <code>code</code>(절 안 같은 종류 유일 값)</dd>
+    <dt>occurrences</dt><dd>절 안의 A 개수. 게이트와 달리 <b>세어진다</b> — dedup 전의 원문을 직접 센다</dd>
+    <dt>anchor_tier</dt><dd><code>exact</code> | <code>normalized</code> | <code>partial</code>. <code>partial</code> 이면 「약한 앵커」 주의</dd>
+    <dt>alternatives</dt><dd>같은 수준으로 잡힌 다른 절(<code>파일 § 제목</code>). 있으면 「모호한 앵커」 주의</dd>
+    <dt>a_candidates</dt><dd><code>clarify</code> 일 때 되물음에 실리는 현재 값 후보</dd>
+    <dt>host</dt><dd><code>통합</code>으로 합쳐진 의견이면 호스트 id. 결정은 호스트를 따른다</dd>
+    <dt>notes</dt><dd>사람이 읽는 사유. <code>spec_error</code> 는 첫 줄이 재투입 사유와 판정문이 되고, <code>ok</code> 의 notes 는 리포트 주의 항목으로 간다</dd>
+  </dl>
+  <div class="codewrap">
+    <div class="bar"><span class="f">입력이 달라지면</span><span class="flow">SPEC 41 블록 발췌 — 실제 렌더 출력</span></div>
+<pre><span class="c"># 3a 가 「3.1 → 4.0」이라고 잘못 옮겼다 — 원문의 3.2 로 고친다</span>
+decision: ok
+from: 3.2
+a_source: opinion
+notes: ["스펙의 현재 값 '3.1' 을 의견 원문 '3.2' 로 교정했다", "현재 값이 절 안에 2곳 — 전부 바꾼다"]
+
+<span class="c"># 원문이 「설치 절차 버전을 4.0으로」뿐이고 3a 가 3.1 을 지어냈다 — 절의 유일한 같은 종류 값으로</span>
+decision: ok
+from: 3.2
+a_source: code
+notes: ["스펙의 현재 값 '3.1' 을 절의 같은 종류 값 '3.2' 로 교정했다", "현재 값이 절 안에 2곳 — 전부 바꾼다"]
+
+<span class="c"># 절이 이미 4.0 이다 — 편집 없이 applied</span>
+decision: already_applied
+notes: ["대상 절에 목표 값이 이미 있고 현재 값은 없다"]
+
+<span class="c"># 원문이 현재 값을 말하지 않았고 절에 3.2 와 3.1 이 같이 있다 — 되묻는다</span>
+decision: clarify
+a_candidates: [3.2, 3.1]
+notes: ["대상 절에 바꿀 수 있는 현재 값이 여럿이다: 3.2, 3.1"]</pre>
+  </div>
 
   <div class="codewrap" id="t20">
     <div class="bar"><span class="f">20-impact.md</span><span class="flow">기계 — 역검색만</span><span class="kind tool">TOOL 산출</span></div>
 <pre>---
 mr_iid: 11
 round: 1
+anchors: 1
 candidates: 2
 STATUS: OK
 UNCOVERED: none
 UNCERTAIN: none
-CONFIDENCE: "high — 리터럴 역검색 + 링크 추적"
+CONFIDENCE: "high — extract_literals 역검색과 링크 타깃 대조만 사용"
 ---
 
 ## IMPACT 41
 
 ```yaml
 opinion_id: 41
-candidates: [{file: docs/ops.md, line: 5, unit_id: u-9c1a2b30, via: literal, match: "3.2"}, {file: docs/index.md, line: 3, unit_id: u-77de01f4, via: link, match: "install.md"}]
+anchor: {file: docs/install.md, section_id: s-14fc3548, unit_id: u-49a49ee8}
+literals: [{kind: version, key: version, value: 3.2}]
+links_in: [{file: docs/index.md, line: 3, target: "install.md#설치-절차"}]
+candidates: [{file: docs/index.md, section_id: s-aaed22a5, unit_id: u-b80c9625, line: 3, via: link, match: "install.md#설치-절차"}, {file: docs/ops.md, section_id: s-417c72d5, unit_id: u-05290ea5, line: 5, via: literal, match: 3.2}]
+related_unverified: []
 ```</pre>
   </div>
   <dl class="fields">
     <dt>via</dt><dd><code>literal</code>(같은 값이 다른 문서에 있음) | <code>link</code>(그 절을 가리키는 링크)</dd>
     <dt>match</dt><dd><b>근거 문자열.</b> 후보마다 붙는다 — 근거 없는 후보는 만들지 않는다</dd>
+    <dt>related_unverified</dt><dd><span class="gate p">v1.1</span> 3a 가 <code>연관문서</code>로 지목했지만 리터럴 · 링크 증거가 없는 경로. 후보가 되지 못한 의심을 버리지 않고 리포트 주의 항목으로 넘긴다</dd>
   </dl>
   <div class="note"><b>이것이 원안 3번을 기계로 옮긴 값이다 <span class="gate p">실측</span></b> — 스모크에서 아무도 3b 에게 <code>docs/ops.md</code> 도 <code>3.2</code> 라고 말해주지 않았다. 이 노드가 리터럴 역검색으로 찾아냈고(<code>candidates=2</code>), 3b 가 채택했고, 게이트가 기계로 증명했다.</div>
 
@@ -673,26 +829,25 @@ round: 1
 processed: [41]
 unprocessed: []
 files_touched: [docs/install.md, docs/ops.md]
-STATUS: "OK"
-UNCOVERED: "none"
-UNCERTAIN: "none"
-CONFIDENCE: "high — 라인 창 안에서 동일 리터럴 확인 후 치환"
+STATUS: OK
+UNCOVERED: none
+UNCERTAIN: none
+CONFIDENCE: "high — 확정 치환을 창 안에서 확인 후 치환"
 ---
 
 ## EDIT 41
 
 ```yaml
 opinion_id: 41
-result: "applied"
-reason: ""
-edits: [{file: "docs/install.md", line: "31", from: "버전 3.2", to: "버전 4.0"}, {file: "docs/ops.md", line: "5", from: "런타임 3.2", to: "런타임 4.0"}]
-selected: [{file: "docs/ops.md", line: "5", via: "literal", decision: "apply", reason: "다른 문서의 동일 런타임 표기 — cross-doc 일괄 정정 대상"}]
+result: applied
+edits: [{file: docs/install.md, line: 5, from: "런타임 3.2 이상", to: "런타임 4.0 이상"}, {file: docs/install.md, line: 7, from: "런타임 3.2 를", to: "런타임 4.0 을"}, {file: docs/ops.md, line: 5, from: "런타임 3.2 가", to: "런타임 4.0 이"}]
+selected: [{file: docs/index.md, line: 3, via: link, decision: skip, reason: "절을 가리키는 링크일 뿐 버전 값이 없다"}, {file: docs/ops.md, line: 5, via: literal, decision: apply, reason: "다른 문서의 같은 런타임 표기 — 함께 정정"}]
 ```</pre>
   </div>
   <dl class="fields">
     <dt>result</dt><dd><code>applied</code> | <code>unapplied</code>. <b>3b 의 주장이다</b> — 게이트와 3c 가 별도로 검증한다</dd>
     <dt>reason</dt><dd><code>unapplied</code> 면 필수. <b>침묵은 누락으로 처리된다</b></dd>
-    <dt>selected</dt><dd>동반 후보의 <b>채택/기각 결정과 사유</b>. 기각도 남긴다</dd>
+    <dt>selected</dt><dd>동반 후보의 <b>채택(<code>apply</code>)/기각(<code>skip</code>) 결정과 사유</b>. 기각도 남긴다</dd>
     <dt>edits</dt><dd><b>실제로 한 편집만.</b> 하려던 것을 쓰는 칸이 아니다</dd>
   </dl>
   <div class="note"><b>이 영수증은 3c 에게 전달되지 않는다.</b> 오케스트레이터만 읽어 3c 판정과 대조하고, <b>불일치 시 3c 를 신뢰한다.</b></div>
@@ -719,21 +874,21 @@ CONFIDENCE: "high — changed_paths 와 base/head 유닛 대조만 사용"
 
 ```yaml
 changed: [docs/install.md, docs/ops.md]
-allowed: [docs/install.md, docs/ops.md]
+allowed: [docs/index.md, docs/install.md, docs/ops.md]
 non_md: []
 outside: []
 reverted: []
 result: pass
 ```
 
-## LITERAL u-45361e55
+## LITERAL u-49a49ee8
 
 ```yaml
 opinion_id: 41
 from: 3.2
 to: 4.0
 sets: {a_in_base: true, a_not_in_head: true, b_in_head: true}
-text: {a_in_head_text: false, b_in_head_text: true}
+text: {<span class="k">a_in_base_text: true</span>, a_in_head_text: false, b_in_head_text: true}
 occurrences: unavailable
 result: pass
 ```
@@ -756,7 +911,8 @@ result: pass
   <dl class="fields">
     <dt>kind</dt><dd><code>ok</code> | <code>failed</code>. <code>failed</code> 는 <b>규모 상한 초과(전량 되돌림)</b>일 때만</dd>
     <dt>sets</dt><dd>리터럴 3항 차집합. <b>이 세 값이 게이트의 본체다</b></dd>
-    <dt>text</dt><dd>평문 <code>in</code> 검사 — 리터럴 5종 밖의 교체를 잡는 <b>병행 검사</b>(함정 2)</dd>
+    <dt>text</dt><dd>평문 <code>in</code> 검사 — 리터럴 6종 밖의 교체를 잡는 <b>병행 검사</b>(함정 2). <code>a_in_base_text</code> 가 거짓이면 fail — 공허한 통과 차단(함정 3)</dd>
+    <dt>from / to</dt><dd><code>15-spec.md</code> 의 확정 치환. 3a 의 원본 수정방향이 아니다</dd>
     <dt>occurrences</dt><dd>항상 <code>unavailable</code> — <code>extract_literals</code> 의 완전 dedup 때문(함정 1)</dd>
     <dt>reverted</dt><dd>되돌린 파일 목록. <b>게이트는 판정하고 되돌리며, 커밋 결정은 하지 않는다</b></dd>
   </dl>
@@ -766,10 +922,11 @@ result: pass
 <pre>---
 mr_iid: 11
 round: 1
-summary: "의견 1건 중 1건 반영"
-STATUS: "OK"
-UNCOVERED: "none"
-UNCERTAIN: "none"
+opinions: 1
+verdicts: {applied: 1, partial: 0, unapplied: 0}
+STATUS: OK
+UNCOVERED: none
+UNCERTAIN: none
 CONFIDENCE: "high — diff 에서 before/after 직접 확인"
 ---
 
@@ -777,24 +934,21 @@ CONFIDENCE: "high — diff 에서 before/after 직접 확인"
 
 ```yaml
 opinion_id: 41
-verdict: "applied"
-evidence: [{file: "docs/install.md", line: "31", before: "버전 3.2", after: "버전 4.0"}, {file: "docs/ops.md", line: "5", before: "런타임 3.2", after: "런타임 4.0"}]
+verdict: applied
+evidence: [{file: docs/install.md, line: 5, before: "런타임 3.2 이상이 필요하다.", after: "런타임 4.0 이상이 필요하다."}, {file: docs/install.md, line: 7, before: "1. 런타임 3.2 를 내려받는다.", after: "1. 런타임 4.0 을 내려받는다."}, {file: docs/ops.md, line: 5, before: "런타임 3.2 가 설치돼 있는지 확인한다.", after: "런타임 4.0 이 설치돼 있는지 확인한다."}]
 ```
 
-**판정문** install.md 사전 요구사항 · 설치 명령과 ops.md 의 3.2 표기가 모두 4.0 으로 변경되어 applied.
+**판정문** install.md 설치 절차의 두 3.2 표기와 ops.md 의 3.2 표기가 모두 4.0 으로 바뀌어 applied.
 
 ## SUMMARY
 
-```yaml
-applied: 1
-partial: 0
-unapplied: 0
-```</pre>
+의견 1건 중 1건 반영</pre>
   </div>
   <dl class="fields">
     <dt>verdict</dt><dd><code>applied</code> | <code>partial</code> | <code>unapplied</code>. <b>이 판정이 <code>applied_round</code> 기록을 좌우한다</b></dd>
     <dt>evidence</dt><dd>파일 · 라인 · before/after. <b>지목할 diff 가 없으면 applied 가 아니다</b></dd>
     <dt>판정문</dt><dd>사람이 읽는 한 문장. <code>unapplied</code>/<code>partial</code> 이면 <b>리포트의 points_to_watch 로 그대로 간다</b></dd>
+    <dt>3c 밖의 판정</dt><dd><span class="gate p">v1.2</span> 스펙 게이트가 막은 의견의 VERDICT 도 이 파일에 입력 순서대로 합쳐진다 — 3c 가 쓴 것이 아니라 <code>spec_verdict</code> 가 쓴 것이다(evidence 는 비어 있다)</dd>
   </dl>
 
   <div class="codewrap" id="t50">
@@ -802,43 +956,42 @@ unapplied: 0
 <pre>---
 mr_iid: 11
 round: 1
+applied: [41]
+partial: []
+unapplied: []
 commit_paths: [docs/install.md, docs/ops.md]
 STATUS: OK
 UNCOVERED: none
 UNCERTAIN: none
-CONFIDENCE: "high — verify 판정과 리터럴 차집합만 사용"
+CONFIDENCE: "high — 3c 판정과 리터럴 차집합만 사용, 생성 문장 없음"
 ---
 
-## SUMMARY
+## summary
 
-```yaml
-summary: "의견 1건 중 1건 반영 — 런타임 버전 표기 3.2 → 4.0"
-```
+의견 1건 중 1건 반영
 
-## KEY_CHANGES
+## key_changes
 
-```yaml
-items: [{file: docs/install.md, change: "런타임 버전 요구 3.2 → 4.0"}, {file: docs/ops.md, change: "배포 전 확인 런타임 3.2 → 4.0"}]
-```
+- docs/install.md — version: 3.2 → 4.0
+- docs/ops.md — version: 3.2 → 4.0
 
-## POINTS_TO_WATCH
+## points_to_watch
 
-```yaml
-items: []
-```</pre>
+- 의견 41 — 현재 값이 절 안에 2곳 — 전부 바꾼다</pre>
   </div>
   <dl class="fields">
-    <dt>commit_paths</dt><dd><b>성공 의견이 만진 파일만.</b> 게이트의 <code>changed</code> 에서 되돌린 것을 빼고, 다시 <b>3c 가 applied/partial 로 본 의견의 편집 파일</b>로 좁힌다</dd>
-    <dt>KEY_CHANGES</dt><dd><b>리터럴 차집합에서 기계 생성</b> — LLM 이 쓰지 않는다</dd>
-    <dt>POINTS_TO_WATCH</dt><dd>3c 미반영/부분 <b>판정문</b>을 그대로</dd>
+    <dt>commit_paths</dt><dd><b>성공 의견이 만진 파일만.</b> 게이트의 <code>changed</code> 에서 되돌린 것을 빼고, 다시 <b>applied/partial 로 판정된 의견의 편집 파일</b>로 좁힌다</dd>
+    <dt>key_changes</dt><dd><b>리터럴 차집합에서 기계 생성</b> — LLM 이 쓰지 않는다</dd>
+    <dt>points_to_watch</dt><dd>3c 미반영/부분 <b>판정문</b> + 게이트 주의 + <span class="gate p">v1.2</span> <b>스펙 주의</b>(이미 반영 · 약한/모호한 앵커 · A 교정 · 다중 출현) + <span class="gate p">v1.1</span> 미검증 연관 문서 · 커밋 범위 밖에 남은 이전 값</dd>
   </dl>
   <div class="note"><b>커밋 대상 좁히기는 게이트가 아니라 여기서 한다 <span class="gate p">실측</span></b> — <code>build_summary</code> 는 verdict 를 보지 않으므로, 전부 미반영인 라운드도 게이트만 통과하면 커밋될 수 있었다. 오케스트레이터가 <b>편집 영수증으로 파일을 의견에 귀속</b>시켜 좁히고, 빠진 파일은 <code>restore_paths</code> 로 되돌린다.</div>
 
   <div class="codewrap" id="tledger">
     <div class="bar"><span class="f">ledger.md</span><span class="flow">append-only · 타임스탬프 없음</span><span class="kind tool">TOOL 산출</span></div>
-<pre><span class="c"># 실제 스모크 라운드의 ledger</span>
+<pre><span class="c"># 스모크 라운드의 ledger (v1) + v1.2 의 spec 줄</span>
 intent done (opinions=1)
 anchor done (found=1 missing=0)
+spec done (ok=1 already_applied=0 spec_error=0 clarify=0 missing=0)
 impact done (candidates=2)
 edit done (processed=1 touched=2)
 gate done (kind=ok reverted=0 literal_fail=0)
@@ -850,6 +1003,8 @@ pipeline complete</pre>
     <dt>용도</dt><dd>사람이 읽는 진행 기록. <b>재투입 예산을 여기서 센다</b> — 재개해도 살아남는다</dd>
     <dt>타임스탬프</dt><dd>넣지 않는다 — 산출물 diff 가 시간에 흔들리면 재개 판정이 불안정해진다</dd>
     <dt>실패 표기</dt><dd><code>abort: stage &lt;name&gt; ...</code> — <b>단계 이름이 반드시 붙는다</b> <span class="gate p">실측 개정</span></dd>
+    <dt>재투입 표기</dt><dd><code>reinject 1/2 -&gt; intent (스펙 검증 실패 — 41: 목표 값 '4.1' 이 의견 원문에 없다 — 3a 가 만든 값; opinions 41)</code> — 원인 · 대상 · 의견이 한 줄. 예산은 이 줄을 센다. 소진되면 <code>reinject budget spent — 표기 후 진행 (…)</code></dd>
+    <dt>합성 표기</dt><dd><span class="gate p">v1.2</span> <code>edit skipped (no opinion passed the spec gate)</code> · <code>verify skipped (empty diff or nothing sent to 3b)</code> — 호출하지 않은 단계도 흔적을 남긴다</dd>
   </dl>
   <div class="note"><b>파싱 실패도 단계에 귀속시킨다 <span class="gate p">실측 개정</span></b> — 코덱의 <code>ValueError</code> 가 그대로 올라가면 ledger 에 <code>abort: ValueError</code> 만 남아 <b>어느 단계인지도, 무엇이 문제였는지도</b> 알 수 없었다. 코덱에서 죽은 두 라운드를 드라이버 traceback 으로 추적해야 했는데, 그건 이 기록이 존재하는 이유 자체를 무너뜨린다.</div>
 </section>
@@ -878,11 +1033,11 @@ pipeline complete</pre>
   <table>
     <thead><tr><th>파일</th><th>역할</th></tr></thead>
     <tbody>
-      <tr><td><code>runner.py</code></td><td><code>StagedRunner</code> (<code>AIRunner</code> 프로토콜 구현) — 노드 루프 + 재투입 예산</td></tr>
-      <tr><td><code>nodes.py</code></td><td>결정론 노드: anchor / impact / gate / summary-extract</td></tr>
-      <tr><td><code>schema.py</code></td><td>3a · 3b · 3c 산출물의 파서 + 렌더러 (프롬프트와 한 소스)</td></tr>
-      <tr><td><code>prompts.py</code></td><td>세 시스템 프롬프트 + HARD LIMITS</td></tr>
-      <tr><td><code>workspace.py</code></td><td>아티팩트 경로 규칙 + 파일 존재 기반 상태 유도</td></tr>
+      <tr><td><code>runner.py</code></td><td><code>StagedRunner</code> (<code>AIRunner</code> 프로토콜 구현) — 노드 루프 + 원인별 재투입 예산 + <code>codex exec</code> 단계 호출(<code>_stage</code>) + 유효 뷰</td></tr>
+      <tr><td><code>nodes.py</code></td><td>결정론 노드: anchor / <b>spec</b> / impact / gate / summary-extract. <code>effective_view</code> · <code>spec_verdict</code> · <code>spec_watch</code></td></tr>
+      <tr><td><code>schema.py</code></td><td>여덟 산출물(3a · 3b · 3c + 결정론 10 · 15 · 20 · 35 · 50)의 파서 + 렌더러 (프롬프트와 한 소스)</td></tr>
+      <tr><td><code>prompts.py</code></td><td>세 시스템 프롬프트 + HARD LIMITS + 3a 반려 사유 절 · 3b 확정 치환 절</td></tr>
+      <tr><td><code>workspace.py</code></td><td>아티팩트 경로 규칙(<code>15-spec.md</code> 포함) + <code>DEPS</code> + 파일 존재 기반 상태 유도</td></tr>
     </tbody>
   </table>
   </div>
@@ -908,15 +1063,19 @@ pipeline complete</pre>
     <div class="bar"><span class="f">app/config.py</span><span class="flow">기본값 유지 → 무회귀</span></div>
 <pre>ai_runner                        "stub" | "claude" | "staged"   <span class="c"># 기본값 유지 → 무회귀</span>
 revise_stage_timeout_seconds     600     <span class="c"># 단계 1회 상한</span>
-revise_stage_budget_usd          1.5     <span class="c"># 실측 $0.247(3b) 의 ~6배 — 아래 주의 참조</span>
+revise_stage_model               ""      <span class="c"># 빈 값 → codex CLI 설정의 기본 모델</span>
+revise_stage_effort              "high"  <span class="c"># -c model_reasoning_effort=... 로 전 단계에</span>
+codex_bin                        None    <span class="c"># None → PATH 의 codex (mrdoc 위성과 공유)</span>
+revise_stage_budget_usd          1.5     <span class="c"># 설정 호환용으로만 남음 — codex exec 에 호출당 예산 플래그 없음</span>
 revise_wall_clock_seconds        900  → 2400
 revising_timeout                 1200 → 3000    <span class="c"># 불변식: 스위퍼 &gt; 벽시계 + 여유</span>
 revise_max_changed_files         10      <span class="c"># 게이트 규모 상한</span>
 revise_max_changed_lines         400
 revise_clarify_limit             2</pre>
   </div>
+  <div class="note"><b>codex 전환 뒤 단계별 비용 상한은 없다 <span class="gate p">v1.1</span></b> — <code>codex exec</code> 에는 claude 의 <code>--max-budget-usd</code> 같은 호출당 예산 플래그가 없다. 폭주는 이제 <code>revise_stage_timeout_seconds</code>(단계) · <code>revise_wall_clock_seconds</code>(세션) 두 시간 상한이 막는다. 아래 두 주의는 claude 시절 <code>revise_stage_budget_usd</code> 를 정한 근거로 남긴다.</div>
   <div class="note"><b><code>ai_max_budget_usd</code> 는 단계별이 아니라 CLI 호출당 적용된다.</b> 그대로 두면 실질 상한이 3배가 되므로 단계별 <code>revise_stage_budget_usd</code> 를 따로 뒀다 — <a class="inline" href="#open">미결 5</a>.</div>
-  <div class="note"><b>상한은 폭주를 막는 장치이고, 정상 작업을 떨어뜨리는 장치가 아니다 <span class="gate p">실측 개정</span></b> — 같은 입력에서 턴 수가 약 <b>2배까지 흔들린다</b>. $0.5 는 실측 $0.247 짜리 단계를 떨어뜨렸다. 실측의 ~6배인 <b>1.5</b>로 둔다. 한 라운드 실관측 지출은 약 <b>$0.3</b> 으로, 대체 대상인 단발 러너의 $0.42 와 비슷하다.</div>
+  <div class="note"><b>상한은 폭주를 막는 장치이고, 정상 작업을 떨어뜨리는 장치가 아니다 <span class="gate p">v1 claude 실측</span></b> — 같은 입력에서 턴 수가 약 <b>2배까지 흔들린다</b>. $0.5 는 실측 $0.247 짜리 단계를 떨어뜨렸다. 실측의 ~6배인 <b>1.5</b>로 둔다. 한 라운드 실관측 지출은 약 <b>$0.3</b> 으로, 대체 대상인 단발 러너의 $0.42 와 비슷하다.</div>
   <div class="note"><b>타이머 불변식.</b> 큐 대기 &lt; 세션 벽시계 &lt; 스위퍼 임계값. 단계를 늘리면 <b>셋 다</b> 올려야 한다.</div>
 
   <h3 id="verification">검증</h3>
@@ -926,9 +1085,10 @@ revise_clarify_limit             2</pre>
   <table>
     <thead><tr><th>파일</th><th>검증</th></tr></thead>
     <tbody>
-      <tr><td><code>tests/test_revise_workflow_nodes.py</code></td><td>anchor/impact/gate 를 <b>LLM 없이</b> — 화이트리스트 밖 파일 되돌림, 리터럴 미치환 적발, 규모 초과 전량 되돌림</td></tr>
-      <tr><td><code>tests/test_revise_workflow_schema.py</code></td><td>일곱 산출물 <code>parse(render(x)) == x</code>. 블록 시퀀스와 flow 가 <b>같은 값으로 파싱</b>되는지, 키 없는 항목 거부, 필수 필드 누락 거부</td></tr>
-      <tr><td><code>tests/test_revise_workflow_runner.py</code></td><td>스키마 유효 산출물을 쓰는 fake agent 로 완주. <b>거짓말 agent(성공 반환 + 산출물 없음)가 no-progress abort 에 걸리는지.</b> 재개(중간 아티팩트 존재 시 앞 노드 건너뜀)</td></tr>
+      <tr><td><code>tests/test_revise_workflow_nodes.py</code></td><td>anchor/spec/impact/gate 를 <b>LLM 없이</b> — 화이트리스트 밖 파일 되돌림, 리터럴 미치환 적발, 규모 초과 전량 되돌림. <span class="gate p">v1.2</span> 스펙: id 누락 · 중복 · 날조, B 출처, create+치환, A 확정 3순위 · 후보 여럿 clarify, <b>원문 값을 유사값(<code>13.2</code>)으로 대체하지 않음</b>, 이미 반영(강한 앵커만), 약한 · 동점 앵커 주의, 다중 출현 개수, 단위 값은 절의 표기(<code>30 초</code>)로, 치환 아닌 의견은 대조 없이 통과, 입력 의견당 정확히 1항목, 유효 뷰, 게이트 A∉base 절 fail</td></tr>
+      <tr><td><code>tests/test_revise_workflow_schema.py</code></td><td>여덟 산출물 <code>parse(render(x)) == x</code>. 블록 시퀀스와 flow 가 <b>같은 값으로 파싱</b>되는지, 키 없는 항목 거부, 필수 필드 누락 거부. 모르는 decision 거부, <code>decisions</code> 개수 대조, <code>a_in_base_text</code> 없는 v1 산출물은 <code>true</code></td></tr>
+      <tr><td><code>tests/test_revise_workflow_runner.py</code></td><td>스키마 유효 산출물을 쓰는 fake agent 로 완주. <b>거짓말 agent(성공 반환 + 산출물 없음)가 no-progress abort 에 걸리는지.</b> 재개(중간 아티팩트 존재 시 앞 노드 건너뜀). <span class="gate p">v1.2</span> 이미 반영은 3b · 3c 호출 없이 applied, 반려된 스펙은 사유와 함께 3a 재투입, 스펙 재투입은 편집 시도로 세지 않음, 코드가 고친 A 가 3b 프롬프트와 게이트에 도달, 막힌 의견은 3c 에 가지 않음</td></tr>
+      <tr><td><code>tests/test_revise_workflow_workspace.py</code></td><td>아티팩트 이름 · <code>DEPS</code> · 재개 판정. <code>spec</code> 이 <code>anchor</code> 와 <code>impact</code> 사이에 있는지</td></tr>
       <tr><td><code>tests/test_revise_executor.py</code> (확장)</td><td>경로 한정 커밋, clarify 라운드에서 <code>round</code> 불변</td></tr>
     </tbody>
   </table>
@@ -940,14 +1100,15 @@ revise_clarify_limit             2</pre>
   </ul>
 
   <h4>회귀</h4>
-  <div class="note"><code>uv run pytest</code> 전체 — <b>489 passed</b>. 명시된 기준선은 <code>192 passed</code>(2026-08-11)였고, 증가분은 mrdoc · revise_workflow 스위트다. <code>AI_RUNNER</code> 기본값이 그대로이므로 <code>stub</code> / <code>claude</code> 경로는 무영향이다.</div>
+  <div class="note"><code>pytest</code> 전체 — <b>586 passed</b> (Python 3.13, 2026-09-27). v1 시점은 489 passed, 명시된 기준선은 <code>192 passed</code>(2026-08-11)였고, 증가분은 mrdoc · revise_workflow 스위트다. <code>tests/test_git_workspace.py</code> 는 <code>Path.read_text(newline=)</code> 때문에 <b>3.13 이상</b>에서만 돈다. <code>AI_RUNNER</code> 기본값이 그대로이므로 <code>stub</code> / <code>claude</code> 경로는 무영향이다.</div>
 
-  <h4>스모크 (완료)</h4>
-  <div class="note"><b>3/3 통과 <span class="gate p">완료</span></b> — 원격 없는 스크래치 저장소에서 실 CLI · 실 git 으로 러너만 구동했다. 시나리오 1(앵커 있음) CLI 3회 · 아티팩트 8개 · 커밋 대상 2파일, 시나리오 2(대상 없음) CLI 1회 · 되물음 · 커밋 없음, 시나리오 3(재개) <b>CLI 0회</b>. 이 과정에서 프로덕션 결함 6건을 찾아 고쳤다 — <code>.orchestration/reports/smoke-staged-runner.md</code>.</div>
+  <h4>스모크 (v1 완료 · v1.1/v1.2 미실시)</h4>
+  <div class="note"><b>3/3 통과 <span class="gate p">v1 · claude</span></b> — 원격 없는 스크래치 저장소에서 실 CLI · 실 git 으로 러너만 구동했다. 시나리오 1(앵커 있음) CLI 3회 · 아티팩트 8개 · 커밋 대상 2파일, 시나리오 2(대상 없음) CLI 1회 · 되물음 · 커밋 없음, 시나리오 3(재개) <b>CLI 0회</b>. 이 과정에서 프로덕션 결함 6건을 찾아 고쳤다 — <code>.orchestration/reports/smoke-staged-runner.md</code>.</div>
   <div class="note"><b>스모크가 덮지 <em>못한</em> 것.</b> 게이트의 되돌림 경로(위반이 발생하지 않았다) · 재투입 예산(3c 가 매번 applied 였다) · 부분 실패 라운드의 <code>restore_paths</code> · 다중 의견 · 되물음 한도 소진. 전부 단위 테스트로만 덮여 있고 <b>실행된 적은 없다.</b></div>
 
   <h4>실검증 (남음)</h4>
-  <div class="note"><code>AI_RUNNER=staged</code> 로 <b>product-common !11</b> 에 의견 1건 제출 → <code>.revise/.../r*/</code> 아티팩트 8개 생성 확인 → 커밋이 md 만 건드렸는지 → 슬랙 재알림 · 리포트 확인. 대상 없는 의견(「존재하지 않는 절을 고쳐라」)을 넣어 <b>되물음 + <code>round</code> 불변</b>까지 확인.</div>
+  <div class="note"><b>codex 경로는 실호출로 돌아 본 적이 없다.</b> v1 스모크는 claude 단계였고, v1.1 의 <code>codex exec</code> 전환과 v1.2 의 스펙 게이트는 단위 테스트(<code>subprocess.run</code> 대역)로만 덮여 있다.</div>
+  <div class="note"><code>AI_RUNNER=staged</code> 로 <b>product-common !11</b> 에 의견 1건 제출 → <code>.revise/.../r*/</code> 아티팩트 9개(산출물 8 + ledger) 생성 확인 → 커밋이 md 만 건드렸는지 → 슬랙 재알림 · 리포트 확인. 대상 없는 의견(「존재하지 않는 절을 고쳐라」)을 넣어 <b>되물음 + <code>round</code> 불변</b>까지 확인. v1.2 추가 시나리오: 이미 4.0 인 절에 같은 의견(<b>편집 없이 applied</b>), 3.2 와 3.1 이 같이 있는 절에 「4.0으로」(<b>현재 값 되물음</b>).</div>
 
   <h3 id="open">미결 사항</h3>
   <ol class="hl">
@@ -955,12 +1116,15 @@ revise_clarify_limit             2</pre>
     <li><b>같은 파일에 성공 의견과 실패 의견의 편집이 섞였을 때.</b> 파일 단위로만 분리 가능하다. <span class="alt">현재 구현은 「성공 의견이 만진 파일만 커밋」이고 그 귀속은 <b>편집 영수증</b>으로 한다. 더 엄격하게 가려면 편집을 의견 단위로 직렬화해야 하는데 호출 수가 늘어난다</span></li>
     <li><b>대상 문서가 많을 때의 3b fan-out.</b> 호출 3회 결정을 유지하면 배치 분할이 필요하다. <span class="alt">mrdoc 의 <code>fanout</code>(기본 5) 패턴을 그대로 쓸 수 있으나 이는 단계 수가 아닌 <b>같은 단계의 병렬 배치</b>다</span></li>
     <li><b>「커밋 없는 라운드」의 처리 규칙이 문서에 없다.</b> 테스트(<code>test_no_commit_round_sends_none_diff_stat_and_compare_url</code>)로만 굳어져 있다. <span class="alt">이번 개정에서 같이 명문화하는 것이 좋다</span></li>
-    <li><b><s><code>ai_max_budget_usd</code>를 단계별로 쪼갤지 호출당 그대로 둘지</s> — 정리됨. 단계별 <code>revise_stage_budget_usd</code> 를 둔다.</b> <span class="alt">값도 실측으로 정했다: 3b $0.247(5턴), 3c 무도구 $0.0287(1턴). 같은 입력에서 턴 수가 약 2배까지 흔들려 $0.5 는 실측 $0.247 짜리 단계를 떨어뜨렸다 — 상한은 폭주를 막는 장치이므로 실측의 ~6배인 <b>1.5</b>로 둔다</span></li>
+    <li><b><s><code>ai_max_budget_usd</code>를 단계별로 쪼갤지 호출당 그대로 둘지</s> — 정리됨. 단계별 <code>revise_stage_budget_usd</code> 를 둔다.</b> <span class="alt">값도 실측으로 정했다: 3b $0.247(5턴), 3c 무도구 $0.0287(1턴). 같은 입력에서 턴 수가 약 2배까지 흔들려 $0.5 는 실측 $0.247 짜리 단계를 떨어뜨렸다 — 상한은 폭주를 막는 장치이므로 실측의 ~6배인 <b>1.5</b>로 둔다. <span class="gate p">v1.1</span> codex 에는 이 플래그가 없어 지금은 설정 호환용이다</span></li>
+    <li><b>revise 라운드 뒤 mrdoc 이 다시 돌지 않는다.</b> <span class="alt">재알림은 <code>render_review_report</code> 3슬롯 리포트로 나가고, mrdoc 매트릭스 리포트는 첫 리뷰의 것 그대로다. 수정 커밋 기준으로 mrdoc 을 다시 돌릴지는 정하지 않았다</span></li>
+    <li><b>codex 샌드박스에는 도구별 차단이 없다.</b> <span class="alt"><code>read-only</code> 인 3a · 3c 도 워크스페이스 본문을 읽을 수 있고, <code>workspace-write</code> 인 3b 는 셸을 쓸 수 있다. 「3a 는 목차만」 · 「3c 는 diff 만」은 지금 프롬프트 HARD LIMIT 에만 기대며, 어겼는지를 기계가 보지 않는다. 3b 의 경로 이탈은 게이트가 여전히 되돌린다</span></li>
+    <li><b>스펙 게이트의 A 확정은 리터럴 치환에서만 강하다.</b> <span class="alt">평문 용어 교체(리터럴 6종 밖)는 3a 의 A 를 절에서 문자열로 찾기만 하고, 같은 종류 유일 값 추론(3순위)은 리터럴에만 작동한다. 평문 A 도 B 도 절에 없으면 <code>spec_error</code> 로 3a 에 돌아간다</span></li>
   </ol>
 </section>
 
 <footer>
-  <span>상태 v1 · 구현 완료 · 스모크 3/3 통과 — 2026-09-04</span>
+  <span>상태 v1.2 · 스펙 게이트 · codex exec — 2026-09-27 · 단위 586 passed · codex 실호출 스모크 미실시</span>
   <span>원천 docs/revise-workflow-proposal.md · 영수증 .orchestration/reports/smoke-staged-runner.md</span>
   <span>개정 필요 문서 2 — docs/mr-review-pipeline.html (:554 단일 세션 결정 → v4.3) · docs/mrdoc-migration-plan.md (§2 revise 「변경 없이 유지」)</span>
 </footer>
