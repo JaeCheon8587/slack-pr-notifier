@@ -88,8 +88,8 @@ def artifact_paths(directory: Path) -> dict[str, Path]:
         "themes": directory / "45-themes.md",
         "collect": directory / "50-collect.md",
         "render": directory / "report.html",
-        # Written by the render node beside report.html — section 1 verbatim,
-        # which is all Slack ever gets to see of a document.
+        # Written by the render node beside report.html — the overview (from
+        # the same 50-collect), which is all Slack ever sees of a document.
         "slack_summary": directory / "slack-summary.txt",
         "analysis_dir": directory / "20-analysis",
         "ledger": directory / "ledger.md",

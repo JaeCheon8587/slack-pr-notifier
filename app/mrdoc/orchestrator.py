@@ -140,8 +140,9 @@ def _run_tool_node(
             diff_url=inputs.diff_url,
         )
         paths["render"].write_text(page, encoding="utf-8")
-        # Both outputs are this one node's: the overview must be the same
-        # text in the page and in Slack, so it is rendered once.
+        # Both outputs are this one node's and read the same 50-collect, so
+        # the Slack overview and the page's counts cannot drift apart. The
+        # overview text itself is Slack-only; the page shows hero + stats.
         paths["slack_summary"].write_text(
             render_slack_summary(
                 collect,

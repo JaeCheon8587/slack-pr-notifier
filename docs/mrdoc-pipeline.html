@@ -214,14 +214,14 @@ footer{border-top:1px solid var(--line);padding-top:20px;font-family:"IBM Plex M
 <div class="shell">
 <aside class="rail">
   <div class="rail-brand">mrdoc</div>
-  <div class="rail-sub">MR 문서 변경 → 분류·설명 리포트<br>설계 확정 2026-08-23 · 개정 v2 2026-09-04 (판정 제거)</div>
+  <div class="rail-sub">MR 문서 변경 → 분류·설명 리포트<br>설계 확정 2026-08-23 · 개정 v2 2026-09-04 (판정 제거) · v3 2026-09-27 (코드 동기화)</div>
   <nav id="nav">
     <div class="rail-part">Part 1</div>
-    <a href="#agents">에이전트 3</a>
+    <a href="#agents">에이전트 4</a>
     <a href="#conventions">위성 공통 규약</a>
     <a href="#funnel">읽기량 funnel</a>
     <div class="rail-part">Part 2</div>
-    <a href="#pipeline">워크 노드 9</a>
+    <a href="#pipeline">워크 노드 10</a>
     <a href="#loop">단일 루프</a>
     <a href="#consume">산출물 소비 관계</a>
     <a href="#chain">역추적 사슬</a>
@@ -234,6 +234,7 @@ footer{border-top:1px solid var(--line);padding-top:20px;font-family:"IBM Plex M
     <a href="#t20"><span class="mono">20</span>analysis</a>
     <a href="#t30"><span class="mono">30</span>levelcheck</a>
     <a href="#t40"><span class="mono">40</span>verifier</a>
+    <a href="#t45"><span class="mono">45</span>themes</a>
     <a href="#t50"><span class="mono">50</span>collect</a>
     <a href="#t99"><span class="mono">──</span>report.html</a>
     <a href="#tdispatch"><span class="mono">──</span>dispatch spec</a>
@@ -246,9 +247,10 @@ footer{border-top:1px solid var(--line);padding-top:20px;font-family:"IBM Plex M
   <h1>mrdoc 문서 변경 리포트 파이프라인</h1>
   <p class="dek">GitLab MR 하나 → <b>report.html 1개 + Slack 요약</b>. 사람이 diff 를 열지 않고도 <b>무엇이 어떻게 바뀌었는지 같은 톤으로</b> 파악할 수 있어야 한다 — 제품 10개의 리포트가 서로 비교 가능해야 한다. 리포트가 하는 일은 셋이다: <b>분류</b>(연산 추가/삭제/변경/이동 × 성질 구조/의미/표현) · <b>원문 제시</b> · <b>설명</b>.</p>
   <div class="meta">
-    <span>워크 노드 <b>9</b></span>
-    <span>LLM 에이전트 <b>2</b> + Python 오케스트레이터</span>
-    <span>mrdoc 서브커맨드 <b>8</b></span>
+    <span>워크 노드 <b>10</b></span>
+    <span>LLM 에이전트 <b>3</b> + Python 오케스트레이터</span>
+    <span>mrdoc CLI <b>없음</b> — in-process</span>
+    <span>fix 라운드 최대 <b>2</b></span>
     <span>판정 · 지적 항목 <b>0</b></span>
   </div>
 </header>
@@ -268,44 +270,45 @@ footer{border-top:1px solid var(--line);padding-top:20px;font-family:"IBM Plex M
 <!-- ══════════════════ PART 1 ══════════════════ -->
 <section id="agents">
   <div class="part-head"><span class="part-num">Part 1</span><h2>에이전트 — 누가 무엇을 쓰나</h2></div>
-  <p class="part-note">LLM 은 2개(<code>codex exec</code> headless)뿐이다. 결정론으로 되는 일은 하나도 맡기지 않는다. 도구 목록이 이 설계의 실질적 집행 수단이다 — 프롬프트로 금지하는 것과 도구를 안 주는 것은 다르다.</p>
+  <p class="part-note">LLM 은 3개(<code>codex exec</code> headless)뿐이다. 결정론으로 되는 일은 하나도 맡기지 않는다. <code>codex exec</code> 에는 도구 화이트리스트가 없으므로 집행 수단은 도구 목록이 아니라 <strong>산출물 검사</strong>다 — 위성이 뭐라고 하든 기대 산출물이 디스크에 있고 파서 검사(<code>plan.check()</code>)를 통과해야 성공이다.</p>
 
   <div class="tw">
   <table>
-    <thead><tr><th>에이전트</th><th>실행</th><th>effort</th><th>maxTurns</th><th>BUDGET</th><th>tools</th><th>차단</th></tr></thead>
+    <thead><tr><th>에이전트</th><th>실행</th><th>effort</th><th>상한</th><th>산출물</th><th>수용 검사</th></tr></thead>
     <tbody>
-      <tr><td><strong>오케스트레이터</strong></td><td class="num">Python</td><td class="num">—</td><td class="num">—</td><td class="num">—</td><td><code>codex exec</code> <code>mrdoc</code></td><td>LLM 아님 — 판단 경로 부재</td></tr>
-      <tr><td><strong>doc-analyzer</strong></td><td class="num">codex exec</td><td class="num">high</td><td class="num">20</td><td class="num">16</td><td><code>Read</code> <code>Write</code></td><td>Edit Grep Glob Bash</td></tr>
-      <tr><td><strong>doc-verifier</strong></td><td class="num">codex exec</td><td class="num">high</td><td class="num">14</td><td class="num">10</td><td><code>Read</code> <code>Write</code></td><td>Edit Grep Glob Bash</td></tr>
+      <tr><td><strong>오케스트레이터</strong></td><td class="num">Python</td><td class="num">—</td><td class="num">20 wave</td><td>ledger.md</td><td>LLM 아님 — 판단 경로 부재. 툴 노드는 in-process</td></tr>
+      <tr><td><strong>doc-analyzer</strong></td><td class="num">codex exec</td><td class="num">high</td><td class="num">600초</td><td><code>20-analysis/&lt;file_id&gt;.md</code></td><td>담당 파일 전부 존재 · 같은 unit_id 중복 없음 · fix 라운드는 기존 유닛 유실 없음(파싱 실패도 반려)</td></tr>
+      <tr><td><strong>doc-verifier</strong></td><td class="num">codex exec</td><td class="num">high</td><td class="num">600초</td><td><code>40-verifier.md</code></td><td>파일 존재뿐 — 내용은 <code>collect</code> 가 블록에서 다시 잰다</td></tr>
+      <tr><td><strong>doc-themes</strong></td><td class="num">codex exec</td><td class="num">medium</td><td class="num">600초</td><td><code>45-themes.md</code></td><td>파일 존재 · <code>parse_themes</code> 통과</td></tr>
     </tbody>
   </table>
   </div>
 
-  <div class="note"><b>BUDGET = maxTurns − 4</b> (wrap-up 3 + RECEIPT 1). <code>maxTurns</code> 를 빼면 비용이 터진다. <b>Grep 을 아무 위성에도 주지 않는다</b> — 검색은 툴이 리터럴로 한다. Grep 이 있으면 LLM 이 검색어를 짓기 시작하고, 검색어 생성은 대조할 대상이 없어 검증이 불가능하다.</div>
+  <div class="note"><b>호출은 한 줄이다.</b> <code>codex exec --skip-git-repo-check --ephemeral --sandbox workspace-write --cd &lt;work&gt; -c model_reasoning_effort="…" [--model &lt;mrdoc_satellite_model&gt;] -</code> — 프롬프트(시스템 + 미션)는 stdin, 자격증명 환경변수는 빼고 넘긴다. <b>상한은 시간 하나다</b> — <code>mrdoc_satellite_timeout_seconds</code>(기본 600초). 턴 예산(maxTurns)은 없고, 스펙의 <code>BUDGET</code>(USD 실수, <code>mrdoc_satellite_budget_usd</code> 기본 1.0)은 스펙 줄에만 적힐 뿐 codex 인자로도 프롬프트로도 가지 않는다 — <b>미집행</b>. 도구 차단도 없다: 「검색은 툴이 리터럴로 한다 · Grep 을 쓰지 않는다」는 이제 프롬프트 규칙(절 라인 창 ±20줄)으로만 남고, 볼 위치는 미션 프롬프트가 절대경로로 적어 준다.</div>
 
   <div class="card">
     <div class="card-top"><span class="card-name">오케스트레이터 (Python)</span><span class="kind tool">Python</span><span class="req core">진입점</span></div>
     <div class="card-ref">구현 <code>app/mrdoc/orchestrator.py</code> — 판단 분기 0, 웨이브 루프뿐이다</div>
     <div class="fm">
-      <div><dt>실행</dt><dd>Python</dd></div><div><dt>판단</dt><dd class="no">0</dd></div><div><dt>호출</dt><dd>codex exec · mrdoc</dd></div><div><dt>Read</dt><dd class="no">없음</dd></div>
+      <div><dt>실행</dt><dd>Python</dd></div><div><dt>판단</dt><dd class="no">0</dd></div><div><dt>호출</dt><dd>codex exec (실행기 경유)</dd></div><div><dt>CLI</dt><dd class="no">mrdoc</dd></div>
     </div>
     <dl class="io">
-      <dt>역할</dt><dd><code>mrdoc dispatch next</code> 를 돌려 나온 위임 스펙 블록을 실행하고 조인한다. 그게 전부다.</dd>
-      <dt>아는 것</dt><dd><code>mrdoc</code> stdout(≤10줄)과 exit code 뿐. 산출물 본문은 프로세스에 단 한 줄도 들어오지 않는다.</dd>
-      <dt>분기</dt><dd>1개 — 블록 타입(<code>SPEC agent</code> / <code>SPEC tool</code>). 스테이지 순서·팬아웃 폭·배치 경계·재호출 판단이 전부 <code>dispatch</code> 안에 있다.</dd>
-      <dt>상태</dt><dd><strong>산출물 존재로 도출한다.</strong> <code>ledger</code> append 는 독립된 두 번째 소스일 뿐 상태의 출처가 아니다.</dd>
-      <dt>종료</dt><dd><code>exit 0</code> 계속 · <code>exit 4</code> 완료 · <code>exit 2</code> abort · 그 외 abort</dd>
+      <dt>역할</dt><dd>툴 노드(changeset → structure → literals → excerpt, deps 가 차면 levelcheck · collect · render)를 <strong>in-process</strong> 로 돌리고, <code>dispatch.next_specs()</code> 를 직접 호출해 나온 스펙 블록을 실행기에 하나씩 넘긴다. 그게 전부다. <code>mrdoc</code> CLI · <code>__main__</code> 은 없다.</dd>
+      <dt>아는 것</dt><dd>실행기가 돌려주는 <code>bool</code> 하나(<code>AgentExecutor = Callable[[str], bool]</code>)와 <code>derive_state</code> 의 산출물 존재뿐. 위성의 리턴 텍스트는 받지 않는다. 툴 노드가 같은 프로세스에서 산출물을 파싱하지만 루프의 분기에는 쓰이지 않는다.</dd>
+      <dt>분기</dt><dd>위성이 실패했을 때의 agent 종류 하나 — <code>themes</code> · <code>verifier</code> 는 FAILED 스텁으로 저하하고 진행, <code>analyzer</code> 는 abort. 스테이지 순서·배치 경계·fix 대상 선정이 전부 <code>dispatch</code> 안에 있다.</dd>
+      <dt>상태</dt><dd><strong>산출물 존재로 도출한다.</strong> <code>ledger</code> 는 append-only 기록일 뿐 상태의 출처가 아니고, 대조하는 코드도 없다.</dd>
+      <dt>종료</dt><dd><code>0</code> 계속 · <code>4</code> 완료 · <code>2</code> abort(예외 · 상태 불변 · 20 wave 초과)</dd>
     </dl>
     <h4>왜 Python 인가</h4>
     <p style="font-size:13.5px;color:var(--ink-2)">LLM 오케스트레이터였던 판에서는 「산출물 본문을 읽지 않는다」·「위성이 준 숫자를 합산하지 않는다」를 <strong>프롬프트로</strong> 막아야 했다. 200턴을 도는 동안 프롬프트는 잊히고 도구는 남는다. Python 구현에서는 그 경로가 <strong>원천적으로 부재</strong>다 — 코드에 없으면 일어나지 않는다.</p>
     <h4>그래도 규칙으로 남는 것</h4>
     <ol class="hl">
-      <li><b>산출물 본문을 읽지 않는다.</b> <span class="alt">상태가 필요하면 <code>mrdoc status</code></span></li>
-      <li><b>위성이 준 숫자를 합산하지 않는다.</b> 합산하면 리포트 숫자의 출처가 두 곳이 된다. <span class="alt">합산은 <code>mrdoc collect</code>. ledger 에는 리턴을 원문 그대로</span></li>
+      <li><b>루프는 산출물 본문으로 분기하지 않는다.</b> <span class="alt">상태는 <code>dispatch.derive_state()</code>. 사람이 볼 때는 <code>status.format_status()</code>(노드별 한 줄 — CLI 로 노출돼 있지 않다)</span></li>
+      <li><b>위성이 준 숫자를 합산하지 않는다.</b> 합산하면 리포트 숫자의 출처가 두 곳이 된다. <span class="alt">합산은 <code>collect</code> 노드가 원자 인벤토리에서. ledger 에는 노드 완료 줄만 — 위성 리턴은 싣지 않는다</span></li>
       <li><b>위임 스펙을 직접 작성하지 않는다.</b> <span class="alt"><code>dispatch</code> 출력을 그대로 넘긴다. 부실해 보이면 그건 dispatch 버그다</span></li>
-      <li><b>팬아웃 5 초과 금지. 한 wave 를 여러 번으로 쪼개지 않는다.</b> <span class="alt">쪼개면 조인 지점이 사라진다</span></li>
-      <li><b>위성을 임의로 재호출하지 않는다.</b> 재호출은 비결정성의 유일한 입구다. <span class="alt">리턴 유실은 <code>mrdoc status --receipt</code> 로 회수</span></li>
-      <li><b>exit code 를 무시하지 않는다.</b> <span class="alt"><code>0</code>/<code>4</code>/<code>2</code> 이외는 abort</span></li>
+      <li><b>팬아웃은 배치 크기다. 한 wave 의 스펙은 전부 실행한 뒤에 조인한다.</b> <span class="alt"><code>mrdoc_fanout</code>(기본 5) 파일마다 analyzer 스펙 1개, 배치는 전부 같은 wave 에 나오고 순서대로(동시 실행 없이) 돈다. 조인 지점 = 스펙 실행 뒤의 툴 노드 패스</span></li>
+      <li><b>위성을 임의로 재호출하지 않는다.</b> 재호출은 비결정성의 입구다. <span class="alt">유일한 재호출은 <code>dispatch</code> 가 정하는 fix 라운드(최대 2회). 리턴은 받지 않으므로 회수할 것도 없다 — <code>mrdoc status --receipt</code> 는 미구현</span></li>
+      <li><b>abort 계약을 지킨다.</b> <span class="alt">예외는 전부 <code>abort: …</code> 한 줄 + <code>2</code>. 20 wave 안에 끝나지 않아도 <code>2</code></span></li>
     </ol>
   </div>
 
@@ -313,14 +316,14 @@ footer{border-top:1px solid var(--line);padding-top:20px;font-family:"IBM Plex M
     <div class="card-top"><span class="card-name">doc-analyzer</span><span class="kind llm">LLM</span><span class="req core">필수 · 주역</span></div>
     <div class="card-ref">레퍼런스 <code>explorer</code> — 좁고 깊은 comprehension. 판정하지 않고 <b>설명만 쓴다</b></div>
     <div class="fm">
-      <div><dt>실행</dt><dd>codex exec</dd></div><div><dt>effort</dt><dd>high</dd></div><div><dt>maxTurns</dt><dd>20</dd></div><div><dt>budget</dt><dd>16</dd></div><div><dt>출력</dt><dd>20-analysis/&lt;id&gt;.md</dd></div>
+      <div><dt>실행</dt><dd>codex exec</dd></div><div><dt>effort</dt><dd>high</dd></div><div><dt>timeout</dt><dd>600s</dd></div><div><dt>budget</dt><dd class="no">미집행</dd></div><div><dt>출력</dt><dd>20-analysis/&lt;id&gt;.md</dd></div>
     </div>
     <dl class="io">
       <dt>입력</dt><dd><code>07-excerpts</code> 의 자기 유닛 + <code>06-literals</code> 의 자기 유닛 + <code>base/</code>·<code>snapshot/</code> 해당 절(±20줄) + <code>05-structure</code> <code>CHANGED</code> 의 자기 파일 행</dd>
-      <dt>출력</dt><dd>유닛마다 <code>**설명**</code> 한 필드(2~4문장). 표현 후보에는 <code>class: 의미|표현</code>. 파일마다 <code>## FILE_SUMMARY</code> 한 문단</dd>
+      <dt>출력</dt><dd>유닛마다 <code>**설명**</code> 한 필드(2~4문장). 표현 후보에는 <code>class: 의미|표현</code>. 선택 <code>topic_hint</code>(kebab-case — doc-themes 에게 주는 후보, 판정 아님). 파일마다 <code>## FILE_SUMMARY</code> 한 문단</dd>
       <dt>ADDED / REMOVED</dt><dd>설명만 쓴다 — 원문은 <code>07-excerpts</code> 가 든다</dd>
-      <dt>Scope gate</dt><dd>자기 <code>file_id</code> 의 유닛이 없으면 <code>BLOCKED — no changed unit</code></dd>
-      <dt>리턴</dt><dd>≤12줄 · <code>STATUS UNITS CLASSES</code>(의미 n · 표현 n · 후보판정 n) <code>FILES UNCOVERED UNCERTAIN CONFIDENCE REPORT</code></dd>
+      <dt>Scope gate</dt><dd>자기 <code>file_id</code> 의 유닛이 없으면 <code>BLOCKED — no changed unit</code>(프롬프트 문구). <strong>주의:</strong> 실행기는 배치의 <em>모든</em> 파일에 <code>&lt;file_id&gt;.md</code> 를 기대하고 <code>derive_state</code> 도 md 파일 수만큼 있어야 analysis 를 done 으로 본다 — 유닛 없는 파일(절이 이동만 한 파일 등)도 <code>FILE_SUMMARY</code> 만 든 파일을 써야 하고, 안 쓰면 analyzer 실패 → abort 다</dd>
+      <dt>리턴</dt><dd>프롬프트는 ≤12줄 <code>STATUS UNITS CLASSES</code>(의미 n · 표현 n · 후보판정 n) <code>FILES UNCOVERED UNCERTAIN CONFIDENCE REPORT</code> 를 요구하지만 <strong>실행기는 읽지 않는다</strong> — 판정은 산출물로만</dd>
     </dl>
     <h4>HARD LIMITS</h4>
     <ol class="hl">
@@ -330,22 +333,22 @@ footer{border-top:1px solid var(--line);padding-top:20px;font-family:"IBM Plex M
       <li><b>분류는 표현 후보에만 낸다.</b> <span class="alt">의미(값)·구조는 도구 확정값이라 바꾸지 않는다</span></li>
       <li><b>지적 · 권고 · 심각도 · 머지 의견을 쓰지 않는다.</b> <span class="alt">스키마에 그 필드가 없다</span></li>
       <li><b>절 라인 창 ±20줄만 읽는다.</b> <span class="alt">파일 통독 금지. 같은 파일 재Read 금지</span></li>
-      <li><b>템플릿에 없는 섹션을 만들지 않는다.</b> <span class="alt">생기면 warn — 프롬프트 드리프트 조기 감지</span></li>
+      <li><b>템플릿에 없는 섹션을 만들지 않는다.</b> UNIT · FILE_SUMMARY · RECEIPT 셋뿐. <span class="alt">파서는 모르는 블록을 조용히 무시한다 — warn 은 미구현</span></li>
     </ol>
   </div>
 
   <div class="card">
     <div class="card-top"><span class="card-name">doc-verifier</span><span class="kind llm">LLM</span><span class="req core">필수</span></div>
-    <div class="card-ref">레퍼런스 <code>reviewer</code> — fresh context 로 남의 산출물을 감사한다. <code>Write</code> 는 자기 리포트 1개에만</div>
+    <div class="card-ref">레퍼런스 <code>reviewer</code> — fresh context 로 남의 산출물을 감사한다. <code>Write</code> 는 자기 리포트 1개에만(프롬프트 규칙 — sandbox 는 워크 디렉터리 전체 쓰기를 허용한다)</div>
     <div class="fm">
-      <div><dt>실행</dt><dd>codex exec</dd></div><div><dt>effort</dt><dd>high</dd></div><div><dt>maxTurns</dt><dd>14</dd></div><div><dt>budget</dt><dd>10</dd></div><div><dt>출력</dt><dd>40-verifier.md</dd></div>
+      <div><dt>실행</dt><dd>codex exec</dd></div><div><dt>effort</dt><dd>high</dd></div><div><dt>timeout</dt><dd>600s</dd></div><div><dt>budget</dt><dd class="no">미집행</dd></div><div><dt>출력</dt><dd>40-verifier.md</dd></div>
     </div>
     <dl class="io">
-      <dt>입력</dt><dd><code>20-analysis/&lt;id&gt;.md</code> + <code>07-excerpts</code> 의 해당 유닛 + <code>base/</code>·<code>snapshot/</code> 의 변경 절 + <code>06-literals.md</code></dd>
-      <dt>보는 것</dt><dd><strong>설명의 충실도 하나.</strong> <code>fidelity ∈ ok | invented</code>(원문에 없는 내용) <code>| omitted</code>(변경 누락)</dd>
-      <dt>덧붙이는 것</dt><dd>표현 후보의 <code>class_opinion: agree|dispute</code> — <strong><code>dispute</code> 여도 분류는 바뀌지 않는다.</strong> 의견만 남는다</dd>
-      <dt>출력</dt><dd><code>40-verifier.md</code> — 유닛마다 <code>fidelity</code> + <code>class_opinion</code>. 고칠 게 있으면 <code>FIX</code> 블록</dd>
-      <dt>리턴</dt><dd>≤12줄 · <code>STATUS CHECKED FIDELITY CLASS_OPINION REQUIRED_FIXES UNCOVERED UNCERTAIN CONFIDENCE REPORT</code></dd>
+      <dt>입력</dt><dd><code>20-analysis/&lt;id&gt;.md</code> + <code>07-excerpts</code> 의 해당 유닛 + <code>base/</code>·<code>snapshot/</code> 의 변경 절 + <code>06-literals.md</code>. 프롬프트에 <b>감사 대상 unit_id 목록</b>(설명이 있는 유닛만)과 <b>파일별 원자 집계표</b>(<code>build_inventory</code>)가 들어간다</dd>
+      <dt>보는 것</dt><dd><strong>설명의 충실도.</strong> <code>fidelity ∈ ok | invented</code>(원문에 없는 내용) <code>| omitted</code>(변경 누락). 그리고 <strong><code>FILE_SUMMARY</code> 카운트 서술이 원자 집계와 존재 모순인지</strong> — 모순이면 <code>COUNTS</code> 블록 + <code>FIX(field: FILE_SUMMARY, reason: counts_mismatch)</code></dd>
+      <dt>덧붙이는 것</dt><dd>표현 후보의 <code>class_opinion: agree|dispute</code> — <strong><code>dispute</code> 여도 분류는 바뀌지 않는다.</strong> 의견만 남고, 어디에도 집계되지 않는다</dd>
+      <dt>출력</dt><dd><code>40-verifier.md</code> — 유닛마다 <code>fidelity</code> + <code>class_opinion</code>(+ <code>why</code>). 고칠 게 있으면 <code>FIX</code>, 카운트 모순은 <code>COUNTS</code></dd>
+      <dt>리턴</dt><dd>프롬프트는 ≤12줄 <code>STATUS CHECKED FIDELITY CLASS_OPINION REQUIRED_FIXES UNCOVERED UNCERTAIN CONFIDENCE REPORT</code> 를 요구하지만 실행기는 읽지 않는다</dd>
     </dl>
     <div class="note">이 계층의 존재 이유는 하나다 — <b>설명은 LLM 이 쓰는 유일한 자연어</b>이고, 원문 대조 없이는 아무도 그것을 확인하지 않는다. 실측에서 설명이 해석·평가로 흐르고 변경 하나를 통째로 빠뜨렸는데 파이프라인은 끝까지 정상으로 돌았다.</div>
     <h4>툴이 이미 본 것은 다시 보지 않는다</h4>
@@ -357,31 +360,53 @@ footer{border-top:1px solid var(--line);padding-top:20px;font-family:"IBM Plex M
         <tr><td>표현 분류 성립 — 차집합 공집합일 때만. 아니면 의미로 승격</td><td><code>levelcheck</code></td></tr>
         <tr><td>설명 · <code>FILE_SUMMARY</code> 가 실재하는 <code>u-</code> 만 지목하나</td><td><code>collect 3</code> · <code>render 1</code></td></tr>
         <tr><td>유닛마다 발췌가 존재하나 · 자기보고 == 실제 블록 수</td><td><code>collect 1·2</code></td></tr>
-        <tr><td rowspan="2"><span class="kind llm">LLM</span></td><td>① 설명이 <b>원문에 있는 것만</b> 말하나 (<code>invented</code>)</td><td><code>doc-verifier</code></td></tr>
+        <tr><td rowspan="3"><span class="kind llm">LLM</span></td><td>① 설명이 <b>원문에 있는 것만</b> 말하나 (<code>invented</code>)</td><td><code>doc-verifier</code></td></tr>
         <tr><td>② 설명이 <b>바뀐 것을 빠뜨리지 않았나</b> (<code>omitted</code>)</td><td><code>doc-verifier</code></td></tr>
+        <tr><td>③ <code>FILE_SUMMARY</code> 의 카운트 서술이 <b>툴이 잰 원자 집계와 모순되지 않나</b> (<code>counts_mismatch</code>) — 숫자는 툴, 문장과의 대응만 LLM</td><td><code>doc-verifier</code></td></tr>
       </tbody>
     </table>
     </div>
-    <p style="font-size:13.5px;color:var(--ink-2)">경계는 하나다 — <strong>두 문자열의 대조로 환원되면 툴이다.</strong> 존재하나 · 개수 맞나 · 원문에 있나 · 공집합이냐 · 같냐. 이 다섯으로 안 내려가는 건 <b>원문과 설명 사이의 의미 대응</b>뿐이고 그게 ①②다.</p>
+    <p style="font-size:13.5px;color:var(--ink-2)">경계는 하나다 — <strong>두 문자열의 대조로 환원되면 툴이다.</strong> 존재하나 · 개수 맞나 · 원문에 있나 · 공집합이냐 · 같냐. 이 다섯으로 안 내려가는 건 <b>원문(또는 원자 집계)과 서술 사이의 의미 대응</b>뿐이고 그게 ①②③이다.</p>
 
     <h4>왜 리턴만으로는 안 되는가</h4>
-    <p style="font-size:13.5px;color:var(--ink-2)">위성 공통 규약 <b>Report-first</b>(첫 2 툴 호출 안에 스켈레톤 생성)와 <b>RECEIPT copy</b>(529 유실 시 회수)는 <strong>산출물 파일이 있어야 성립한다.</strong> 리턴만 두면 verifier 혼자 두 규약의 예외가 되고, 죽으면 감사 결과가 같이 사라져 재호출밖에 답이 없다 — 재호출은 비결정성의 유일한 입구다.</p>
+    <p style="font-size:13.5px;color:var(--ink-2)">실행기는 위성의 리턴을 <strong>아예 받지 않는다</strong> — <code>codex exec</code> 의 stdout 은 버려지고(비정상 종료 때 앞 500자만 로그), 남는 것은 파일뿐이다. 그래서 감사 결과는 반드시 파일이어야 하고, verifier 가 아무것도 쓰지 않으면 오케스트레이터가 <code>FAILED</code> 스텁을 대신 써서 <code>verify.status: failed</code> 로 저하한다 — abort 도, 임의 재호출도 하지 않는다.</p>
     <ul class="plain">
-      <li><b><code>collect</code> 가 직접 읽는다.</b> <code>50-collect</code> frontmatter 의 <code>verify: {rounds, outstanding}</code> 출처가 파일로 확정된다 — 오케스트레이터가 데이터 경로에서 빠진다</li>
-      <li><b><code>dispatch</code> 가 재호출 스펙을 만든다.</b> <code>FIX</code> 상세를 파일에서 읽어 <code>SCOPE</code>·<code>CONTEXT</code>·<code>CONSTRAINTS</code> 를 결정론적으로 생성한다. 리턴에는 <b>개수만</b> 싣는다</li>
-      <li><b>오케스트레이터가 받는 것은 두 개뿐이다.</b> <code>REPORT</code> 경로 + <code>REQUIRED_FIXES</code> 개수. 본문은 읽지 않는다</li>
+      <li><b><code>collect</code> 가 직접 읽는다.</b> <code>50-collect</code> 의 <code>verify: {status, rounds, outstanding, counts_mismatch, audited, unaudited}</code> 가 전부 이 파일의 <b>블록에서</b> 잰 값이다 — 위성이 적은 <code>checked</code> · <code>required_fixes</code> 는 읽지 않는다</li>
+      <li><b><code>dispatch</code> 가 재호출 대상을 만든다.</b> FIX 대상 ∪ <code>invented</code>/<code>omitted</code> 판정 유닛을 파일에서 읽어 <code>SCOPE units …</code> 로 넘기고, 사유 문장은 위성 모듈(<code>_fix_mission</code>)이 라운드 아카이브에서 다시 읽어 프롬프트에 붙인다</li>
+      <li><b>오케스트레이터가 받는 것은 <code>bool</code> 하나다.</b> 성공 = exit 0 · 기대 산출물 존재 · <code>plan.check()</code> 통과(verifier 는 존재만)</li>
     </ul>
 
     <h4>HARD LIMITS</h4>
     <ol class="hl">
       <li><b>남의 산출물을 수정하지 않는다.</b> 고치면 저자가 되고 fresh context 가 무의미해진다. <span class="alt"><code>Write</code> 는 <code>40-verifier.md</code> 한 개에만. <code>20-analysis/*.md</code> 는 안 건드리고 <code>FIX</code> 에 대상 id 만</span></li>
       <li><b>애매하면 <code>ok</code> 로 넘기지 않는다.</b> 부당한 통과가 이 계층을 없앤다. <span class="alt"><code>FIX</code> + 이유 한 줄</span></li>
-      <li><b>원문 안 읽고 판단하지 않는다.</b> <span class="alt">읽은 것만 <code>CHECKED</code>. 못 읽은 항목은 <code>UNCOVERED</code></span></li>
+      <li><b>원문 안 읽고 판단하지 않는다.</b> <span class="alt">읽은 것만 <code>CHECKED</code>. 못 읽은 항목은 <code>UNCOVERED</code>. 목록의 id 는 한 글자도 바꾸지 않는다 — 블록이 없는 유닛은 <code>미검증</code> 으로 잰다</span></li>
       <li><b>문서 내용의 옳고 그름을 보지 않는다.</b> 설명의 충실도만. <span class="alt">이상해 보이면 <code>UNCERTAIN</code> 한 줄</span></li>
       <li><b>어휘 위반을 잡지 않는다.</b> <span class="alt">그건 <code>levelcheck</code> 어휘 게이트. 값싼 게이트가 먼저 돈다</span></li>
       <li><b>머지 의견 · 심각도 · 권고를 쓰지 않는다.</b> <span class="alt">판정 자체가 없다. 스키마에 그 필드가 없다</span></li>
+      <li><b>카운트는 존재 모순만 잡는다.</b> 「없다」고 쓴 변경에 실재 원자가 있거나, 서술한 변경에 대응 원자가 없을 때만 <code>mismatch</code>. <span class="alt">「n곳」과 「n항목」은 단위가 다를 뿐 — 숫자 차이만으로 불일치로 삼지 않는다(코드 HARD LIMIT 9)</span></li>
     </ol>
     <p style="font-size:13px;color:var(--mute);margin-bottom:0"><code>CHECKED</code> 의 의미는 <code>reviewer.md</code> 그대로 — <em>"what you actually read, not what you were pointed at."</em> 원문을 안 읽은 통과는 고무도장이다.</p>
+  </div>
+
+  <div class="card">
+    <div class="card-top"><span class="card-name">doc-themes</span><span class="kind llm">LLM</span><span class="req">보조 · 저하 허용</span></div>
+    <div class="card-ref">v3 신설 — MR 하나에 세션 1회. 변경 유닛을 주제로 묶어 리포트 <code>02 핵심 변경사항</code> 과 Slack <code>주요 주제:</code> 줄을 만든다</div>
+    <div class="fm">
+      <div><dt>실행</dt><dd>codex exec</dd></div><div><dt>effort</dt><dd>medium</dd></div><div><dt>timeout</dt><dd>600s</dd></div><div><dt>원문</dt><dd class="no">0줄</dd></div><div><dt>출력</dt><dd>45-themes.md</dd></div>
+    </div>
+    <dl class="io">
+      <dt>입력</dt><dd><strong>프롬프트의 유닛 목록뿐이다.</strong> 유닛마다 한 줄 — <code>unit_id · 파일 § 절 · [축] (연산) · 값: 키 이전 → 이후 · 표현 재작성 n건 · 문장 추가/삭제 n건 · hint: &lt;topic_hint&gt;</code>. <code>base/</code> · <code>snapshot/</code> · <code>07-excerpts.md</code> 는 열지 않는다(HARD LIMIT 1)</dd>
+      <dt>시점</dt><dd>verifier 뒤(<code>themes ← verifier</code>). fix 라운드가 아직 남아 있으면 스펙을 내지 않는다 — 곧 바뀔 설명을 묶지 않기 위해서다</dd>
+      <dt>출력</dt><dd><code>THEME t-nn</code> 블록마다 <code>title</code>(명사구 3~15자) · <code>units</code>(한 줄 flow) · <code>**한 줄**</code>. 파일 수 · 태그 · 델타는 렌더가 멤버에서 잰다</dd>
+      <dt>게이트</dt><dd><code>collect</code> 가 모르는 유닛을 멤버에서 빼고, 남은 멤버가 2개 미만인 주제는 버린다(<code>themes_dropped</code>). <code>FAILED</code>/<code>BLOCKED</code> 상태나 파싱 실패는 <code>themes_failed</code></dd>
+      <dt>실패</dt><dd>아무것도 안 쓰면 FAILED 스텁을 대신 써서 진행 — 02 섹션이 「주제 생성 실패」로 나올 뿐 리포트는 완성된다. 썼는데 반려된 파일은 그대로 두고 <code>collect</code> 가 저하한다</dd>
+    </dl>
+    <h4>파서가 받아 주는 드리프트 두 가지</h4>
+    <ol class="hl">
+      <li><b>yaml fence 를 backtick 1개로 쓴 경우</b> — 한 줄이 정확히 <code>`yaml</code> 이거나 <code>`</code> 하나면 진짜 fence 로 승격한다. <span class="alt">실측 MR !40: 필드가 안 읽혀 주제가 전부 멤버 0 으로 떨어졌다</span></li>
+      <li><b>frontmatter 를 fence 없이 평문 <code>key: value</code> 로 나열한 경우</b> — 첫 <code>---</code> 또는 <code>## </code> 앞의 줄이 <strong>전부</strong> <code>key:</code> 줄일 때만 frontmatter 로 읽는다. <span class="alt">실측 MR !34. 그 외 서문이 섞이면 여전히 파싱 실패 — 수용 기준은 유지된다</span></li>
+    </ol>
   </div>
 
   <h3 id="conventions">위성 공통 규약 — 전 위성 적용</h3>
@@ -391,10 +416,10 @@ footer{border-top:1px solid var(--line);padding-top:20px;font-family:"IBM Plex M
     <thead><tr><th>규약</th><th>내용</th><th>왜</th></tr></thead>
     <tbody>
       <tr><td><strong>Scope gate</strong></td><td>첫 툴 호출 <strong>전에</strong> 입력 검사. 불충분 → <code>BLOCKED</code>, 탐색 시작 안 함</td><td>근거 없이 시작하면 결과가 재현되지 않는다</td></tr>
-      <tr><td><strong>BUDGET wrap-up</strong></td><td>3 남으면 읽기 중단 → flush → <code>PARTIAL</code> + <code>UNCOVERED</code></td><td>산출 없이 죽는 게 최악. <code>PARTIAL</code> 은 계획된 결과지 실패가 아니다</td></tr>
-      <tr><td><strong>Report-first</strong></td><td>첫 2 툴 호출 안에 산출물 스켈레톤 생성, 섹션마다 append</td><td>컨텍스트에만 있는 결과는 죽을 때 같이 죽는다</td></tr>
-      <tr><td><strong>RECEIPT copy</strong></td><td>리턴 조립 전 산출물 말미에 리턴 블록을 <code>## RECEIPT</code> 로 복사</td><td>529 유실 시 <strong>회수한다. 재호출하지 않는다</strong> — 재호출은 비결정성</td></tr>
-      <tr><td><strong>Read discipline</strong></td><td>300줄 초과 통독 금지 → 대상 라인 ±20줄. 재Read 금지</td><td><code>snapshot/</code> 문서는 수백~수천 줄</td></tr>
+      <tr><td><strong>BUDGET wrap-up</strong> <span class="req">미집행</span></td><td>3 남으면 읽기 중단 → flush → <code>PARTIAL</code> + <code>UNCOVERED</code>. <b>codex exec 에는 턴 예산이 없어 동작하지 않는다</b> — 실제 상한은 timeout 600초이고, 넘기면 산출물이 있어도 실패(<code>False</code>)다</td><td>산출 없이 죽는 게 최악. <code>PARTIAL</code> 은 계획된 결과지 실패가 아니다</td></tr>
+      <tr><td><strong>Report-first</strong> <span class="req">미구현</span></td><td>첫 2 툴 호출 안에 산출물 스켈레톤 생성, 섹션마다 append. <b>현재 위성 프롬프트에 이 지시가 없다</b></td><td>컨텍스트에만 있는 결과는 죽을 때 같이 죽는다</td></tr>
+      <tr><td><strong>RECEIPT copy</strong> <span class="req">회수 미구현</span></td><td>리턴 조립 전 산출물 말미에 리턴 블록을 <code>## RECEIPT</code> 로 복사 — 세 프롬프트 모두 요구한다. <b>파서는 RECEIPT 블록을 읽고 버리고</b>, 회수하는 코드는 없다</td><td>원래 목적은 529 유실 시 회수. 실행기가 리턴을 받지 않게 되면서 산출물만이 결과다</td></tr>
+      <tr><td><strong>Read discipline</strong></td><td>절 라인 창 ±20줄만. 파일 통독 금지 · 재Read 금지(analyzer HARD LIMIT 6)</td><td><code>snapshot/</code> 문서는 수백~수천 줄</td></tr>
       <tr><td><strong>템플릿은 렌더러가</strong></td><td>위성 프롬프트에 들어가는 산출물 템플릿 문자열을 손으로 쓰지 않고 <strong>파서 모듈의 render 함수</strong>로 만든다</td><td>프롬프트와 파서가 한 소스를 공유해야 드리프트가 <strong>물리적으로 불가능</strong>하다</td></tr>
       <tr><td><strong>리스트-객체는 한 줄 flow</strong></td><td><code>key: [{a: 1}, {b: 2}]</code> 형태만. 블록 시퀀스(<code>key:</code> 다음 줄에 <code>- {…}</code>)는 파서가 받지 않는다</td><td>실측에서 프롬프트가 블록 시퀀스를 지시해 산출물이 통째로 파싱 실패했다</td></tr>
     </tbody>
@@ -406,18 +431,19 @@ footer{border-top:1px solid var(--line);padding-top:20px;font-family:"IBM Plex M
 UNCOVERED:  &lt;처리하지 못한 id 목록&gt;  |  none
 UNCERTAIN:  &lt;애매한 점 한 줄&gt;        |  none
 CONFIDENCE: high|medium|low — &lt;직접 확인한 사실만 근거로&gt;</pre></div>
-  <div class="note">이 한 줄이 <b>"조용한 누락 금지"의 유일한 집행 수단</b>이다. optional 필드는 LLM 이 안 쓰고, 그러면 "해당 없음" 과 "안 함" 이 구분되지 않는다. 자기보고와 툴 실측이 이중화된다 — 자기보고 <code>none</code> 인데 실측 누락 &gt;0 이면 <b>거짓 영수증</b>이고, 재호출 없이 <code>analysis_failed</code> 다. <code>CONFIDENCE</code> 는 리포트 4 부록의 표시에만 쓴다 — 분류나 정렬을 바꾸지 않는다.</div>
+  <div class="note">optional 필드는 LLM 이 안 쓰고, 그러면 "해당 없음" 과 "안 함" 이 구분되지 않는다 — 그래서 20-analysis · 45-themes frontmatter 와 리턴에 이 네 줄을 둔다. 다만 <b>"조용한 누락 금지"의 집행은 자기보고가 아니라 툴 실측</b>이다: <code>dispatch.missing_prose()</code> 가 설명 없는 유닛 · 요약 없는(또는 모르는 refs 를 든) 파일을 자기보고와 무관하게 잡아 <b>fix 라운드에서 다시 쓰게 하고</b>, 라운드를 다 써도 남으면 <code>설명 생성 실패</code> 로 격리해 신뢰도 줄에 센다. <code>analysis_failed</code> 라는 상태는 없다. <code>CONFIDENCE</code> 는 05 분석 상태의 신뢰도 분포에만 쓴다 — 분류나 정렬을 바꾸지 않는다.</div>
 
   <h3 id="funnel">읽기량 funnel — 실측 기준</h3>
   <p class="lede">넓고 얕은 선행 스윕이 전부 파서로 내려갔다. <strong>LLM 이 읽는 것은 자기 유닛의 발췌와 그 절의 라인 창뿐이고</strong>, 파일을 통독하는 층은 하나도 남지 않았다.</p>
   <div class="tw">
   <table>
-    <thead><tr><th>단계</th><th>읽는 것</th><th>성격</th><th>BUDGET</th></tr></thead>
+    <thead><tr><th>단계</th><th>읽는 것</th><th>성격</th><th>상한</th></tr></thead>
     <tbody>
-      <tr><td><code>mrdoc structure</code></td><td>changeset 파일의 heading. <strong>본문 0줄</strong></td><td>넓고 얕다</td><td class="num">— 파서</td></tr>
-      <tr><td><code>mrdoc excerpt</code></td><td>변경 유닛의 before/after 원문만. <strong>본문 통독 0</strong></td><td>좁다</td><td class="num">— 파서</td></tr>
-      <tr><td><code>doc-analyzer</code></td><td><code>07</code> 발췌 + 자기 절 ±20줄 + 자기 유닛의 리터럴</td><td>좁고 깊다</td><td class="num">16</td></tr>
-      <tr><td><code>doc-verifier</code></td><td>변경 절 base+head + 분석 파일 + 리터럴</td><td>좁다</td><td class="num">10</td></tr>
+      <tr><td><code>structure</code> 노드</td><td>changeset 파일의 heading. <strong>본문 0줄</strong></td><td>넓고 얕다</td><td class="num">— 파서</td></tr>
+      <tr><td><code>excerpt</code> 노드</td><td>변경 유닛의 before/after 원문만. <strong>본문 통독 0</strong></td><td>좁다</td><td class="num">— 파서</td></tr>
+      <tr><td><code>doc-analyzer</code></td><td><code>07</code> 발췌 + 자기 절 ±20줄 + 자기 유닛의 리터럴</td><td>좁고 깊다</td><td class="num">600초</td></tr>
+      <tr><td><code>doc-verifier</code></td><td>변경 절 base+head + 분석 파일 + 리터럴 + 프롬프트의 원자 집계표</td><td>좁다</td><td class="num">600초</td></tr>
+      <tr><td><code>doc-themes</code></td><td>프롬프트의 유닛 목록(유닛당 한 줄). <strong>원문 0줄</strong></td><td>넓고 얕다</td><td class="num">600초</td></tr>
     </tbody>
   </table>
   </div>
@@ -425,34 +451,44 @@ CONFIDENCE: high|medium|low — &lt;직접 확인한 사실만 근거로&gt;</pr
 
 <!-- ══════════════════ PART 2 ══════════════════ -->
 <section id="pipeline">
-  <div class="part-head"><span class="part-num">Part 2</span><h2>워크플로우 — 고정 DAG 9 노드</h2></div>
+  <div class="part-head"><span class="part-num">Part 2</span><h2>워크플로우 — 고정 DAG 10 노드</h2></div>
   <p class="part-note">house 는 <em>"Never plan the whole graph upfront"</em> 이라고 쓴다. <strong>우리는 반대로 DAG 를 고정한다</strong> — 매 wave 를 결과로 재분할하는 것이 곧 판단이고, 판단을 오케스트레이터에서 빼는 게 이 설계의 전제다. 적응성을 버리고 재현성을 얻는다. 같은 MR 을 두 번 돌려 다른 리포트가 나오면 제품 10개를 같은 톤으로 비교할 수 없다.</p>
 
   <div class="filters">
     <span class="lbl">필터</span>
-    <button data-f="all" aria-pressed="true">전체 9</button>
+    <button data-f="all" aria-pressed="true">전체 10</button>
     <button data-f="tool" aria-pressed="false">툴 7</button>
-    <button data-f="llm" aria-pressed="false">LLM 2</button>
+    <button data-f="llm" aria-pressed="false">LLM 3</button>
   </div>
 
   <div class="tw">
   <table class="pipe" id="pipe">
     <thead><tr><th>#</th><th>노드</th><th>실행</th><th>산출물</th><th>하는 일</th></tr></thead>
     <tbody>
-      <tr data-kind="tool" data-opt="0"><td>0</td><td class="nm">mrdoc changeset</td><td><span class="kind tool">툴</span></td><td class="out"><a href="#t00">00-changeset.md</a></td><td>파일 인덱스. status 정규화 · 헌크 라인 범위 · rename 판정</td></tr>
-      <tr data-kind="tool" data-opt="0"><td>0a</td><td class="nm">mrdoc structure</td><td><span class="kind tool">툴</span></td><td class="out"><a href="#t05">05-structure.md</a></td><td>변경 파일의 base/head heading 트리 · change unit · 절 짝짓기 · move · <strong>구조 종류 확정</strong></td></tr>
-      <tr data-kind="tool" data-opt="0"><td>0b</td><td class="nm">mrdoc literals</td><td><span class="kind tool">툴</span></td><td class="out"><a href="#t06">06-literals.md</a></td><td><strong>리터럴 차집합 3종.</strong> 설계의 축 — 의미(값)가 여기서 확정된다</td></tr>
-      <tr data-kind="tool" data-opt="0"><td>0c</td><td class="nm">mrdoc excerpt <span class="req core">신설</span></td><td><span class="kind tool">툴</span></td><td class="out"><a href="#t07">07-excerpts.md</a></td><td>유닛별 before/after <strong>원문 발췌.</strong> 변경 = 헌크 ∩ 절 ±1줄 · 추가/삭제 = 절 전문</td></tr>
-      <tr data-kind="llm" data-opt="0"><td>1</td><td class="nm">doc-analyzer</td><td><span class="kind llm">LLM</span></td><td class="out"><a href="#t20">20-analysis/&lt;id&gt;.md</a></td><td>유닛별 <strong>설명</strong> · 표현 후보의 성질 판정 · 파일 요약 설명</td></tr>
-      <tr data-kind="tool" data-opt="0"><td>2</td><td class="nm">mrdoc levelcheck</td><td><span class="kind tool">툴</span></td><td class="out"><a href="#t30">30-levelcheck.md</a></td><td>분류 검증(승격만 · 강등 없음) + <strong>어휘 게이트</strong></td></tr>
-      <tr data-kind="llm" data-opt="0"><td>3</td><td class="nm">doc-verifier</td><td><span class="kind llm">LLM</span></td><td class="out"><a href="#t40">40-verifier.md</a></td><td>설명 충실도 감사 — <code>invented</code> · <code>omitted</code>. 고칠 게 있으면 <code>FIX</code></td></tr>
-      <tr data-kind="tool" data-opt="0"><td>5</td><td class="nm">mrdoc collect</td><td><span class="kind tool">툴</span></td><td class="out"><a href="#t50">50-collect.md</a></td><td>매트릭스 집계 · 파일 그룹핑 · 발췌/값/설명 병합 · refs 검증 · <strong>부분 실패 격리</strong></td></tr>
-      <tr data-kind="tool" data-opt="0"><td>6</td><td class="nm">mrdoc render</td><td><span class="kind tool">툴</span></td><td class="out"><a href="#t99">report.html · slack-summary.txt</a></td><td>refs 대조 → 4섹션 렌더. 외부 의존 0</td></tr>
+      <tr data-kind="tool" data-opt="0"><td>0</td><td class="nm">changeset</td><td><span class="kind tool">툴</span></td><td class="out"><a href="#t00">00-changeset.md</a></td><td>파일 인덱스. md/mdx 와 그 외 분리 · 헌크 라인 범위 · <code>.analysis-expected</code>(md 파일 수) 기록</td></tr>
+      <tr data-kind="tool" data-opt="0"><td>0a</td><td class="nm">structure</td><td><span class="kind tool">툴</span></td><td class="out"><a href="#t05">05-structure.md</a></td><td>변경 파일의 base/head heading 트리 · change unit · 절 짝짓기 · move · <strong>구조 종류 확정</strong></td></tr>
+      <tr data-kind="tool" data-opt="0"><td>0b</td><td class="nm">literals</td><td><span class="kind tool">툴</span></td><td class="out"><a href="#t06">06-literals.md</a></td><td><strong>리터럴 차집합 3종 + 문장 원자</strong>(<code>textual</code> · <code>prose_added</code> · <code>prose_removed</code>). 설계의 축 — 의미(값)·표현이 여기서 확정된다</td></tr>
+      <tr data-kind="tool" data-opt="0"><td>0c</td><td class="nm">excerpt <span class="req core">신설</span></td><td><span class="kind tool">툴</span></td><td class="out"><a href="#t07">07-excerpts.md</a></td><td>유닛별 before/after <strong>원문 발췌.</strong> 변경 = 헌크 ∩ 절 ±1줄 · 추가/삭제 = 절 전문</td></tr>
+      <tr data-kind="llm" data-opt="0"><td>1</td><td class="nm">doc-analyzer</td><td><span class="kind llm">LLM</span></td><td class="out"><a href="#t20">20-analysis/&lt;id&gt;.md</a></td><td>유닛별 <strong>설명</strong> · 표현 후보의 성질 판정 · 파일 요약 설명 · 선택 <code>topic_hint</code>. <code>mrdoc_fanout</code> 파일씩 배치</td></tr>
+      <tr data-kind="tool" data-opt="0"><td>2</td><td class="nm">levelcheck</td><td><span class="kind tool">툴</span></td><td class="out"><a href="#t30">30-levelcheck.md</a></td><td>분류 검증(승격만 · 강등 없음) + <strong>어휘 게이트</strong></td></tr>
+      <tr data-kind="llm" data-opt="0"><td>3</td><td class="nm">doc-verifier</td><td><span class="kind llm">LLM</span></td><td class="out"><a href="#t40">40-verifier.md</a></td><td>설명 충실도 감사 — <code>invented</code> · <code>omitted</code> + <code>FILE_SUMMARY</code> 카운트 대조(<code>COUNTS</code>). 고칠 게 있으면 <code>FIX</code></td></tr>
+      <tr data-kind="llm" data-opt="0"><td>4</td><td class="nm">doc-themes <span class="req core">v3</span></td><td><span class="kind llm">LLM</span></td><td class="out"><a href="#t45">45-themes.md</a></td><td>변경 유닛을 <strong>주제</strong>로 묶는다 — 원문 0줄, 프롬프트의 유닛 목록만. 02 핵심 변경사항 · Slack 주요 주제</td></tr>
+      <tr data-kind="tool" data-opt="0"><td>5</td><td class="nm">collect</td><td><span class="kind tool">툴</span></td><td class="out"><a href="#t50">50-collect.md</a></td><td><strong>원자 인벤토리</strong>로 매트릭스 집계 · 파일 그룹핑 · 발췌/값/설명 병합 · refs 검증 · 감사 커버리지 · 주제 게이트 · <strong>부분 실패 격리</strong></td></tr>
+      <tr data-kind="tool" data-opt="0"><td>6</td><td class="nm">render</td><td><span class="kind tool">툴</span></td><td class="out"><a href="#t99">report.html · slack-summary.txt</a></td><td>refs 대조 → hero · stats · 01~05 섹션 렌더. 외부 의존 0</td></tr>
     </tbody>
   </table>
   </div>
 
-  <div class="note"><b>4 는 노드가 아니라 분기다.</b> <code>doc-verifier</code> 의 <code>required_fixes</code> 가 0 보다 크면 <code>dispatch</code> 가 <b>FIX 대상 유닛만</b> 골라 <code>doc-analyzer</code> 를 <b>최대 1회</b> 재호출하고 2·3 을 재실행한다. 실행 단위가 새로 생기지 않으므로 노드 수(<b>9 = 툴 7 + LLM 2</b>)에 세지 않는다. 이전 판에서는 이 분기가 기록만 되고 <b>소비하는 코드가 없었다.</b></div>
+  <div class="note"><b>v3 코드 동기화 (2026-09-27) — 코드(<code>app/mrdoc/</code>)가 우선한다.</b> 본문의 표 · 카드 · 템플릿을 모두 이 기준으로 고쳤다. 남은 v2 표기는 <b>[v2 기록]</b> · <span class="req">미구현</span> 표시가 붙은 것뿐이다. v2 대비 바뀐 것만 추리면:
+  <ul class="plain" style="margin:10px 0 0">
+    <li><b>노드 10 = 툴 7 + LLM 3.</b> <code>doc-themes</code>(effort medium, <code>45-themes.md</code>)가 verifier 뒤 · collect 앞에 들어왔다 — 위 표 4번, <a class="inline" href="#t45">45-themes</a>. 의존(<code>dispatch.DEPS</code>)은 사슬 changeset → structure → literals → excerpt 에 analysis ← changeset(툴 체인은 같은 wave 안에서 스펙보다 먼저 끝난다) · levelcheck ← analysis · verifier ← levelcheck · themes ← verifier · collect ← themes, verifier · render ← collect</li>
+    <li><b><code>mrdoc</code> CLI 없음.</b> 툴 노드는 in-process, 스펙은 <code>dispatch.next_specs()</code> 직접 호출, 실행기는 <code>bool</code> 만 돌려준다 — <a class="inline" href="#loop">단일 루프</a></li>
+    <li><b>위성 = <code>codex exec</code> 1회.</b> 턴 예산 · 도구 목록 대신 timeout 600초와 산출물 수용 검사. BUDGET(USD)은 미집행 — <a class="inline" href="#agents">Part 1</a></li>
+    <li><b>fix 라운드 최대 2회</b>, 대상은 세 게이트의 합집합, 라운드마다 게이트를 <code>rN</code> 으로 아카이브, 실패하면 되돌리고 진행 — <a class="inline" href="#t40">40-verifier</a></li>
+    <li><b>스펙 블록 6줄</b>(WAVE · SPEC · READ · BUDGET · RETURN · SCOPE), 프롬프트는 실행기가 따로 조립 — <a class="inline" href="#tdispatch">dispatch 스펙</a></li>
+    <li><b>집계는 원자 인벤토리</b>, 리포트는 hero · stats · 01~05, Slack 은 업로드 1건에 요약 + 주요 주제 — <a class="inline" href="#t50">50-collect</a> · <a class="inline" href="#t99">report.html</a></li>
+  </ul></div>
+  <div class="note"><b>[v2 기록 — 폐기, 위 v3 목록을 따른다]</b> <b>4 는 노드가 아니라 분기다.</b> <code>doc-verifier</code> 의 <code>required_fixes</code> 가 0 보다 크면 <code>dispatch</code> 가 <b>FIX 대상 유닛만</b> 골라 <code>doc-analyzer</code> 를 <b>최대 1회</b> 재호출하고 2·3 을 재실행한다. 실행 단위가 새로 생기지 않으므로 노드 수(<b>9 = 툴 7 + LLM 2</b>)에 세지 않는다. 이전 판에서는 이 분기가 기록만 되고 <b>소비하는 코드가 없었다.</b></div>
 
   <h4>이번 개정에서 제거</h4>
   <div class="tw">
@@ -460,7 +496,7 @@ CONFIDENCE: high|medium|low — &lt;직접 확인한 사실만 근거로&gt;</pr
     <thead><tr><th>제거된 것</th><th>이유</th></tr></thead>
     <tbody>
       <tr><td><code>doc-mapper</code> · <code>mrdoc checklist</code> · <code>mrdoc coverage</code></td><td>문서 간 모순·stale reference 를 찾는 <strong>정합성 판정 사슬</strong>의 부품이다. 판정을 하지 않으므로 사슬째 사라진다</td></tr>
-      <tr><td><code>doc-reporter</code></td><td>상단 요약은 카운트(결정론)로 나오고, 파일 단위 서술은 파일 컨텍스트를 이미 가진 <code>doc-analyzer</code> 가 같은 패스에서 <code>FILE_SUMMARY</code> 로 쓴다. <strong>LLM 호출 3 → 2</strong></td></tr>
+      <tr><td><code>doc-reporter</code></td><td>상단 요약은 카운트(결정론)로 나오고, 파일 단위 서술은 파일 컨텍스트를 이미 가진 <code>doc-analyzer</code> 가 같은 패스에서 <code>FILE_SUMMARY</code> 로 쓴다. <strong>LLM 호출 3 → 2</strong> <span class="req">(v2 당시. v3 에서 <code>doc-themes</code> 가 추가돼 다시 3 — 판정 없이 묶기만 한다)</span></td></tr>
       <tr><td>판정 필드 일체</td><td>머지 가능 여부 · 심각도 · 권고 · 지적 항목 · 근거 인용 필드가 전부 소멸. 역추적 사슬의 <code>k-</code>/<code>f-</code> 접두어도 같이 사라진다</td></tr>
     </tbody>
   </table>
@@ -472,42 +508,61 @@ CONFIDENCE: high|medium|low — &lt;직접 확인한 사실만 근거로&gt;</pr
     <thead><tr><th>노드</th><th>단위</th><th>양쪽에서 읽는 것</th></tr></thead>
     <tbody>
       <tr><td><code>0 changeset</code></td><td>파일</td><td>메타데이터만 — <code>base_sha</code>/<code>head_sha</code> · <code>old_path</code> · <code>old_lines</code>/<code>new_lines</code>. <strong>본문 0</strong></td></tr>
-      <tr><td><code>0a structure</code></td><td>절 경계</td><td>양쪽 heading 구조. 짝짓기·rename·move 가 전부 양쪽 파싱을 요구한다. <code>TREE</code>+<code>BASE_TREE</code> 두 표가 리포트 3.1 이 된다</td></tr>
-      <tr><td><code>0b literals</code></td><td>절 안의 값</td><td>양쪽 <strong>본문</strong>을 절 단위로 잘라 차집합. <code>removed = base − head</code></td></tr>
-      <tr><td><code>0c excerpt</code></td><td>절 안의 원문</td><td>양쪽 본문에서 <strong>변경 유닛만큼</strong> 발췌. 리포트 3.2~3.4 의 before/after 가 여기서 나온다</td></tr>
+      <tr><td><code>0a structure</code></td><td>절 경계</td><td>양쪽 heading 구조. 짝짓기·rename·move 가 전부 양쪽 파싱을 요구한다. <code>TREE</code>+<code>BASE_TREE</code> 두 표가 리포트 04 파일 카드의 <b>Document structure change</b>(before/after outline + 구조 노트)가 된다</td></tr>
+      <tr><td><code>0b literals</code></td><td>절 안의 값 · 문장</td><td>양쪽 <strong>본문</strong>을 절 단위로 잘라 비교. 추가·삭제 유닛은 절 전체 차집합(<code>removed = base − head</code>), 변경 유닛은 줄 diff 의 구간별 대조</td></tr>
+      <tr><td><code>0c excerpt</code></td><td>절 안의 원문</td><td>양쪽 본문에서 <strong>변경 유닛만큼</strong> 발췌. 리포트 04 변경 카드의 BEFORE/AFTER 가 여기서 나온다</td></tr>
     </tbody>
   </table>
   </div>
-  <p class="lede">같은 old↔new 대조를 <strong>파일 → 절 경계 → 절 안의 값 → 절 안의 원문</strong> 으로 좁혀 내려가는 4 층이다. 물리적으로도 두 트리가 깔린다 — <code>base/</code> 와 <code>snapshot/</code>. 뒤쪽 노드는 <code>rev: base|head</code> 로 어느 트리를 읽을지 지정한다.</p>
+  <p class="lede">같은 old↔new 대조를 <strong>파일 → 절 경계 → 절 안의 값 → 절 안의 원문</strong> 으로 좁혀 내려가는 4 층이다. 물리적으로도 두 트리가 깔린다 — <code>base/</code> 와 <code>snapshot/</code>. rail 이 GitLab API(<code>repository/tree</code> + 파일별 raw)로 md/mdx 만 받아 <code>.mrdoc-ws/.work/&lt;iid&gt;-&lt;sha8&gt;/</code> 아래에 쓴다. <code>rev: base|head</code> 같은 필드는 없다 — 툴 노드는 두 트리를 메모리로 받고, 위성 미션 프롬프트가 파일마다 <code>head &lt;snapshot/경로&gt; · base &lt;base/old_path&gt;</code> 절대경로를 적어 준다.</p>
 
   <h3 id="loop">단일 루프 — 오케스트레이터는 스테이지 지식조차 없다</h3>
   <div class="codewrap">
-    <div class="bar"><span class="f">오케스트레이터 루프 전문</span><span class="flow">분기 1개 = 블록 타입</span></div>
-<pre>loop:
-  out = mrdoc dispatch next --work &lt;abs&gt;
+    <div class="bar"><span class="f">오케스트레이터 루프 — orchestrator.py 요지</span><span class="flow">분기 = 위성 실패 시 agent 종류</span></div>
+<pre>run_to_completion(inputs, work, executor, fanout, budget_usd, max_waves=20):
+  for wave in 1..20:
+    code = run_wave(wave)
+    <b>0</b> → 다음 wave     <b>4</b> → 완료. 종료     <b>2</b> → abort. 종료
+  20 wave 를 다 쓰면 → <b>2</b>
 
-  <b>exit 0</b>  → out 의 블록 실행
-              SPEC agent &lt;name&gt; …  →  <b>codex exec</b> headless 호출 (한 wave 를 한 번에)
-              SPEC tool            →  RUN 줄 실행
-            전부 조인되면 → mrdoc ledger append --wave &lt;id&gt; --returns &lt;리턴 원문&gt;
-            → loop
-  <b>exit 4</b>  → 파이프라인 완료. 종료
-  <b>exit 2</b>  → abort. ledger 에 이유가 있다. 종료
-  그 외    → abort</pre>
+run_wave(wave):
+  ledger += "wave N start"
+  툴 노드 in-process      deps 가 찬 것부터 — changeset → structure → literals → excerpt
+  specs = dispatch.next_specs(work, wave, fanout, budget_usd)
+                          analyzer(files i..j 배치 전부) | verifier | themes
+  for spec in specs:      <b>하나씩 순서대로</b>
+    ok = executor(spec.render())          <span class="c">codex exec 1회 — bool 만 돌아온다</span>
+    ok      → ledger += "&lt;agent&gt; done (&lt;RETURN 이름&gt;)"
+    실패    → themes · verifier: FAILED 스텁 + "… degraded (satellite failed)"
+              analyzer: raise → "abort: agent failed: analyzer"
+  fix 라운드              dispatch.fix_round_due() 가 대상을 내면 analyzer 재호출 (wave 당 1회 · 통산 최대 2)
+  툴 노드 in-process 다시  levelcheck → collect → render (deps 가 찬 것만)
+  전부 done               → "pipeline complete" · <b>4</b>
+  상태 불변 · fix 라운드도 없음 → "abort: no progress" · <b>2</b>
+  그 외                   → <b>0</b></pre>
   </div>
   <div class="tw">
   <table>
     <thead><tr><th>장치</th><th>내용</th></tr></thead>
     <tbody>
-      <tr><td><strong>루프 1개</strong></td><td><code>doc-verifier</code> 의 <code>FIX</code> → <code>doc-analyzer</code> 재호출, <strong>최대 1회.</strong> <code>dispatch</code> 가 <b>FIX 대상 유닛만</b> 골라 스펙을 생성한다. 종료조건은 <strong>산출물 존재</strong> — 2회차 지적은 <code>verify.outstanding</code> 에 적고 진행한다</td></tr>
-      <tr><td><strong>팬아웃 3–5 하드캡</strong></td><td><code>max_files: 40</code> 은 처리 상한이지 동시 실행 폭이 아니다. 파일 40개면 wave 8~13회 순차</td></tr>
-      <tr><td><strong>절대경로 강제</strong></td><td>SlackBot 이 스크립트로 <code>codex exec</code> 를 호출하므로 cwd 가 보장되지 않는다. 상대경로 쓰기는 <strong>다른 루트에 성공한다</strong> → 산출물이 없는 것으로 보임 → 재실행 → 또 같은 곳 → <strong>조용한 무한 실패.</strong> <code>dispatch</code> 가 전 경로를 절대경로로 출력하는 것이 유일한 방어</td></tr>
-      <tr><td><strong>ledger</strong></td><td>append-only. <code>mrdoc status</code> 는 산출물 존재로 상태를 도출하므로 ledger 와 <strong>독립된 두 번째 소스</strong>다. 불일치 = 유실 감지. 한쪽만 두면 그게 틀렸을 때 아무도 모른다</td></tr>
-      <tr><td><strong>stdout ≤10줄</strong></td><td>상세는 산출물 파일에. 툴 결과가 로그에 쌓이면 실패 지점을 찾는 비용만 올라간다</td></tr>
-      <tr><td><strong>워크스페이스 키</strong></td><td><code>.work/&lt;mr_iid&gt;-&lt;head_sha8&gt;/</code> — 커밋 5번 푸시되면 트리거도 5번 온다. 키에 head 가 없으면 5개 프로세스가 같은 워크스페이스를 덮어쓴다</td></tr>
+      <tr><td><strong>루프 1개 — fix 라운드</strong></td><td>노드가 아니라 분기다. <code>doc-analyzer</code> 재호출, <strong>최대 2회</strong>(<code>FIX_ROUND_MAX = 2</code>). 대상은 <code>dispatch.fix_targets()</code> 의 합집합(→ <a class="inline" href="#t40">40-verifier</a>). 라운드를 열 때 <code>.fix-round</code> 를 먼저 올리고 live 게이트를 <code>40-verifier.rN.md</code> · <code>30-levelcheck.rN.md</code> 로 옮긴 뒤 지운다 — 그래서 levelcheck · verifier 가 다시 pending 이 되어 DAG 가 재실행한다. 재호출이 실패·예외면 20-analysis 스냅샷과 그 라운드 게이트를 되돌리고 <strong>진행한다</strong>(라운드는 소진). 3회차 검증에 남은 지적은 <code>verify.outstanding</code></td></tr>
+      <tr><td><strong>팬아웃 = 배치 크기</strong></td><td><code>mrdoc_fanout</code>(기본 5) 파일마다 analyzer 스펙 1개. 배치는 전부 같은 wave 에 나오고 순서대로 실행된다 — 동시 실행 폭이 아니다. <code>mrdoc_max_files</code>(기본 40)는 MR 파일 fetch 상한이고, 잘리면 <code>counts.skipped: true</code>. 파일 40개면 wave 1 에 analyzer 스펙 8개가 순차</td></tr>
+      <tr><td><strong>절대경로 강제</strong></td><td>실행기가 <code>--cd &lt;work&gt;</code> 와 subprocess cwd 를 워크 디렉터리로 고정하고, 미션 프롬프트의 경로는 전부 <code>resolve()</code> 한 절대경로다. 상대경로 쓰기는 <strong>다른 루트에 성공한다</strong> → 산출물이 없는 것으로 보임 → 실패 → <strong>조용한 반복 실패.</strong> 기대 산출물 존재 검사가 그것을 <code>False</code> 로 드러낸다</td></tr>
+      <tr><td><strong>ledger</strong></td><td>append-only, 타임스탬프 없음(두 실행을 diff 할 수 있게). 상태는 <code>derive_state</code> 가 산출물 존재로만 도출하고 ledger 를 읽지 않는다 — 둘을 대조하는 코드는 없고, ledger 는 사람이 실패 지점을 찾는 기록이다</td></tr>
+      <tr><td><strong>리턴 미수신</strong></td><td>위성 stdout 은 실행기가 버린다(비정상 종료 때 앞 500자만 로그). 성공 판정은 exit 0 · 기대 산출물 존재 · <code>plan.check()</code> 셋뿐 — 로그에 리턴이 쌓이지 않는다</td></tr>
+      <tr><td><strong>워크스페이스 키</strong></td><td><code>.mrdoc-ws/.work/&lt;mr_iid&gt;-&lt;head_sha8&gt;/</code> — 같은 MR 이 head 를 바꿔 여러 번 트리거되면(reopen 등) 키에 head 가 없을 때 여러 프로세스가 같은 워크스페이스를 덮어쓴다. push 마다 디렉터리가 따로라 산출물 재사용(재개)도 한 push 안에서만 일어난다</td></tr>
     </tbody>
   </table>
   </div>
+
+  <h4>호출 경로 — MR 이벤트에서 Slack 스레드까지 (<code>app/mrdoc/rail.py</code>)</h4>
+  <ol class="hl">
+    <li><b>게이트.</b> <code>mrdoc_enabled</code> 와 <code>mrdoc_satellite_enabled</code> 가 <strong>둘 다</strong> true(기본 둘 다 false)이고, 변경 파일 중 <code>.md</code>/<code>.mdx</code> 비율이 <code>mrdoc_doc_ratio_threshold</code>(기본 0.8) 이상일 때만. <span class="alt">코드 위주 MR 은 스레드조차 띄우지 않는다</span></li>
+    <li><b>기동.</b> <code>ingest.handle_mr_open</code> 이 일반 Slack 알림을 올린 <strong>뒤</strong> <code>start_mrdoc_review</code> 가 daemon 스레드를 띄운다. 이 MR 은 일반 리뷰 리포트(<code>report-…-&lt;sha8&gt;.html</code>) 업로드를 건너뛴다 — 같은 diff 에 리포트가 두 개 붙지 않게. <span class="alt">스레드 안의 실패는 전부 로그로만 — MR 레일로 전파하지 않는다</span></li>
+    <li><b>트리.</b> 이 호스트에는 회사 GitLab 클론이 없다. <code>diff_refs</code> 의 base/head 를 API 로 걸어 md/mdx blob 만 받고 <code>base/</code> · <code>snapshot/</code> 에 쓴다(같은 push 디렉터리면 다시 쓰지 않는다). <span class="alt"><code>git archive</code> 체크아웃 헬퍼(<code>workspace.git_archive_checkout</code>)는 있지만 rail 은 쓰지 않는다</span></li>
+    <li><b>실행.</b> <code>run_to_completion(…, satellites.satellite_executor(settings, work), fanout=mrdoc_fanout, budget_usd=mrdoc_satellite_budget_usd)</code>.</li>
+    <li><b>전달.</b> Slack 스레드에 <strong>메시지 하나</strong> — <code>mrdoc-report.html</code> 파일 업로드에 요약(<code>*mrdoc 문서 변경 리포트 -- MR !N* (exit=…)</code> 헤더 + <code>slack-summary.txt</code>)을 <code>initial_comment</code> 로 싣는다. 리포트가 없거나 업로드가 실패하면 요약만 평문으로. render 전에 abort 했으면 00·06 frontmatter 카운트로 대신한다. <span class="alt">트리거는 <code>handle_mr_open</code>(MR open · reopen) 하나다. 사람 push(<code>handle_human_push</code>)나 revise 라운드가 문서를 고친 뒤에는 mrdoc 이 다시 돌지 않는다</span></li>
+  </ol>
 
   <h3 id="consume">산출물 소비 관계 — 템플릿을 소비자에서 역산한다</h3>
   <p class="lede">템플릿은 다음 노드를 위한 인터페이스다. 누가 무엇을 필요로 하는지에서 필드를 역산한다.</p>
@@ -515,19 +570,20 @@ CONFIDENCE: high|medium|low — &lt;직접 확인한 사실만 근거로&gt;</pr
   <table>
     <thead><tr><th>산출물</th><th>생산</th><th>소비자</th><th>소비자가 쓰는 것</th></tr></thead>
     <tbody>
-      <tr><td class="nm"><code>00-changeset</code></td><td>mrdoc</td><td>structure · literals · excerpt · render</td><td>파일 목록 · 헌크 라인 범위 · MR 메타</td></tr>
-      <tr><td class="nm"><code>05-structure</code></td><td>mrdoc</td><td>literals · excerpt · analyzer · collect</td><td><code>TREE</code>/<code>BASE_TREE</code> · <code>CHANGED</code>(<code>kind</code> 포함) · <code>MOVED</code></td></tr>
-      <tr><td class="nm"><code>06-literals</code></td><td>mrdoc</td><td><strong>excerpt · analyzer · levelcheck · collect · render</strong></td><td>차집합 3종 — 설명이 인용할 값 / 성질 판정의 반증 / 리포트 3.4 의 값 표기</td></tr>
-      <tr><td class="nm"><code>07-excerpts</code></td><td>mrdoc</td><td>analyzer · collect · render</td><td>유닛별 before/after <strong>원문</strong></td></tr>
-      <tr><td class="nm"><code>20-analysis</code></td><td>analyzer</td><td>levelcheck · verifier · collect</td><td><code>설명</code> · 표현 후보의 <code>class</code> · <code>FILE_SUMMARY</code></td></tr>
-      <tr><td class="nm"><code>30-levelcheck</code></td><td>mrdoc</td><td>collect · render</td><td><strong>verified</strong> class (claimed 아님) · <code>vocab_violation</code></td></tr>
-      <tr><td class="nm"><code>40-verifier</code></td><td>verifier</td><td>collect · dispatch</td><td><code>rounds</code>·<code>outstanding</code> / <code>FIX</code> 상세 — 재호출 스펙의 입력</td></tr>
-      <tr><td class="nm"><code>50-collect</code></td><td>mrdoc</td><td>render</td><td>매트릭스 · 파일 그룹 · 유닛 전량</td></tr>
-      <tr><td class="nm"><code>report.html</code></td><td>mrdoc</td><td>사람 · Slack</td><td>4섹션 / Slack 은 1. 개요만</td></tr>
+      <tr><td class="nm"><code>00-changeset</code></td><td>툴</td><td>structure · literals · excerpt · collect · dispatch · 위성 미션 3종</td><td>파일 목록 · 헌크 라인 범위 · <code>old_path</code> · diff_refs</td></tr>
+      <tr><td class="nm"><code>05-structure</code></td><td>툴</td><td>literals · excerpt · levelcheck · collect · render · dispatch · 위성 미션 3종</td><td><code>TREE</code>/<code>BASE_TREE</code> · <code>CHANGED</code>(<code>kind</code> 포함) · <code>MOVED</code></td></tr>
+      <tr><td class="nm"><code>06-literals</code></td><td>툴</td><td><strong>analyzer · levelcheck · collect</strong> · verifier/themes/fix 미션(원자 집계)</td><td>차집합 3종 + 문장 원자 — 설명이 인용할 값 / 성질 판정의 반증 / 원자 인벤토리(매트릭스·카운트) / 04 카드의 Detected values</td></tr>
+      <tr><td class="nm"><code>07-excerpts</code></td><td>툴</td><td>analyzer · verifier · collect · render</td><td>유닛별 before/after <strong>원문</strong> · <code>section</code> 라벨</td></tr>
+      <tr><td class="nm"><code>20-analysis</code></td><td>analyzer</td><td>levelcheck · verifier · collect · dispatch · themes 미션</td><td><code>설명</code> · 표현 후보의 <code>class</code> · <code>topic_hint</code> · <code>FILE_SUMMARY</code> — 누락은 dispatch 가 fix 대상으로</td></tr>
+      <tr><td class="nm"><code>30-levelcheck</code></td><td>툴</td><td>collect · dispatch</td><td><strong>verified</strong> class (claimed 아님) · <code>vocab_violation</code> — 위반 유닛은 fix 대상</td></tr>
+      <tr><td class="nm"><code>40-verifier</code></td><td>verifier</td><td>collect · dispatch</td><td>UNIT <code>fidelity</code>·<code>why</code> → <code>verify</code> 블록 · 카드의 audit / <code>FIX</code> · 판정 → fix 대상</td></tr>
+      <tr><td class="nm"><code>45-themes</code></td><td>themes</td><td>collect</td><td><code>THEME</code> 의 title · units · 한 줄 → 02 핵심 변경사항 · Slack 주요 주제</td></tr>
+      <tr><td class="nm"><code>50-collect</code></td><td>툴</td><td>render</td><td>매트릭스 · 파일 그룹 · 유닛 전량 · 주제 · verify</td></tr>
+      <tr><td class="nm"><code>report.html</code> · <code>slack-summary.txt</code></td><td>툴</td><td>rail → 사람 · Slack</td><td>01~05 섹션 / Slack 은 개요 + 주요 주제 + 신뢰도 줄</td></tr>
     </tbody>
   </table>
   </div>
-  <div class="note"><b>LLM 산출물은 두 개뿐이고 둘 다 파일이다.</b> 값이 오케스트레이터를 거쳐 옮겨지는 경로가 없다 — <code>collect</code> 가 파서로 읽는다. 리포트 숫자의 출처를 한 곳으로 유지하는 것이 이 표의 목적이다.</div>
+  <div class="note"><b>LLM 산출물은 세 개뿐이고 셋 다 파일이다.</b> 값이 오케스트레이터를 거쳐 옮겨지는 경로가 없다 — <code>collect</code> 가 파서로 읽는다. 리포트 숫자의 출처를 한 곳으로 유지하는 것이 이 표의 목적이다.</div>
 
   <h3 id="chain">역추적 사슬 — 지목 대상이 없는 산출물은 버린다</h3>
   <div class="codewrap">
@@ -537,26 +593,33 @@ CONFIDENCE: high|medium|low — &lt;직접 확인한 사실만 근거로&gt;</pr
       ↓
  20-analysis   UNIT u-….설명 / FILE_SUMMARY.refs   → 실재하는 <b>u-</b>
       ↓
- 50-collect    refs 검증                           → 없는 id 를 지목한 블록은 드롭
+ 40-verifier   UNIT u-… / FIX.target               → 실재하는 <b>u-</b> 또는 file_id (<b>f-</b> 접두어는 뗀다)
+                                                     없는 대상은 fix 대상에서 빠지고 지적 잔존으로만 남는다
       ↓
- mrdoc render  refs 대조 → 4섹션 렌더</pre>
+ 45-themes     THEME t-….units                     → 실재하는 <b>u-</b> 2개 이상
+      ↓
+ 50-collect    refs 검증 · 주제 게이트              → 없는 id 를 지목한 블록 · 멤버 &lt;2 주제는 드롭
+      ↓
+ render        refs 대조 → 01~05 렌더</pre>
   </div>
   <p class="lede">각 계층은 앞 계층의 id 를 지목해야 유효하다. 지목 대상이 없는 산출물은 그 계층이 <strong>발명</strong>한 것이고, 발명은 전부 버린다 — 틀렸다고 증명할 필요가 없다. <code>reviewer-lite</code> 규칙 1 이식: <em>"A hunk that traces to nothing is unrequested scope."</em></p>
   <h4>id 규칙</h4>
   <div class="codewrap">
-<pre>section_id = sha8(path + heading_path)                 <span class="c">절의 신원. 본문 바뀌어도 유지</span>
-unit_id    = sha8(path + heading_path + 변경 라인 범위)  <span class="c">이번 변경의 신원</span>
-file_id    = &lt;basename&gt;-sha8(path)
+<pre>sha8(x)    = sha256(x) 앞 8 hex
+file_id    = slug(basename) + "-" + sha8(path)          <span class="c">auth.md → auth-md-a41b9c8e</span>
+section_id = "s-" + sha8(path + "|" + ordinal + "|" + heading_path)
+                                                        <span class="c">절의 신원. 본문 바뀌어도 유지 · ordinal 로 반복 제목 구분</span>
+unit_id    = "u-" + sha8("unit|" + section_id)          <span class="c">canonical 절(head 쪽 우선)과 1:1. 라인 범위는 안 들어간다</span>
 
 <b>순번(CHG-003) 금지</b> — 재실행 시 흔들려 재현성 검증이 깨진다
-접두어 고정  s-(section)  u-(unit)  r-(fix)</pre>
+접두어 고정  s-(section)  u-(unit)  r-(fix)  t-(theme)</pre>
   </div>
 </section>
 
 <!-- ══════════════════ PART 3 ══════════════════ -->
 <section id="templates">
   <div class="part-head"><span class="part-num">Part 3</span><h2>노드별 출력물 템플릿</h2></div>
-  <p class="part-note">예시는 <strong>MR !482</strong> 하나로 통일했다 — <code>auth.md §4.2 Retry 정책</code> 전면 재작성(의미 · 구조) · <code>§5 토큰 만료 60→30분</code>(의미 · 값) · <code>§3 개요</code> 문장 다듬음(표현) · <code>overview.md</code> 신규 · <code>legacy.md</code> 삭제 · 배포 절차 절 이동. <strong><code>report.html</code> 절만 실측 MR !18</strong> 을 쓴다 — 실제로 돌려 나온 리포트 모양을 그대로 보이기 위해서다.</p>
+  <p class="part-note">예시는 <strong>MR !482</strong> 하나로 통일했다 — <code>auth.md §4.2 Retry 정책</code> 전면 재작성(의미 · 구조) · <code>§5 토큰 만료 60→30분</code>(의미 · 값) · <code>§3 개요</code> 문장 다듬음(표현) · <code>overview.md</code> 신규 · <code>legacy.md</code> 삭제 · <code>architecture.md</code> → <code>deployment.md</code> 배포 절차 절 이동(md 5 + <code>docusaurus.config.js</code>). <strong>v3 에서 전 예시를 이 입력으로 현재 파이프라인(<code>run_to_completion</code> + 가짜 위성)에 실제로 돌려 나온 출력으로 교체했다</strong> — 해시 id · 줄 번호 · 카운트가 렌더러 그대로다(길이만 줄임). 설명 · 판정 문장은 가짜 위성이 쓴 것이다. v2 판의 <code>report.html</code> 절은 실측 MR !18 을 썼다.</p>
 
   <h3 id="tpl-common">템플릿 공통 규약</h3>
   <div class="codewrap">
@@ -566,6 +629,7 @@ YAML frontmatter — 기계 필수 필드 + 대문자 고정 필드
 ---
 
 ## &lt;TYPE&gt; &lt;id&gt;
+
 ```yaml
 기계 필드
 ```
@@ -573,62 +637,60 @@ YAML frontmatter — 기계 필수 필드 + 대문자 고정 필드
 
 …
 
-## RECEIPT
+## RECEIPT                 <span class="c">← 위성 산출물만. 파서는 읽고 버린다</span>
 ```
 리턴 블록 그대로 복사
 ```</pre>
   </div>
   <dl class="fields">
-    <dt>파서 범위</dt><dd><code>^## (TYPE) (id)$</code> 정규식 + 그 아래 <strong>첫 yaml fence.</strong> 그 이상 안 본다</dd>
-    <dt>섹션 추가</dt><dd><strong>템플릿에 없는 섹션 추가 금지.</strong> 생기면 warn — 프롬프트 드리프트 조기 감지</dd>
-    <dt>서술 라벨</dt><dd><strong><code>설명</code> 하나다.</strong> 위성이 쓰는 자연어 필드는 이것과 <code>doc-verifier</code> 의 <code>why</code> 뿐이다</dd>
+    <dt>파서 범위</dt><dd><code>^## (TYPE)( id)?$</code> 정규식 + 그 아래 <strong>첫 yaml fence.</strong> 그 이상 안 본다. 서술은 닫힌 굵은 라벨(<code>**설명**</code> · <code>**FILE_SUMMARY**</code> · <code>**한 줄**</code> · <code>**why**</code>)과 이어지는 줄만. 툴 산출물 중 <code>05-structure</code> 는 frontmatter 없이 표 4개뿐이다</dd>
+    <dt>섹션 추가</dt><dd><strong>템플릿에 없는 섹션 추가 금지.</strong> 파서는 모르는 블록을 조용히 무시한다 — warn 은 미구현이라, 드리프트는 필드가 비는 것으로(설명 누락 → fix 라운드) 드러난다</dd>
+    <dt>서술 라벨</dt><dd>위성이 쓰는 자연어는 <strong>유닛 <code>설명</code> · <code>FILE_SUMMARY</code> 문단 · verifier 의 <code>why</code>(UNIT 의 굵은 라벨 · COUNTS 의 yaml 필드) · themes 의 <code>한 줄</code></strong> 뿐이다</dd>
     <dt>템플릿 생성</dt><dd><strong>파서의 렌더러가 만든다.</strong> 위성 프롬프트에 들어가는 산출물 템플릿 문자열을 손으로 쓰지 않고 파서 모듈의 render 함수로 만든다 — 프롬프트와 파서가 한 소스를 공유해야 드리프트가 <strong>물리적으로 불가능</strong>하다</dd>
     <dt>필드 형태</dt><dd><strong>스칼라는 고정 필드, 중첩은 yaml 블록. 리스트-객체는 한 줄 flow 만</strong> — <code>key: [{a: 1}, {b: 2}]</code>. 블록 시퀀스(<code>key:</code> 다음 줄에 <code>- {…}</code>)는 파서가 받지 않는다</dd>
-    <dt>RECEIPT</dt><dd>리턴 유실(529) 시 <code>mrdoc status --receipt</code> 가 회수한다. <strong>재호출하지 않는다</strong></dd>
+    <dt>RECEIPT</dt><dd>세 위성 프롬프트가 복사를 요구하고 파서는 읽고 버린다. 설계했던 회수 경로(<code>mrdoc status --receipt</code>)는 <strong>미구현</strong> — 실행기가 리턴을 받지 않으므로 회수할 대상도 없다</dd>
   </dl>
   <div class="note"><b>이 두 줄이 실측 실패의 직접 원인이다.</b> analyzer 프롬프트 템플릿은 리스트-객체를 <b>블록 시퀀스</b>로 쓰라고 지시했고 파서는 <b>한 줄 flow</b> 만 받았다 — 산출물이 통째로 파싱 실패했는데 파이프라인은 complete 로 끝났다. 테스트는 렌더러가 만든 인라인 flow 로 통과했다: <b>프롬프트 템플릿 모양을 담은 테스트가 0개</b>였다.</div>
 
   <h3 id="t00">00-changeset.md</h3>
   <div class="codewrap">
-    <div class="bar"><span class="f">00-changeset.md</span><span class="flow">mrdoc changeset → structure · literals · render</span><span class="kind tool">툴</span></div>
+    <div class="bar"><span class="f">00-changeset.md</span><span class="flow">changeset 노드 → structure · literals · excerpt · collect · 위성 미션</span><span class="kind tool">툴</span></div>
 <pre>---
 mr_iid: 482
 project_id: 137
-project: product-common
-web_url: https://gitlab.company.example/docs/product-common/-/merge_requests/482
-source_branch: docs/auto-20260822-product-a
-target_branch: main
-diff_refs: {base_sha: 9c1e77a…, head_sha: 3f2a1cd…, start_sha: 9c1e77a…}
-author: docs-pipeline-bot
-created_at: "2026-08-22T09:14:02Z"
-product_dirs: [docs/product-a]
-<b>stated_reason: null</b>
-<b>generation_context: "docs-repo @ 3f2a1cd 기준 자동 생성"</b>
-counts: {md_added: 1, md_deleted: 1, md_modified: 3, md_renamed: 0, non_md: 1, skipped: 0}
+diff_refs: {base_sha: 9c1e77a4b2d0, head_sha: 3f2a1cd08e11, start_sha: 9c1e77a4b2d0}
+counts: {files: 6, md: 5, non_md: 1, skipped: false}
 ---
 
 ## FILES
+
 | file_id | path | status | old_path | new_lines | old_lines |
-|---|---|---|---|---|---|
-| auth-md-a3c19d     | docs/product-a/auth.md     | modified | | 135-160,168-171,40-52 | 135-158,168-171,40-50 |
-| overview-md-b71f04 | docs/product-a/overview.md | added    | | 1-88 | |
-| legacy-md-c92e11   | docs/product-a/legacy.md   | deleted  | | | 1-142 |
+| --- | --- | --- | --- | --- | --- |
+| auth-md-a41b9c8e | docs/product-a/auth.md | modified | docs/product-a/auth.md | 5,9,14-15,20 | 5-6,10,15-16,21 |
+| overview-md-78002e25 | docs/product-a/overview.md | added | docs/product-a/overview.md | 1-4 | 0 |
+| legacy-md-55e05d43 | docs/product-a/legacy.md | removed | docs/product-a/legacy.md | 0 | 1-4 |
+| architecture-md-b44d798a | docs/product-a/architecture.md | modified | docs/product-a/architecture.md | 3 | 4-9 |
+| deployment-md-c0999b28 | docs/product-a/deployment.md | modified | docs/product-a/deployment.md | 4-9 | 3 |
 
 ## NON_MD
-| path | status |
-|---|---|
-| docusaurus.config.js | modified |
+
+| path | status | old_path |
+| --- | --- | --- |
+| docusaurus.config.js | modified | docusaurus.config.js |
 
 ## SKIPPED
-| path | reason |
-|---|---|</pre>
+
+| path |
+| --- |
+| (none) |</pre>
   </div>
   <dl class="fields">
-    <dt>file_id</dt><dd><code>&lt;basename&gt;-&lt;sha8(path)&gt;</code> — 예 <code>auth-md-a3c19d</code>. 파일명만 쓰면 폴더가 다른 동명 파일이 충돌한다</dd>
-    <dt>stated_reason</dt><dd>MR description·커밋에 <strong>사람이 쓴</strong> 이유가 있을 때만. 자동 생성 MR 이므로 대부분 <code>null</code> 이 정상. <strong>출처 표기용이다 — 설명·분류에 쓰지 않는다. 추론 금지</strong></dd>
-    <dt>generation_context</dt><dd>파이프라인이 기입한 소스 커밋 정보. <strong>이유가 아니라 출처다.</strong> 설명·분류에 쓰지 않는다 — 섞으면 리포트가 추측을 사실처럼 쓴다</dd>
+    <dt>file_id</dt><dd><code>slug(basename)-sha8(path)</code> — 예 <code>auth-md-a41b9c8e</code>(slug + 8 hex). 파일명만 쓰면 폴더가 다른 동명 파일이 충돌한다</dd>
+    <dt>status</dt><dd>GitLab diff 를 정규화한 <code>added</code> · <code>removed</code> · <code>renamed</code> · <code>modified</code> 넷(<code>deleted</code> 아님). <code>old_path</code> 는 GitLab 의 <code>old_path</code> 그대로라 이름이 안 바뀐 파일도 채워진다</dd>
+    <dt>new_lines · old_lines</dt><dd>헌크 헤더(<code>@@ -a,b +c,d @@</code>)의 범위를 헌크 순서대로 쉼표로 잇는다 — i 번째 old 범위와 i 번째 new 범위가 같은 헌크다(05 짝짓기 규칙 2 의 입력). 0줄 헌크는 앵커 줄 하나(<code>0</code>)로 접힌다</dd>
     <dt>diff_refs</dt><dd><code>base_sha</code> 를 쓴다 — <code>target_branch</code> HEAD 아님. 타겟이 그사이 움직이면 diff 와 본문이 안 맞는다</dd>
-    <dt>SKIPPED</dt><dd>빈 표라도 <strong>둔다.</strong> 이 표의 목적은 조용한 누락 금지 하나 — abort 하거나 SKIPPED 로 기록하거나 둘 중 하나</dd>
+    <dt>SKIPPED</dt><dd>표는 <strong>늘 둔다.</strong> 파일 목록이 <code>mrdoc_max_files</code>(기본 40)에서 잘리지 않았으면 <code>(none)</code> 한 행, 잘렸으면 행 없는 빈 표 + <code>counts.skipped: true</code>. 잘린 파일의 경로 · 이유는 기록하지 않는다 — 신호는 「잘렸다」 하나다</dd>
+    <dt>없는 필드</dt><dd>v2 템플릿의 <code>project</code> · <code>web_url</code> · 브랜치 · <code>author</code> · <code>created_at</code> · <code>product_dirs</code> · <code>stated_reason</code> · <code>generation_context</code> 는 <strong>구현되지 않았다.</strong> MR 링크는 <code>PipelineInputs.diff_url</code> 로 render 에만 가고, 이유 · 출처 필드는 없으니 설명 · 분류에 섞일 경로도 없다. 제품 폴더는 collect 가 path 에서 잘라 낸다</dd>
   </dl>
   <div class="note"><b>diff 본문을 여기 인라인하지 말 것.</b> md 20개 MR 이면 이 파일 하나가 위성 호출마다 컨텍스트를 다 먹는다.</div>
 
@@ -636,48 +698,55 @@ counts: {md_added: 1, md_deleted: 1, md_modified: 3, md_renamed: 0, non_md: 1, s
 
   <h3 id="t05">05-structure.md</h3>
   <div class="codewrap">
-    <div class="bar"><span class="f">05-structure.md</span><span class="flow">mrdoc structure → literals · excerpt · analyzer · collect</span><span class="kind tool">툴</span></div>
-<pre>---
-mr_iid: 482
-project: product-common
-product_dir: docs/product-a
-files: {added: 1, deleted: 1, modified: 3, moved_sections: 1}
-sections: 12
-units: 5
----
-
+    <div class="bar"><span class="f">05-structure.md</span><span class="flow">structure 노드 → literals · excerpt · levelcheck · collect · render · 위성 미션</span><span class="kind tool">툴</span></div>
+<pre><span class="c">frontmatter 없음 — 표 4개가 전부다</span>
 ## TREE                                  <span class="c">← <b>changeset 파일로 한정.</b> 폴더 전체가 아니다</span>
-| section_id | file        | heading_path                                     | lines   |
-|---|---|---|---|
-| s-9f22     | auth.md     | 인증 &gt; 4. 인증 정책 &gt; 4.2 Circuit Breaker 정책 | 135-160 |
-| s-2c81     | auth.md     | 인증 &gt; 5. 토큰 정책                              | 168-190 |
-| s-3f11     | auth.md     | 인증 &gt; 3. 개요                                   | 40-52   |
-| s-b310     | overview.md | 1. 개요                                           | 1-24    |
 
-## BASE_TREE                             <span class="c">← 3.1 헤딩 트리 before/after 대비의 입력</span>
-| section_id | file      | heading_path                            | lines   |
-|---|---|---|---|
-| s-4a91     | auth.md   | 인증 &gt; 4. 인증 정책 &gt; 4.2 Retry 정책 | 135-158 |
-| s-2c81     | auth.md   | 인증 &gt; 5. 토큰 정책                     | 168-190 |
-| s-3f11     | auth.md   | 인증 &gt; 3. 개요                          | 40-50   |
-| s-7d40     | legacy.md | 구 인증                                   | 1-142   |
+| section_id | file | heading_path | lines |
+| --- | --- | --- | --- |
+| s-c7bd0ac2 | docs/product-a/architecture.md | 아키텍처 | 1-3 |
+| s-2f5234a0 | docs/product-a/auth.md | 인증 | 1-2 |
+| s-44239ecf | docs/product-a/auth.md | 인증 &gt; 3. 개요 | 3-6 |
+| s-a00b7880 | docs/product-a/auth.md | 인증 &gt; 4. 인증 정책 | 7-8 |
+| s-77ddc392 | docs/product-a/auth.md | 인증 &gt; 4. 인증 정책 &gt; 4.2 Circuit Breaker 정책 | 9-16 |
+| s-0e23dcb2 | docs/product-a/auth.md | 인증 &gt; 5. 토큰 정책 | 17-21 |
+| s-aa2bbed4 | docs/product-a/deployment.md | 배포 | 1-4 |
+| s-397a4002 | docs/product-a/deployment.md | 배포 절차 | 5-9 |
+| s-5ba46411 | docs/product-a/overview.md | 개요 | 1-4 |
 
-## CHANGED
-| unit_id  | section_id | file_id            | old_lines | new_lines | <b>kind</b> |
-|---|---|---|---|---|---|
-| u-7f21bc | s-9f22     | auth-md-a3c19d     | 135-158   | 135-160   | <b>heading_renamed</b> |
-| u-2c81de | s-2c81     | auth-md-a3c19d     | 168-171   | 168-171   | <b>none</b> |
-| u-9a03ff | s-3f11     | auth-md-a3c19d     | 40-50     | 40-52     | <b>none</b> |
-| u-b04c19 | s-b310     | overview-md-b71f04 |           | 1-24      | <b>added</b> |
-| u-7d4088 | s-7d40     | legacy-md-c92e11   | 1-142     |           | <b>removed</b> |
+## BASE_TREE                             <span class="c">← 04 파일 카드 before outline 의 입력 (old_path 쪽)</span>
 
-## MOVED
+| section_id | file | heading_path | lines |
+| --- | --- | --- | --- |
+| s-c7bd0ac2 | docs/product-a/architecture.md | 아키텍처 | 1-4 |
+| s-5d6d3cc7 | docs/product-a/architecture.md | 배포 절차 | 5-9 |
+| s-2f5234a0 | docs/product-a/auth.md | 인증 | 1-2 |
+| s-44239ecf | docs/product-a/auth.md | 인증 &gt; 3. 개요 | 3-7 |
+| s-a00b7880 | docs/product-a/auth.md | 인증 &gt; 4. 인증 정책 | 8-9 |
+| s-0136d81d | docs/product-a/auth.md | 인증 &gt; 4. 인증 정책 &gt; 4.2 Retry 정책 | 10-17 |
+| s-0e23dcb2 | docs/product-a/auth.md | 인증 &gt; 5. 토큰 정책 | 18-22 |
+| s-aa2bbed4 | docs/product-a/deployment.md | 배포 | 1-3 |
+| s-5ac81b56 | docs/product-a/legacy.md | 구 인증 | 1-4 |
+
+## CHANGED                               <span class="c">← 본문이 같은 짝(인증 · 4. 인증 정책)은 유닛이 없다</span>
+
+| unit_id | section_id | file_id | old_lines | new_lines | <b>kind</b> |
+| --- | --- | --- | --- | --- | --- |
+| u-68bcb088 | s-44239ecf | auth-md-a41b9c8e | 3-7 | 3-6 | <b>none</b> |
+| u-227df86d | s-0e23dcb2 | auth-md-a41b9c8e | 18-22 | 17-21 | <b>none</b> |
+| u-22ad8e13 | s-77ddc392 | auth-md-a41b9c8e | 10-17 | 9-16 | <b>heading_renamed</b> |
+| u-279d55d4 | s-5ac81b56 | legacy-md-55e05d43 | 1-4 |  | <b>removed</b> |
+| u-0869a186 | s-5ba46411 | overview-md-78002e25 |  | 1-4 | <b>added</b> |
+
+## MOVED                                 <span class="c">← 유닛을 만들지 않는다</span>
+
 | section | from | to |
-|---|---|---|
-| 배포 절차 | architecture.md | deployment.md |</pre>
+| --- | --- | --- |
+| 배포 절차 | docs/product-a/architecture.md | docs/product-a/deployment.md |</pre>
   </div>
   <dl class="fields">
-    <dt>kind</dt><dd><code>none</code> · <code>heading_renamed</code> · <code>level_changed</code> · <code>reordered</code> · <code>moved</code> · <code>added</code> · <code>removed</code>. <strong>축 B 의 「구조」를 이 컬럼이 확정한다</strong> — 리포트 3.1 구조 변화가 여기서 나온다</dd>
+    <dt>kind</dt><dd><code>added</code> · <code>removed</code> · <code>heading_renamed</code> · <code>level_changed</code> · <code>reordered</code> · <code>none</code> — 행마다 하나, 이 순서로 먼저 성립하는 것. <code>moved</code> 는 kind 값이 아니다 — 이동은 <code>MOVED</code> 표에만 있고 유닛이 없다. <strong>축 B 의 「구조」를 이 컬럼이 확정한다</strong> — 원자 인벤토리의 구조 원자와 04 파일 카드의 구조 노트가 여기서 나온다</dd>
+    <dt>id 쪽</dt><dd>짝지어진 절 · 추가된 절의 <code>section_id</code> 는 head 쪽(TREE), 삭제된 절만 base 쪽(BASE_TREE) id 다. <code>file</code> 은 basename 이 아니라 전체 경로</dd>
     <dt>TREE 범위</dt><dd><strong><code>00-changeset</code> 의 파일만.</strong> 폴더 전체를 담으면 실측처럼 3,893행·600KB 가 되고, 그게 그대로 위성 READ 목록에 들어간다</dd>
     <dt>BASE_TREE</dt><dd>base 리비전의 트리. head 트리와 나란히 놓아야 「어떤 절이 어디서 어디로」를 <strong>도구가</strong> 말할 수 있다 — LLM 이 기억으로 복원하지 않는다</dd>
   </dl>
@@ -693,31 +762,35 @@ units: 5
 
   <h4>절 짝짓기 — heading 개명 처리</h4>
   <div class="codewrap">
-<pre>base:  ### 4.2 Retry 정책            →  s-4a91
-head:  ### 4.2 Circuit Breaker 정책  →  s-9f22      <span class="c">id 가 바뀐다</span>
+<pre>base:  ### 4.2 Retry 정책            →  s-0136d81d
+head:  ### 4.2 Circuit Breaker 정책  →  s-77ddc392      <span class="c">id 가 바뀐다</span>
 
 규칙 없으면
-  s-4a91 이 head 에 없다  →  절 삭제  →  removed = 그 절 리터럴 전부
-  s-9f22 가 base 에 없다  →  절 신규  →  added   = 그 절 리터럴 전부
+  s-0136d81d 가 head 에 없다  →  절 삭제  →  removed = 그 절 리터럴 전부
+  s-77ddc392 가 base 에 없다  →  절 신규  →  added   = 그 절 리터럴 전부
 
 <b>짝짓기 규칙</b>
-1  heading 경로가 같으면                 →  짝. 끝
-2  다르면 라인 범위 겹침으로 후보를 찾는다   base 135-158 ∩ head 135-160
-3  후보 본문의 정규화 유사도가 임계 이상    →  짝 (<b>renamed</b> 로 표시, kind: heading_renamed)
-   임계 미만                            →  삭제 + 신규로 둔다</pre>
+1  heading 경로가 같으면(i 번째 등장끼리)  →  짝. 끝
+2  남은 절은 hunk 대응으로 후보를 찾는다    i 번째 old 범위에 걸린 base 절 ↔ i 번째 new 범위에 걸린 head 절
+                                         hunk 후보가 없는 base 절은 남은 head 절 전부가 후보
+3  후보 본문의 정규화 유사도 ≥ 0.5         →  짝 (kind: <b>heading_renamed</b>), 점수 높은 순 greedy
+   임계 미만                            →  삭제 + 신규로 둔다
+짝의 정규화 본문이 같으면                →  유닛 없음 (위치만 밀린 절)</pre>
   </div>
-  <p class="lede">분류가 완전히 틀리지는 않는다 — <code>removed</code>+<code>added</code> 동시 존재라 <b>의미</b>로 잡힌다. <strong>틀리는 건 리포트다.</strong> 한 건이 「절 삭제 / 절 신규」 두 건으로 쪼개져 3.2 와 3.3 에 흩어진다. 절 제목을 다듬은 MR 이면 노이즈가 배로 뛴다. <code>renamed</code> 로 짝지어지면 3.1 에 <code>§ 4.2 Retry 정책 → Circuit Breaker 정책</code> 한 줄로 나온다.</p>
+  <p class="lede">분류가 완전히 틀리지는 않는다 — 삭제 · 추가 절 둘 다 구조로 잡힌다. <strong>틀리는 건 리포트다.</strong> 한 건이 「절 삭제 / 절 신규」 두 건으로 쪼개져 04 의 삭제 카드와 추가 카드로 흩어진다. 절 제목을 다듬은 MR 이면 노이즈가 배로 뛴다. <code>heading_renamed</code> 로 짝지어지면 04 파일 카드의 구조 노트에 <code>§4.2 Retry 정책 가 §4.2 Circuit Breaker 정책 로 개명되었다</code> 한 줄로 나오고, 값 변화는 한 유닛 안에서 대조된다.</p>
 
   <h4>move 확정</h4>
   <div class="codewrap">
-<pre>before:  architecture.md  ## 배포 절차  (80줄)
-after:   deployment.md    ## 배포 절차  (80줄, 내용 동일)
-git diff: architecture.md -80 / deployment.md +80
+<pre>before:  architecture.md  # 배포 절차  (5줄)
+after:   deployment.md    # 배포 절차  (5줄, 내용 동일)
+git diff: architecture.md -6 / deployment.md +6
 
-norm(text) = 공백·개행 collapse
-삭제 블록 전부 해시 ∩ 추가 블록 전부 해시  →  <b>moved 확정. 연산 「이동」 1건</b></pre>
+norm(text) = 줄마다 공백 collapse + trim, 빈 줄 제거 (markdown 기호는 유지)
+짝 없이 남은 base 절  ×  <b>다른 파일</b>의 짝 없는 head 절
+  heading_path 가 같고(조상 경로 포함)  ∧  sha256(norm(text)) 가 같으면
+                                     →  <b>MOVED 1행. 유닛은 만들지 않는다</b></pre>
   </div>
-  <p class="lede">그대로 올리면 이동 1건이 삭제 1 + 추가 1 로 보인다. 섹션 20개 옮긴 정리 MR 이면 항목 40건. 해시 불일치 = 이동하면서 내용도 고침 = <strong>이동 + 변경 두 축이 같이 선다.</strong> 1차는 완전 일치만 이동으로 본다.</p>
+  <p class="lede">그대로 올리면 이동 1건이 삭제 1 + 추가 1 로 보인다. 섹션 20개 옮긴 정리 MR 이면 항목 40건. <strong>이동은 완전 일치만이다</strong> — 해시가 다르거나 옮긴 곳의 조상 heading 이 달라 <code>heading_path</code> 가 다르면(예: <code>아키텍처 &gt; 배포 절차</code> → <code>배포 &gt; 배포 절차</code>) 이동으로 보지 않고 삭제 1 + 추가 1 유닛으로 남는다. 이동은 매트릭스 원자가 아니고, 개요의 <code>이동 n</code>(<code>moved_sections</code>)과 양쪽 파일 카드의 구조 노트에만 나온다. 같은 파일 안의 순서 이동은 짝지어진 절의 <code>reordered</code>(본문이 같으면 유닛 없이 구조 노트만)다.</p>
 
   <h4>구현 주의 — 결정론은 되지만 조여야 하는 곳</h4>
   <ol class="hl">
@@ -726,99 +799,119 @@ norm(text) = 공백·개행 collapse
     <li><b><code>heading_path</code> 가 같아도 유일하지 않을 수 있다.</b> 반복되는 <code>### 예시</code> 처럼 동일 경로가 한 파일에 여러 번 나온다. <span class="alt">규칙 1 에 등장 순서(ordinal)를 더해 disambiguate</span></li>
     <li><b><code>section_id</code> 를 base 기준·head 기준 중 하나로 고정해야 한다.</b> <code>TREE</code> 와 <code>BASE_TREE</code> 를 나눈 뒤에도 <code>CHANGED</code> 의 <code>section_id</code> 는 한쪽을 canonical 로 잡아야 한다. <span class="alt">renamed 로 짝지어진 절의 canonical id 를 head 쪽으로 고정 — 코드(structure.py)와 같다. 푸시가 이어져도 절이 한 id 를 유지한다</span></li>
     <li><b>「본문 0줄」 은 산출물 얘기다.</b> move 확정은 삭제·추가 블록의 <code>norm(text)</code> 해시를 요구한다. <span class="alt">파서는 읽고 해시만 남긴다. 문자 그대로 받으면 move 판정이 빠진다</span></li>
-    <li><b>markdown 파싱이 이 노드의 실질 작업량이다.</b> <code>---</code> 는 frontmatter 구분자 · setext h2 밑줄 · thematic break 셋 다다. <code>~~~</code> 펜스, 4-space indented block, Docusaurus MDX <code>:::note</code> 도 온다. <span class="alt">틀리면 <b>틀린 트리가 결정론적으로</b> 나온다 — 뒤쪽 LLM 2 개가 잘못된 좌표계 위에서 돈다</span></li>
+    <li><b>markdown 파싱이 이 노드의 실질 작업량이다.</b> <code>---</code> 는 frontmatter 구분자 · setext h2 밑줄 · thematic break 셋 다다. <code>~~~</code> 펜스, 4-space indented block, Docusaurus MDX <code>:::note</code> 도 온다. <span class="alt">틀리면 <b>틀린 트리가 결정론적으로</b> 나온다 — 뒤쪽 LLM 3 개가 잘못된 좌표계 위에서 돈다</span></li>
   </ol>
 
   <hr class="rule">
 
   <h3 id="t06">06-literals.md <span class="req core">설계의 축</span></h3>
   <div class="codewrap">
-    <div class="bar"><span class="f">06-literals.md</span><span class="flow">mrdoc literals → excerpt · analyzer · levelcheck · collect · render</span><span class="kind tool">툴</span></div>
+    <div class="bar"><span class="f">06-literals.md</span><span class="flow">literals 노드 → analyzer · levelcheck · collect · 위성 미션(원자 집계)</span><span class="kind tool">툴</span></div>
 <pre>---
-mr_iid: 482
 units: 5
-totals: {removed: 2, added: 2, changed: 1}
+totals: {removed: 4, added: 2, changed: 3}
+atoms: {textual: 1, prose_added: 0, prose_removed: 0}
 ---
 
-## UNIT u-7f21bc
+## UNIT u-68bcb088                      <span class="c">← § 3. 개요 — 값은 그대로, 문장만 병합</span>
+
 ```yaml
-section_id: s-9f22
-removed: ["Retry Count: 3", "Retry Interval: 2s"]
-added:   ["Failure Threshold: 5", "Open Duration: 30s"]
+section_id: s-44239ecf
+removed: []
+added: []
 changed: []
+textual: [{before: "이 문서는 인증 방식을 설명한다. 인증은 토큰 기반으로 동작한다.", after: "이 문서는 토큰 기반으로 동작하는 인증 방식을 설명한다."}]
+prose_added: []
+prose_removed: []
 ```
 
-## UNIT u-2c81de
+## UNIT u-227df86d                      <span class="c">← § 5. 토큰 정책</span>
+
 ```yaml
-section_id: s-2c81
+section_id: s-0e23dcb2
 removed: []
-added:   []
-changed: [{key: "Access Token 만료", from: "60분", to: "30분"}]
+added: []
+changed: [{key: "Access Token 만료", from: "60분", to: "30분"}, {key: "분", from: 60, to: 30}]
+textual: []                             <span class="c">↑ 키:값 과 숫자+단위가 같은 값을 두 번 잡는다 — 구현 주의 4</span>
+prose_added: []
+prose_removed: []
 ```
 
-## UNIT u-9a03ff
+## UNIT u-22ad8e13                      <span class="c">← § 4.2 — 키가 바뀐 항목은 값만 removed/added 로</span>
+
 ```yaml
-section_id: s-3f11
-removed: []
-added:   []
-changed: []                    <span class="c">← 차집합 전부 공집합. 표현 후보</span>
-<span class="c">… u-b04c19(added) · u-7d4088(removed) 는 added / removed 한쪽만 채워진다 — 예시 생략</span>
-```</pre>
+section_id: s-77ddc392
+removed: [2s, 3]
+added: [30s, 5]
+changed: [{key: s, from: 2, to: 30}]
+textual: []
+prose_added: []
+prose_removed: []
+```
+<span class="c">… u-279d55d4(removed: [120, "120분"]) · u-0869a186(전부 공집합) — 추가·삭제 유닛은 절 전체 차집합이라 textual · prose_* 가 늘 비어 있다</span></pre>
   </div>
   <div class="codewrap">
-    <div class="bar"><span class="f">추출 규칙</span><span class="flow">정규식 6종 + 정규화</span></div>
-<pre>키: 값 패턴      ^\s*[-*]?\s*(?&lt;key&gt;[^:\n]{1,40}):\s*(?&lt;val&gt;.+)$
-숫자+단위        \d+(\.\d+)?\s*(초|분|시간|일|ms|s|m|h|KB|MB|GB|%|회|개)
-<b>버전            \d+\.\d+(\.\d+)?\+?</b>          <span class="c">← 신설. 3.12.4 · 3.8+ 는 단위 접미사가 없다</span>
-불리언           true|false|enabled|disabled|on|off
-backtick 스팬    <b>`[^`\n]{1,60}`</b>              <span class="c">← 줄바꿈을 넘지 않는다</span>
-링크 타깃        \]\(([^)]+)\)
+    <div class="bar"><span class="f">추출 규칙</span><span class="flow">정규식 6종 + 정규화 · literals.py</span></div>
+<pre>종류(kind)  그룹 키                 패턴
+kv          키                      ^\s*[-*]?\s*([A-Za-z0-9_가-힣][A-Za-z0-9_가-힣 .\-/]*):\s+(.+?)\s*$   (키에 :// 면 제외)
+unit        단위 접미사              (\d+(?:\.\d+)?)\s*(초|분|시간|일|ms|s|m|h|KB|MB|GB|<b>TB</b>|%|회|개|<b>건|명|배</b>)(?!\w)
+<b>version     왼쪽에 붙은 토큰|version  \d+\.\d+(?:\.\d+)?\+?</b>     <span class="c">← 3.12.4 · 3.8+ 는 단위 접미사가 없다. 숫자+단위가 잡은 자리는 건너뛴다</span>
+bool        bool                    \b(true|false)\b  (대소문자 무시)
+code        스팬 첫 토큰             <b>`([^`\n]{1,60})`</b>          <span class="c">← 줄바꿈을 넘지 않는다. 펜스 안에서는 안 잡는다</span>
+link        링크 라벨                \[([^\]]+)\]\(([^)\s]+)\)     <span class="c">펜스 안에서는 안 잡는다</span>
 
-<b>펜스 코드 블록은 줄 단위로 따로 추출한다</b> — 블록 전체가 리터럴 하나가 되면 안 된다
+<b>줄 단위로 추출한다.</b> 펜스 구분 줄(```powershell)은 값이 아니라 버리고, 펜스 안 줄은 kv·unit·version·bool 만 본다
+정규화 = 앞뒤 trim + 연속 공백 1개.  <b>markdown 기호는 제거하지 않는다</b> — 원문 그대로여야 인용이 성립한다
+(kind, key, value) 정확히 같은 것은 한 번만. <b>문서 순서 유지</b> — 짝짓기가 순서로 짝을 맞춘다
 
-정규화 = 앞뒤 trim + 연속 공백 1개
-<b>markdown 기호는 제거하지 않는다</b> — 원문 그대로여야 발췌·설명의 인용이 성립한다
-
-removed = base − head       없어진 값
-added   = head − base       생긴 값
-changed = 같은 키, 다른 값   바뀐 값 (removed/added 에서 제외)</pre>
+<b>짝짓기 단위</b>      (kind, key) 그룹. 공통 값 제외 → 남은 base 값과 head 값을 문서 순서로 짝지어 changed{key, from, to}
+                  짝 없이 남은 base 값 → removed,  head 값 → added   (removed/added 에는 <b>값만</b> 들어간다)
+<b>추가 · 삭제 유닛</b>  절 전체 차집합 한 번 — 한쪽이 비어 있으므로 값이 전부 added 또는 removed
+<b>변경 유닛</b>        heading 줄 · 빈 줄을 뺀 본문 줄로 difflib 줄 diff
+  replace 구간     구간 안에서 그룹별로 짝지어 changed. 리터럴 집합이 같은 채 문장만 바뀐 쌍 → <b>textual</b>{before, after}
+  insert 구간      값 → added 후보.  리터럴 없는 줄 묶음 → <b>prose_added</b>
+  delete 구간      값 → removed 후보. 리터럴 없는 줄 묶음 → <b>prose_removed</b>
+  구간을 넘어 남은 값은 그룹별로 문서 순서로 한 번 더 짝짓고, 끝내 남으면 removed / added</pre>
   </div>
   <div class="tw">
   <table>
     <thead><tr><th>소비자</th><th>쓰는 것</th></tr></thead>
     <tbody>
-      <tr><td><strong>리포트 본문</strong></td><td>3.4 의 값 변경 표기를 <strong>툴이 채운다.</strong> LLM 이 요약하며 흘리는 걸 막는다</td></tr>
-      <tr><td><code>levelcheck</code></td><td>성질 판정의 <strong>반증</strong> 근거 — 차집합이 비어 있지 않으면 표현이 성립하지 않는다</td></tr>
-      <tr><td><code>excerpt</code> · <code>doc-analyzer</code></td><td>설명이 인용할 값(<code>key</code> · <code>from</code> · <code>to</code>). 설명은 이 값을 풀어 쓴다</td></tr>
+      <tr><td><strong>리포트 본문</strong></td><td>04 변경 카드의 <b>Detected values</b>(값 변경 · 표현 재작성 · 삭제/추가된 값 · 문장)를 <strong>툴이 채운다.</strong> LLM 이 요약하며 흘리는 걸 막는다</td></tr>
+      <tr><td><strong>원자 인벤토리</strong> (<code>inventory.py</code>)</td><td>매트릭스 · <code>classes</code> · <code>ops</code> · <code>value_changes</code> 를 <b>유닛이 아니라 원자</b>로 센다 — 변경 유닛의 <code>changed</code> 1개 = 의미·변경, <code>removed</code>/<code>added</code> 값 1개 = 의미·삭제/추가, <code>textual</code> 1쌍 = 표현·변경, <code>prose_*</code> 1묶음 = 의미·추가/삭제. 추가·삭제 유닛의 값은 정보용이라 세지 않는다</td></tr>
+      <tr><td><code>levelcheck</code></td><td>성질 판정의 <strong>반증</strong> 근거 — 차집합이 비어 있지 않으면 표현이 성립하지 않는다. <code>textual</code> 만 있으면 표현을 도구가 확정한다</td></tr>
+      <tr><td><code>doc-analyzer</code> · verifier/themes 미션</td><td>설명이 인용할 값(<code>key</code> · <code>from</code> · <code>to</code>). verifier 에게는 원자 집계표로, themes 에게는 <code>값: 키 이전 → 이후</code> 줄로 간다</td></tr>
     </tbody>
   </table>
   </div>
-  <div class="note"><b><code>changed</code> 를 따로 뽑는 이유.</b> <code>Access Token 만료 60분 → 30분</code> 을 <code>removed</code>+<code>added</code> 로 표현하면 리포트가 「없어진 값 / 생긴 값」으로 <b>나뉘어 보인다.</b> 같은 키의 값 변경은 하나의 사실이므로 묶어야 사람이 읽을 수 있고, 3.4 의 before/after 병기도 이 형태에서 나온다.</div>
+  <div class="note"><b><code>changed</code> 를 따로 뽑는 이유.</b> <code>Access Token 만료 60분 → 30분</code> 을 <code>removed</code>+<code>added</code> 로 표현하면 리포트가 「없어진 값 / 생긴 값」으로 <b>나뉘어 보인다.</b> 같은 키의 값 변경은 하나의 사실이므로 묶어야 사람이 읽을 수 있고, 04 카드의 <code>키 이전 → 이후</code> 줄도 이 형태에서 나온다.</div>
   <h4>구현 주의 — 실측에서 무너진 지점</h4>
   <ol class="hl">
     <li><b>backtick 스팬이 줄바꿈을 넘었다.</b> <code>[^`]+</code> 가 인라인 코드 사이의 본문 두 줄과 펜스 블록 전체를 리터럴 하나로 잡았다. <span class="alt"><code>[^`\n]{1,60}</code> 으로 줄 안에 가둔다</span></li>
     <li><b>펜스 코드 블록이 통째로 값 하나가 됐다.</b> <code>key: powershell</code> 에 블록 전문이 들어갔다. <span class="alt">펜스는 줄 단위로 따로 추출한다</span></li>
     <li><b>버전 문자열이 아무 추출기에도 안 걸렸다.</b> <code>3.12.4</code> · <code>3.8+</code> 는 단위 접미사가 없어 숫자+단위 규칙 밖이다. <span class="alt">버전 추출기 신설. 문서에서 가장 흔한 값 형태다</span></li>
+    <li><b>[미해결] 한 값이 두 추출기에 걸린다.</b> <code>Access Token 만료: 60분</code> 은 kv(<code>Access Token 만료</code> 60분)와 unit(<code>분</code> 60) 둘 다가 되어 한 번의 수정이 값 원자 2개로 센다 — 매트릭스 · <code>(값 n)</code> 이 부풀고 verifier 카운트 대조도 부푼 숫자를 받는다. 지금 겹침 제거는 버전 ↔ 숫자+단위 사이뿐이다. kv 정규식이 「라벨: 문장」 bullet 도 잡아 순수 문장 수정이 의미(값)로 가는 문제도 같이 남아 있다. <span class="alt">보류 — 고치면 모든 리포트의 카운트가 바뀌어 리포트 간 비교가 끊기므로 시점을 따로 정한다</span></li>
   </ol>
 
   <hr class="rule">
 
   <h3 id="t07">07-excerpts.md <span class="req core">신설</span></h3>
   <div class="codewrap">
-    <div class="bar"><span class="f">07-excerpts.md</span><span class="flow">mrdoc excerpt → analyzer · collect · render</span><span class="kind tool">툴</span></div>
+    <div class="bar"><span class="f">07-excerpts.md</span><span class="flow">excerpt 노드 → analyzer · verifier · collect · render</span><span class="kind tool">툴</span></div>
 <pre>---
 mr_iid: 482
 units: 5
 files: 3
 ---
 
-## EXCERPT u-2c81de
+## EXCERPT u-227df86d
+
 ```yaml
 kind: changed
-file: auth-md-a3c19d
+file: auth-md-a41b9c8e
 section: "auth.md § 5. 토큰 정책"
-base_lines: 168-171
-head_lines: 168-171
+base_lines: 20-22
+head_lines: 19-21
 context: 1
 ```
 ```before
@@ -832,87 +925,120 @@ Access Token 만료: 30분
 Refresh Token 만료: 14일
 ```
 
-## EXCERPT u-b04c19
+## EXCERPT u-22ad8e13                  <span class="c">← 한 절 안의 헌크 2개 = 발췌 1개, 구간은 … 줄로 잇는다</span>
+
+```yaml
+kind: changed
+file: auth-md-a41b9c8e
+section: "auth.md § 4.2 Circuit Breaker 정책"
+base_lines: "10-11,14-17"
+head_lines: "9-10,13-16"
+context: 1
+```
+```before
+### 4.2 Retry 정책
+
+…
+
+- Retry Count: 3
+- Retry Interval: 2s
+
+```
+```after
+### 4.2 Circuit Breaker 정책
+
+…
+
+- Failure Threshold: 5
+- Open Duration: 30s
+
+```
+
+## EXCERPT u-0869a186
+
 ```yaml
 kind: added
-file: overview-md-b71f04
-section: "overview.md § 1. 개요"
+file: overview-md-78002e25
+section: "overview.md § 개요"
 base_lines: null
-head_lines: 1-24
+head_lines: 1-4
 context: 0
 ```
 ```after
 # 개요
+
 이 문서는 인증 구조와 토큰 정책을 정의한다.
-…                                       <span class="c">절 전문</span>
+세부 규칙은 auth.md 를 따른다.
 ```
 <span class="c">added 는 after 만 · removed 는 before 만 든다</span></pre>
   </div>
   <dl class="fields">
-    <dt>발췌 범위</dt><dd><strong>변경 유닛</strong> = 헌크 ∩ 절 라인 + 앞뒤 <code>context: 1</code> 줄. <strong>추가 · 삭제 유닛</strong> = 절 전문</dd>
-    <dt>왜 노드로 뺐나</dt><dd>리포트 3.2~3.4 의 <strong>원문</strong>과 <code>doc-analyzer</code> 의 READ 대상이 같은 곳에서 나와야 둘이 갈라지지 않는다. LLM 이 원문을 옮겨 적는 경로를 없앤다 — 실측에서 before/after 를 LLM 이 쓰다가 해석이 섞였다</dd>
-    <dt>본문을 담는 유일한 산출물</dt><dd>다른 산출물은 좌표 · 값 · 카운트만 든다. 발췌는 <strong>변경 유닛만큼만</strong>이라 파일 통독과 크기가 다르다</dd>
-    <dt>소비자</dt><dd><code>doc-analyzer</code>(설명의 근거) · <code>collect</code>(<code>excerpt_ref</code>) · <code>render</code>(3.2~3.4 원문 병기)</dd>
+    <dt>발췌 범위</dt><dd><strong>변경 유닛</strong> = (헌크 ∩ 절 라인) + 앞뒤 <code>context: 1</code> 줄, 절 밖으로 넘치지 않게 자른다. 한 절 안의 여러 헌크는 발췌 하나로 두고 구간 사이에 <code>…</code> 줄. 자른 자리가 펜스 코드 블록 안이면 블록 전체로 늘린다 — 반쪽 펜스는 원문이 아니라 깨진 markdown 이다. <strong>추가 · 삭제 유닛</strong> = 절 전문</dd>
+    <dt>왜 노드로 뺐나</dt><dd>리포트 04 변경 카드의 <strong>원문</strong>(BEFORE/AFTER)과 <code>doc-analyzer</code> 의 READ 대상이 같은 곳에서 나와야 둘이 갈라지지 않는다. LLM 이 원문을 옮겨 적는 경로를 없앤다 — 실측에서 before/after 를 LLM 이 쓰다가 해석이 섞였다</dd>
+    <dt>본문을 담는 유일한 산출물</dt><dd>다른 산출물은 좌표 · 값 · 카운트만 든다(06 의 <code>textual</code> · <code>prose_*</code> 는 바뀐 문장만). 발췌는 <strong>변경 유닛만큼만</strong>이라 파일 통독과 크기가 다르다</dd>
+    <dt>소비자</dt><dd><code>doc-analyzer</code>(설명의 근거) · <code>doc-verifier</code>(대조 원문) · <code>collect</code>(<code>section</code> 라벨 · <code>excerpt_ref</code>) · <code>render</code>(04 카드 BEFORE/AFTER)</dd>
   </dl>
 
   <hr class="rule">
 
   <h3 id="t20">20-analysis/&lt;file_id&gt;.md <span class="req core">주역</span></h3>
   <div class="codewrap">
-    <div class="bar"><span class="f">20-analysis/auth-md-a3c19d.md</span><span class="flow">doc-analyzer → levelcheck · verifier · collect</span><span class="kind llm">LLM</span></div>
+    <div class="bar"><span class="f">20-analysis/auth-md-a41b9c8e.md</span><span class="flow">doc-analyzer → levelcheck · verifier · collect · dispatch · themes 미션</span><span class="kind llm">LLM</span></div>
 <pre>---
-file_id: auth-md-a3c19d
+file_id: auth-md-a41b9c8e
 path: docs/product-a/auth.md
 units: 3
 classes: {의미: 2, 표현: 1, 후보판정: 1}
 STATUS: OK
 UNCOVERED: none
 UNCERTAIN: none
-CONFIDENCE: high — base/head 양쪽 원문 직접 대조
+CONFIDENCE: "high — base/head 양쪽 원문 직접 대조"
 ---
 
-## UNIT u-7f21bc
-```yaml
-section_id: s-9f22
-class: null                <span class="c"># 의미(값)·구조는 도구 확정. LLM 이 건드리지 않는다</span>
-```
-**설명** 재시도 횟수와 간격 두 항목이 삭제되고 실패 임계값과 개방 시간 두 항목이
-추가되었다(Retry Count 3 · Retry Interval 2s → Failure Threshold 5 · Open Duration
-30s). 절 제목도 「4.2 Retry 정책」에서 「4.2 Circuit Breaker 정책」으로 바뀌었다.
+## UNIT u-68bcb088
 
-## UNIT u-2c81de
 ```yaml
-section_id: s-2c81
+section_id: s-44239ecf
+<b>class: "표현"</b>              <span class="c"># 표현 후보 — LLM 에 남은 유일한 분류 판단</span>
+topic_hint: overview-wording   <span class="c"># 선택. themes 위성에게 주는 후보</span>
+```
+**설명** 문장 두 개가 하나로 병합되었다. 명제와 값은 그대로다.
+
+## UNIT u-227df86d
+
+```yaml
+section_id: s-0e23dcb2
+class: null                    <span class="c"># 의미(값)·구조는 도구 확정. LLM 이 건드리지 않는다</span>
+topic_hint: auth-policy-values
+```
+**설명** Access Token 만료 60분 → 30분. Refresh Token 만료 14일은 그대로다.
+                               <span class="c">← fix 라운드 1 에서 다시 쓴 문장 (40-verifier 참조)</span>
+
+## UNIT u-22ad8e13
+
+```yaml
+section_id: s-77ddc392
 class: null
+topic_hint: auth-policy-values
 ```
-**설명** Access Token 만료 값이 60분에서 30분으로 바뀌었다. 같은 절의 Refresh
-Token 만료 14일은 그대로다.
-
-## UNIT u-9a03ff
-```yaml
-section_id: s-3f11
-<b>class: 표현</b>                <span class="c"># 표현 후보 — LLM 에 남은 유일한 분류 판단</span>
-```
-**설명** 문장 두 개가 하나로 병합되었다. 명제와 값에 변화 없음.
+**설명** 절 제목이 4.2 Retry 정책에서 4.2 Circuit Breaker 정책으로 바뀌었다. Retry Count 3 ·
+Retry Interval 2s 두 항목이 삭제되고 Failure Threshold 5 · Open Duration 30s 두 항목이 추가되었다.
 
 ## FILE_SUMMARY
-```yaml
-refs: [u-7f21bc, u-2c81de, u-9a03ff]
-```
-절 제목 1곳이 바뀌었다(4.2 Retry 정책 → Circuit Breaker 정책). 값이 바뀐 절은
-2곳으로, 4.2 는 재시도 항목 2개가 차단 항목 2개로 교체되었고 5절은 Access Token
-만료가 60분에서 30분이 되었다. 그 외 표현 수정 1곳.
 
-## RECEIPT
+```yaml
+refs: [u-68bcb088, u-227df86d, u-22ad8e13]
 ```
-&lt;리턴 블록 그대로 복사&gt;
-```</pre>
+절 제목 1곳이 바뀌었다(4.2 Retry 정책 → 4.2 Circuit Breaker 정책). 값은 4.2 에서 2개 삭제 ·
+2개 추가, 5절에서 1개 변경. 그 외 표현 수정 1곳.</pre>
   </div>
   <dl class="fields">
     <dt>설명</dt><dd>유닛마다 <strong>한 필드, 2~4문장.</strong> 무엇이 · 어떻게까지만. <code>06-literals</code> 의 값(<code>key</code>·<code>from</code>·<code>to</code>)을 인용해 <strong>사실을 직접 서술한다</strong> — 원문·값은 도구가 병기하고 설명은 그것을 풀어 쓴다</dd>
     <dt>class</dt><dd><strong>표현 후보에만 쓴다</strong> — 차집합이 공집합이고 본문만 다른 유닛. 의미(값)·구조는 도구 확정값이라 <code>null</code> 로 두고 바꾸지 않는다</dd>
     <dt>ADDED / REMOVED 유닛</dt><dd>설명만 쓴다. 원문은 <code>07-excerpts</code> 가 든다 — 옮겨 적지 않는다</dd>
-    <dt>FILE_SUMMARY</dt><dd>파일마다 1개. 항목 수 · 위치 · 성질을 <strong>세어서</strong> 쓴다 — "요구사항이 갱신되었다" 로 뭉뚱그리지 않는다. <code>refs</code> 는 실재하는 <code>u-</code> 만</dd>
+    <dt>topic_hint</dt><dd>선택. kebab-case 주제 후보 — 판정이 아니다. themes 미션의 유닛 목록에 <code>hint:</code> 로 붙고, 묶을지는 doc-themes 가 정한다. 비어 있으면 렌더러가 <code>null</code> 로 쓴다</dd>
+    <dt>FILE_SUMMARY</dt><dd>파일마다 1개 — <strong>유닛이 없는 파일도</strong>(예: 절이 이동만 한 <code>architecture.md</code> 는 <code>refs: []</code> + 요약 한 줄). 항목 수 · 위치 · 성질을 <strong>세어서</strong> 쓴다 — "요구사항이 갱신되었다" 로 뭉뚱그리지 않는다. <code>refs</code> 는 실재하는 <code>u-</code> 만 — 하나라도 모르는 id 면 요약째 드롭되고 fix 대상이 된다. 카운트 서술은 verifier 가 원자 집계와 대조한다</dd>
+    <dt>프론트매터 classes</dt><dd><code>의미</code> = 유닛 수 − 표현 주장 수(주장 없는 유닛 포함), <code>후보판정</code> = class 를 쓴 유닛 수. 렌더러가 블록에서 세며 어디서도 집계 입력으로 쓰지 않는다</dd>
     <dt>없는 필드</dt><dd>심각도 · 권고 · 머지 의견이 <strong>스키마에 없다.</strong> 왜(동기) · 그래서(영향) · 평가 어휘도 쓰지 않는다 — <code>levelcheck</code> 어휘 게이트가 잡는다</dd>
   </dl>
 
@@ -920,40 +1046,69 @@ refs: [u-7f21bc, u-2c81de, u-9a03ff]
 
   <h3 id="t30">30-levelcheck.md</h3>
   <div class="codewrap">
-    <div class="bar"><span class="f">30-levelcheck.md</span><span class="flow">mrdoc levelcheck → collect · render</span><span class="kind tool">툴</span></div>
+    <div class="bar"><span class="f">30-levelcheck.md</span><span class="flow">levelcheck 노드 → collect · dispatch</span><span class="kind tool">툴</span></div>
 <pre>---
 mr_iid: 482
-classes: {의미: 2, 표현: 1}
+classes: {구조: 3, 의미: 3, 표현: 1, 미분류: 1}   <span class="c"># 유닛 태그 수 — 매트릭스(원자 수)와 다르다</span>
 promoted: 0
 vocab_violations: 0
 ---
 
-## UNIT u-7f21bc
+## UNIT u-68bcb088
+
 ```yaml
-claimed: 의미
-verified: 의미
-basis: "removed 2 + added 2 동시 존재. 값 차집합이 비어 있지 않다"
+claimed: "표현"
+verified: "표현"
+basis: "재작성 1건 — 표현 성립(도구 확정)"
+classes: ["표현"]
 ```
 
-## UNIT u-9a03ff
+## UNIT u-22ad8e13
+
 ```yaml
-claimed: 표현
-verified: 표현
-basis: "차집합 3종 전부 공집합"
+claimed: null
+verified: "의미(값)"
+basis: "changed 1 · removed 2 · added 2 존재 — 의미(값) 성립"
+classes: ["구조", "의미"]                     <span class="c"># heading_renamed → 구조 태그가 붙는다</span>
 ```
+
+## UNIT u-0869a186
+
+```yaml
+claimed: null
+verified: "미분류"
+basis: "차집합 공집합 · 분류 주장 없음 — 미분류"
+classes: ["구조", "미분류"]
+```
+<span class="c">… u-227df86d(의미(값)) · u-279d55d4 생략</span>
 
 <span class="c">승격이 발생하면</span>
 ```yaml
-claimed: 표현
-<b>verified: 의미
-promoted: true</b>
-basis: "changed 1건 존재 (Access Token 만료 60분→30분). 표현 불성립"
+claimed: "표현"
+<b>verified: "의미(값)"</b>
+basis: "changed 1 · removed 0 · added 0 존재 — 표현 불성립, 의미(값)로 승격"
+classes: ["의미"]
+<b>promoted: true</b>
 ```
 
-<span class="c">어휘 게이트에 걸리면</span>
+<span class="c">의미 주장에 리터럴 근거가 없으면</span>
 ```yaml
-unit: u-2c81de
+claimed: "의미"
+verified: "의미(맥락)"
+basis: "차집합 3종 전부 공집합 — 리터럴 근거 없음"
+classes: ["의미"]
+<b>warning: "의미(맥락) 주장에 리터럴 근거 없음 — verifier 감사 대상"</b>
+```
+
+<span class="c">어휘 게이트에 걸리면 — 그 UNIT 블록 안에, FILE_SUMMARY 는 따로</span>
+```yaml
+…
 <b>vocab_violation: ["상향", "개선"]</b>
+```
+## FILE_SUMMARY auth-md-a41b9c8e
+
+```yaml
+vocab_violation: ["영향"]
 ```</pre>
   </div>
   <div class="codewrap">
@@ -962,21 +1117,30 @@ unit: u-2c81de
 의미(값)   <span class="c">(L2)</span>   명제는 같고 값 · 수치 · 조건이 달라졌다
 표현       <span class="c">(L3)</span>   명제 · 값 동일. 동의어 · 어순 · 오탈자 · 서식 · 문장 분할/병합
 
-차집합 3종 전부 공집합                 →  표현 성립
-changed 있음 또는 removed/added 있음    →  표현 불성립. <b>의미(값)로 강제 승격</b>
-의미(맥락)인데 차집합 전부 공집합        →  근거 없음. <b>경고만</b> (순수 서술문일 수 있다)
+미분류     <span class="c">(L0)</span>   차집합 공집합 · 재작성 없음 · 주장 없음 — 아무도 정하지 않았다
 
-<b>강등은 없다</b>  의미를 표현으로 내리는 경로가 아예 없다</pre>
+changed 있음 또는 removed/added 있음      →  <b>의미(값)</b>. 표현 주장이었으면 강제 승격(promoted: true)
+차집합 공집합 · textual(재작성 구간) 있음  →  <b>표현</b> — 도구 확정, 주장이 필요 없다
+차집합 공집합 · 표현 주장                  →  표현 성립
+차집합 공집합 · 의미 주장                  →  의미(맥락) 유지 + <b>warning</b> (순수 서술문일 수 있다)
+차집합 공집합 · 주장 없음                  →  <b>미분류</b> — 기본값으로 의미(값)를 찍지 않는다
+05 kind 가 added · removed · heading_renamed · level_changed · reordered  →  classes 에 <b>구조</b> 태그
+의미(값) + textual 동시                   →  classes 에 <b>표현</b> 태그도
+
+<b>강등은 없다</b>  의미를 표현으로 내리는 경로가 아예 없다
+verified 의 축(의미 · 표현 · 미분류)이 변경 유닛의 <code>class</code> 가 된다. 추가 · 삭제 유닛은 collect 가 kind 로 <b>구조</b>를 쓴다</pre>
   </div>
   <h4>어휘 게이트 — 설명에서 「왜 · 그래서 · 평가」를 걷어낸다</h4>
   <div class="codewrap">
 <pre>허용    무엇이 / 어떻게      3.8+ → 3.10+ · 조건절 추가 · 3단계 삭제 · 절 이동
-금지 1  왜                  동기 · 배경 추론
-금지 2  그래서               영향 · 의미 · 대상 사용자
-금지 3  평가                 좋다 · 나쁘다 · 적절 · 위험 · 개선 · 정렬 · 상향 · 하향
+금지 1  왜                  동기 · 배경 추론          probe: 왜 · 때문 · 동기 · 배경
+금지 2  그래서               영향 · 의미 · 대상 사용자   probe: 영향 · 의미하   <span class="c">(의미 가 아니라 의미하 — 라벨 의미(값)는 걸리지 않게)</span>
+금지 3  평가                 좋다 · 나쁘다 · 적절 · 부적절 · 위험 · 개선 · 정렬 · 상향 · 하향
 
-금지 어휘 목록은 <b>doc-analyzer 프롬프트와 같은 파일을 공유한다</b> — 두 곳에 적으면 갈라진다
-위반한 설명  →  vocab_violation: [어휘]  →  그 유닛만 재호출 1회 대상</pre>
+대조는 부분 문자열, 긴 어휘 우선(부적절 안의 적절은 따로 세지 않는다)
+금지 어휘 목록은 <b>vocab.py 한 곳</b>이다 — doc-analyzer · doc-themes 프롬프트가 그대로 싣고 levelcheck 가 같은 상수로 잡는다
+위반한 설명        →  UNIT 블록 vocab_violation  →  <b>fix 라운드 대상</b>(최대 2회)
+위반한 FILE_SUMMARY →  FILE_SUMMARY &lt;file_id&gt; 블록 · frontmatter 에 세지만 fix 대상에는 들지 않는다</pre>
   </div>
   <div class="note"><b>강등이 없는 이유.</b> 의미(값)를 표현으로 잘못 내리면 값 변경이 조용히 사라진다 — 게이트에서 가장 위험한 오류라 LLM 단독 판정을 안 준다. 반대로 의미(맥락)에 리터럴 근거가 없으면 <b>유지하고</b> 경고만 남긴다 — 순수 서술문 절의 명제 변화는 리터럴로 표현되지 않는다. <code>doc-verifier</code> 가 그 경우를 감사한다. <b>어휘 게이트가 여기 있는 이유</b>는 값싼 쪽이 먼저이기 때문이다 — 문자열 대조로 끝나는 검사에 LLM 을 붙이지 않는다.</div>
 
@@ -984,197 +1148,346 @@ changed 있음 또는 removed/added 있음    →  표현 불성립. <b>의미(�
 
   <h3 id="t40">40-verifier.md</h3>
   <div class="codewrap">
-    <div class="bar"><span class="f">40-verifier.md</span><span class="flow">doc-verifier → collect · dispatch</span><span class="kind llm">LLM</span></div>
+    <div class="bar"><span class="f">40-verifier.r1.md</span><span class="flow">round 1 — fix 라운드 1 이 열리며 40-verifier.md 에서 옮겨진 파일</span><span class="kind llm">LLM</span></div>
 <pre>---
 mr_iid: 482
 round: 1
-checked: 3                       <span class="c"># 원문을 실제로 읽고 대조한 unit 수</span>
-fidelity: {ok: 2, invented: 1, omitted: 0}
-class_opinion: {agree: 3, dispute: 0}
+checked: 5                       <span class="c"># 위성의 자기보고. collect 는 읽지 않는다</span>
+fidelity: {ok: 4, invented: 1, omitted: 0}
+class_opinion: {agree: 5, dispute: 0}
+counts: {checked: 0, mismatch: 0}   <span class="c"># COUNTS 블록 수 · mismatch 행 수 — 렌더러가 블록에서 센다</span>
 required_fixes: 1
 uncovered: none
 uncertain: none
-confidence: high — 3개 절의 base/head 원문을 직접 읽음
+confidence: "high — 5개 절의 base/head 원문을 직접 읽음"
 ---
 
-## UNIT u-7f21bc
+## UNIT u-68bcb088
+
 ```yaml
 fidelity: ok
-class_stated: 의미
+class_stated: "표현"
 class_opinion: agree
 ```
 
-## UNIT u-2c81de
+## UNIT u-227df86d
+
 ```yaml
 <b>fidelity: invented</b>
-class_stated: 의미
+class_stated: null
 class_opinion: agree
 ```
-**why** 설명이 "만료 시간이 짧아졌다" 로 쓰였는데 원문에서 바뀐 값은 Access Token
-하나뿐이고 Refresh Token 14일은 그대로다. 설명이 원문에 없는 범위를 만들었다
+**why** 설명이 '만료 시간 전체가 짧아졌다'고 썼는데 바뀐 값은 Access Token 하나이고 Refresh Token 14일은 그대로다.
+
+<span class="c">… u-22ad8e13 · u-279d55d4 · u-0869a186 fidelity: ok</span>
 
 ## FIX r-01
+
 ```yaml
-target: u-2c81de
-field: 설명
+target: u-227df86d
+field: "설명"
 reason: fidelity_invented
 ```
 
-## RECEIPT
-&lt;리턴 블록 복사&gt;                 <span class="c">← 529 유실 시 mrdoc status --receipt 로 회수</span></pre>
+<span class="c">카운트 모순이 있었다면 — FIX 대상은 file_id, COUNTS 는 FIX 뒤에 온다</span>
+## FIX r-02
+
+```yaml
+target: auth-md-a41b9c8e
+field: FILE_SUMMARY
+reason: counts_mismatch
+```
+
+## COUNTS auth-md-a41b9c8e
+
+```yaml
+mismatch: [{target: auth-md-a41b9c8e, stated: "삭제 0", inventory: "삭제 2"}]
+why: "&lt;어느 문장이 어느 숫자와 모순인지 한 줄&gt;"
+```</pre>
+  </div>
+  <p class="lede">fix 라운드 1 이 이 파일을 <code>40-verifier.r1.md</code> 로 옮기고 지운 뒤 analyzer 가 <code>u-227df86d</code> 의 설명만 다시 썼고, 재실행된 verifier 가 <code>round: 2</code> 로 새 <code>40-verifier.md</code>(전부 <code>ok</code>, FIX 0)를 썼다. verifier 가 아무것도 못 쓰면 오케스트레이터가 같은 모양에 <code>status: "FAILED — satellite wrote nothing"</code> 한 줄을 더한 스텁을 쓴다 — 실제 감사 파일에는 <code>status</code> 가 없다.</p>
+  <div class="codewrap">
+    <div class="bar"><span class="f">verifier 미션 프롬프트 — 감사 대상 · 원자 집계 (발췌, round 2)</span><span class="flow">_audit_checklist · _counts_table</span></div>
+<pre>[round] 2
+[감사 대상] 아래 5개 unit_id 마다 UNIT 블록 하나를 쓴다 — 목록에 없는 id 는 쓰지 않고, 목록의 id 는 한 글자도
+바꾸지 않는다. fidelity 는 ok · invented · omitted 셋 중 하나만 쓴다 — 다른 값은 감사하지 않은 것으로 센다:
+- u-68bcb088 · docs/product-a/auth.md § 3. 개요
+- u-227df86d · docs/product-a/auth.md § 5. 토큰 정책
+- u-22ad8e13 · docs/product-a/auth.md § 4.2 Circuit Breaker 정책
+- u-279d55d4 · docs/product-a/legacy.md § 구 인증
+- u-0869a186 · docs/product-a/overview.md § 개요
+
+[카운트 대조] FILE_SUMMARY 마다 아래 원자 집계와 대조한다. …
+- auth-md-a41b9c8e (docs/product-a/auth.md): 구조(변경 1) · 의미(추가 2 · 삭제 2 · 변경 3) · 표현(변경 1)
+- overview-md-78002e25 (docs/product-a/overview.md): 구조(추가 1)
+- legacy-md-55e05d43 (docs/product-a/legacy.md): 구조(삭제 1)
+- architecture-md-b44d798a (docs/product-a/architecture.md): 원자 없음
+- deployment-md-c0999b28 (docs/product-a/deployment.md): 원자 없음</pre>
   </div>
   <dl class="fields">
-    <dt>보는 것</dt><dd><strong>설명의 충실도 하나뿐이다.</strong> 문서 내용의 옳고 그름도, 머지 여부도 보지 않는다 — <b>판정 자체가 없다</b></dd>
-    <dt>fidelity</dt><dd><code>ok</code> · <code>invented</code>(원문에 없는 내용) · <code>omitted</code>(변경 누락). 두 실패가 다른 실패다 — 발명은 없는 사실이 리포트에 나가고, 누락은 변경이 조용히 사라진다</dd>
-    <dt>class_opinion</dt><dd>표현 후보 분류에 대한 의견. <code>dispute</code> 여도 <strong>분류는 바뀌지 않는다</strong> — 강등 금지 그대로. 의견은 <code>50-collect</code> 의 <code>verify.outstanding</code> 으로 간다</dd>
-    <dt>보지 않는 것</dt><dd><strong>어휘 위반.</strong> <code>levelcheck</code> 어휘 게이트(툴)가 먼저 잡는다 — 값싼 게이트 먼저, 통과한 것만 질을 본다</dd>
-    <dt>round</dt><dd>REVISE 분기가 재실행하면 <code>2</code>. 파일은 <strong>덮어쓴다</strong> — 이전 라운드는 append-only <code>ledger.md</code> 에 남으므로 두 소스가 유지된다</dd>
-    <dt>checked</dt><dd><code>reviewer.md</code> 그대로 — <em>"what you actually read, not what you were pointed at."</em> 지목받은 수가 아니라 <strong>읽은 수</strong>다. 못 읽은 건 판정하지 않고 <code>uncovered</code></dd>
-    <dt>required_fixes</dt><dd>리턴에는 <strong>개수만</strong> 싣는다. <code>FIX</code> 블록 상세는 <code>dispatch</code> 가 이 파일에서 직접 읽어 재호출 스펙을 만든다</dd>
+    <dt>보는 것</dt><dd><strong>설명의 충실도</strong>, 그리고 <code>FILE_SUMMARY</code> 카운트 서술과 원자 집계의 존재 모순. 문서 내용의 옳고 그름도, 머지 여부도 보지 않는다 — <b>판정 자체가 없다</b></dd>
+    <dt>fidelity</dt><dd><code>ok</code> · <code>invented</code>(원문에 없는 내용) · <code>omitted</code>(변경 누락). 두 실패가 다른 실패다 — 발명은 없는 사실이 리포트에 나가고, 누락은 변경이 조용히 사라진다. 이 셋 외의 값(<code>OK</code> · <code>pass</code> · 빈 값)은 판정으로 치지 않아 그 유닛은 <code>미검증</code> 이 된다</dd>
+    <dt>class_opinion</dt><dd>표현 후보 분류에 대한 의견. <code>dispute</code> 여도 <strong>분류는 바뀌지 않는다</strong> — 강등 금지 그대로. 의견은 <strong>어디에도 집계되지 않는다</strong> — <code>verify.outstanding</code> 은 FIX 대상 ∪ <code>invented</code>/<code>omitted</code> 유닛 수다</dd>
+    <dt>COUNTS</dt><dd>파일마다, 모순이 있을 때만. <code>mismatch</code> 는 <code>{target, stated, inventory}</code> 한 줄 flow. 행 수의 합이 <code>verify.counts_mismatch</code> → 리포트 「집계 불일치」. 짝이 되는 <code>FIX</code> 는 <code>field: FILE_SUMMARY</code> · 대상 file_id — fix 라운드가 그 파일의 요약 문단만 원자 집계표를 붙여 다시 쓰게 한다</dd>
+    <dt>보지 않는 것</dt><dd><strong>어휘 위반.</strong> <code>levelcheck</code> 어휘 게이트(툴)가 먼저 잡는다 — 값싼 게이트 먼저, 통과한 것만 질을 본다. 그래서 verifier 스펙의 READ 에는 30-levelcheck 가 없다</dd>
+    <dt>round</dt><dd>fix 라운드가 열릴 때마다 live 파일은 <code>40-verifier.rN.md</code>(N = 라운드 번호)로 <strong>옮겨지고 지워진다</strong> — 덮어쓰지 않는다. 재실행된 verifier 가 <code>round: N+1</code> 로 새 파일을 쓰므로 마지막 round 는 최대 3. 재호출이 실패해 라운드를 되돌리면 아카이브가 live 로 복원된다</dd>
+    <dt>checked</dt><dd><code>reviewer.md</code> 그대로 — <em>"what you actually read, not what you were pointed at."</em> 지목받은 수가 아니라 <strong>읽은 수</strong>다. 다만 <strong>collect 는 이 숫자를 읽지 않는다</strong> — 커버리지는 (유효 fidelity 를 가진 UNIT 블록 ∪ FIX 대상) ∩ 설명이 있는 유닛으로 잰다(<code>audited</code> / <code>unaudited</code>)</dd>
+    <dt>required_fixes</dt><dd>렌더러가 FIX 블록 수로 다시 센다 — 자기보고를 믿지 않는다. <code>dispatch</code> 는 이 숫자가 아니라 블록을 읽는다: FIX 대상과 <code>invented</code>/<code>omitted</code> 유닛(FIX 가 빠져도 판정이 남는다)</dd>
+    <dt>status</dt><dd>오케스트레이터의 FAILED 스텁에만 있다. 스텁 · 파싱 실패 · 「감사할 유닛이 있는데 아무것도 판정하지 않음」은 <code>verify.status: failed</code> — 리포트는 지적 잔존 · 집계 불일치 자리에 0 대신 <code>—</code> 를 찍는다</dd>
   </dl>
   <div class="codewrap">
-    <div class="bar"><span class="f">리턴 — 오케스트레이터가 보는 전부</span><span class="flow">9줄 · 상한 12</span></div>
+    <div class="bar"><span class="f">리턴 — 프롬프트가 요구하는 형식</span><span class="flow">9줄 · 상한 12 · 실행기는 읽지 않는다</span></div>
 <pre>STATUS:         OK
-CHECKED:        3/3 unit
-FIDELITY:       ok 2 / invented 1 / omitted 0
-CLASS_OPINION:  agree 3 / dispute 0
+CHECKED:        5/5 unit
+FIDELITY:       ok 4 / invented 1 / omitted 0
+CLASS_OPINION:  agree 5 / dispute 0
 REQUIRED_FIXES: 1
 UNCOVERED:      none
 UNCERTAIN:      none
-CONFIDENCE:     high — 3개 절 원문 직접 확인
+CONFIDENCE:     high — 5개 절 원문 직접 확인
 <b>REPORT:         &lt;abs&gt;/40-verifier.md</b></pre>
   </div>
-  <div class="note"><b><code>required_fixes</code> 가 유일한 출구다.</b> 0 보다 크면 <code>dispatch</code> 가 그 유닛만 재호출 스펙으로 만든다. 오케스트레이터가 받는 것은 <code>REPORT</code> 경로와 이 숫자뿐이고, 파일 본문은 <code>collect</code> 와 <code>dispatch</code> 만 읽는다.</div>
+  <div class="note"><b>fix 대상은 세 게이트의 합집합이다 — <code>dispatch.fix_targets()</code>.</b> ① verifier: FIX 대상 ∪ <code>invented</code>/<code>omitted</code> 판정 유닛(FIX 블록이 없어도) ② levelcheck: 설명이 금지 어휘에 걸린 유닛 ③ <code>missing_prose</code>: 설명이 없는 유닛 · <code>FILE_SUMMARY</code> 가 없거나 모르는 refs 를 든 파일(20-analysis 가 파싱되지 않으면 그 파일 유닛 전부). verifier 대상 중 05 에 없는 id 는 버리고(<code>f-</code> 접두어는 떼고 file_id 로 받는다), 버린 것은 fix 대상에서만 빠질 뿐 「지적 잔존」으로는 남는다. 셋이 한 번의 재호출을 공유하고 라운드는 <strong>최대 2회</strong> — 3회차 검증에 남은 지적은 <code>verify.outstanding</code> 으로 리포트에 실리고 분석기로 돌아가지 않는다. 재작성 결과가 기존 유닛을 잃거나 id 를 중복하거나 파싱되지 않으면 반려되고, 반려 · 예외는 20-analysis 를 스냅샷으로 되돌린 뒤 <strong>진행한다</strong>(라운드는 소진).</div>
   <div class="note"><b><code>50-collect</code> 의 <code>verify:</code> 출처가 이 파일로 확정된다.</b> 리턴만 있던 판에서는 그 값들이 오케스트레이터를 거쳐야 했다 — 위성 리턴을 오케스트레이터가 옮겨 적는 경로이고, 「위성이 준 숫자를 합산하지 않는다」 와 충돌한다. 파일이 되면 <code>collect</code> 가 <strong>파서로</strong> 읽는다.</div>
+
+  <hr class="rule">
+
+  <h3 id="t45">45-themes.md <span class="req core">v3 신설</span></h3>
+  <div class="codewrap">
+    <div class="bar"><span class="f">45-themes.md</span><span class="flow">doc-themes → collect</span><span class="kind llm">LLM</span></div>
+<pre>---
+mr_iid: 482
+themes: 3                              <span class="c"># 블록 수와 다르면 파싱 실패</span>
+STATUS: OK
+UNCOVERED: none
+UNCERTAIN: none
+CONFIDENCE: "high — 목록 대조"
+---
+
+## THEME t-01
+
+```yaml
+title: "인증 정책 값 교체"
+units: [u-22ad8e13, u-227df86d]
+```
+**한 줄** 재시도 항목이 차단 항목으로 바뀌고 Access Token 만료 값이 바뀌었다.
+
+## THEME t-02
+
+```yaml
+title: "문서 구성 정리"
+units: [u-0869a186, u-279d55d4]
+```
+**한 줄** 개요 파일이 추가되고 구 인증 파일이 삭제되었다.
+
+## THEME t-03                          <span class="c">← 멤버 1개 — collect 가 버린다(themes_dropped: 1)</span>
+
+```yaml
+title: "개요 문장"
+units: [u-68bcb088]
+```
+**한 줄** 개요 문장이 병합되었다.</pre>
+  </div>
+  <div class="codewrap">
+    <div class="bar"><span class="f">themes 미션 프롬프트의 유닛 목록</span><span class="flow">위성이 보는 입력 전부 — 원문 0줄</span></div>
+<pre>[유닛 목록] 이 목록만 본다 — 원문을 읽지 않는다.
+- u-68bcb088 · docs/product-a/auth.md § 3. 개요 · [표현] (변경) · 표현 재작성 1건 · hint: overview-wording
+- u-227df86d · docs/product-a/auth.md § 5. 토큰 정책 · [의미] (변경) · 값: Access Token 만료 60분 → 30분 · 분 60 → 30 · hint: auth-policy-values
+- u-22ad8e13 · docs/product-a/auth.md § 4.2 Circuit Breaker 정책 · [구조 · 의미] (추가 · 삭제 · 변경) · 값: s 2 → 30 · hint: auth-policy-values
+- u-279d55d4 · docs/product-a/legacy.md · [구조] (삭제) · hint: doc-layout        <span class="c">← 삭제 절은 head TREE 에 없어 § 가 안 붙는다</span>
+- u-0869a186 · docs/product-a/overview.md § 개요 · [구조] (추가) · hint: doc-layout</pre>
+  </div>
+  <dl class="fields">
+    <dt>title · 한 줄</dt><dd>위성이 쓰는 필드는 이 둘과 <code>units</code> 뿐이다. 주제명은 명사구 3~15자, 한 줄은 묶은 변경이 무엇인지만 — 어휘 게이트와 같은 금지 어휘가 프롬프트에 들어간다(levelcheck 가 45 를 검사하지는 않는다)</dd>
+    <dt>units</dt><dd>한 줄 flow. 한 유닛이 여러 주제에 들어가도 된다. 모든 유닛을 한 주제 이상에 넣되 못 넣으면 <code>UNCOVERED</code></dd>
+    <dt>게이트</dt><dd><code>collect</code> 가 05 에 없는 멤버를 지우고, 남은 멤버가 2개 미만이면 주제째 버린다(<code>themes_dropped</code> → 03 「주제 드롭」). <code>STATUS</code> 가 <code>FAILED</code>/<code>BLOCKED</code> 이거나 파싱 실패면 <code>themes_failed</code> → 02 「주제 생성 실패」</dd>
+    <dt>렌더</dt><dd>02 의 key-card 는 구성원 많은 순. 태그(멤버가 가장 많이 닿은 축) · 델타(첫 값 변경 또는 <code>+ n개 섹션</code>) · <code>유닛 n · 파일 n</code> 은 렌더가 멤버에서 잰다. id 는 카드에 안 나오고 05 부록 「주제 · 유닛 대응」에만. Slack 은 상위 3개 title 을 <code>주요 주제:</code> 줄로</dd>
+  </dl>
 
   <hr class="rule">
 
   <h3 id="t50">50-collect.md</h3>
   <div class="codewrap">
-    <div class="bar"><span class="f">50-collect.md</span><span class="flow">mrdoc collect → render</span><span class="kind tool">툴</span></div>
+    <div class="bar"><span class="f">50-collect.md</span><span class="flow">collect 노드 → render</span><span class="kind tool">툴</span></div>
 <pre>---
 mr_iid: 482
 files: {added: 1, deleted: 1, modified: 3, moved_sections: 1}
-matrix:
-  auth-md-a3c19d:     {구조: {추가: 0, 삭제: 0, 변경: 1},
-                       의미: {추가: 0, 삭제: 0, 변경: 2},
-                       표현: {추가: 0, 삭제: 0, 변경: 1}}
-  overview-md-b71f04: {구조: {추가: 1, 삭제: 0, 변경: 0}}
-  legacy-md-c92e11:   {구조: {추가: 0, 삭제: 1, 변경: 0}}
-classes: {구조: 3, 의미: 2, 표현: 1}
-verify:
-  rounds: 1
-  outstanding: 0
-confidence_dist: {high: 3, medium: 0, low: 0}
+matrix: {auth-md-a41b9c8e: {구조: {추가: 0, 삭제: 0, 변경: 1}, 의미: {추가: 2, 삭제: 2, 변경: 3}, 표현: {추가: 0, 삭제: 0, 변경: 1}}, overview-md-78002e25: {구조: {추가: 1, 삭제: 0, 변경: 0}, 의미: {…}, 표현: {…}}, …}
+                                   <span class="c">↑ 한 줄 flow(여기선 줄임). md 파일마다 3축 × 3연산 전부 — 원자 없는 파일도 0 으로</span>
+classes: {구조: 3, 의미: 7, 표현: 1, 미분류: 0}   <span class="c"># 원자 수 (미분류만 유닛 수)</span>
+ops: {추가: 3, 삭제: 3, 변경: 5}
+value_changes: 3                   <span class="c"># 의미·변경 원자 = 개요의 (값 n)</span>
+verify: {status: ok, rounds: 2, outstanding: 0, counts_mismatch: 0, audited: 5, unaudited: 0}
+confidence_dist: {high: 5, medium: 0, low: 0}
 uncertain: []
 failed_files: []
+refs_dropped: 0
+themes_dropped: 1
+themes_failed: false
+fix_targets: []                    <span class="c"># 마지막 40 의 FIX 대상 ∪ invented/omitted — 카드의 「검증 지적」</span>
 ---
 
-## FILE auth-md-a3c19d
+## FILE auth-md-a41b9c8e
+
 ```yaml
 path: docs/product-a/auth.md
 product_dir: docs/product-a
 units: 3
 ```
-**FILE_SUMMARY** 절 제목 1곳이 바뀌었다(4.2 Retry 정책 → Circuit Breaker 정책).
-값이 바뀐 절은 2곳으로, 4.2 는 재시도 항목 2개가 차단 항목 2개로 교체되었고
-5절은 Access Token 만료가 60분에서 30분이 되었다. 그 외 표현 수정 1곳.
+**FILE_SUMMARY** 절 제목 1곳이 바뀌었다(4.2 Retry 정책 → 4.2 Circuit Breaker 정책). 값은 4.2 에서 2개 삭제 · 2개 추가, 5절에서 1개 변경. 그 외 표현 수정 1곳.
 
-## UNIT u-7f21bc
+## UNIT u-22ad8e13
+
 ```yaml
-kind: changed              <span class="c"># added | removed | changed | moved</span>
+kind: changed                      <span class="c"># added | removed | changed — moved 는 없다</span>
 structure_kind: heading_renamed
-class: 의미
-section: "auth.md § 4.2 Retry 정책 → Circuit Breaker 정책"
-file: auth-md-a3c19d
-removed: ["Retry Count: 3", "Retry Interval: 2s"]
-added:   ["Failure Threshold: 5", "Open Duration: 30s"]
-changed: []
-excerpt_ref: u-7f21bc
+class: "의미"                      <span class="c"># 30 verified 의 축. 추가·삭제 유닛은 "구조"</span>
+section: "auth.md § 4.2 Circuit Breaker 정책"
+file: auth-md-a41b9c8e
+removed: [2s, 3]
+added: [30s, 5]
+changed: [{key: s, from: 2, to: 30}]
+excerpt_ref: u-22ad8e13
+axes: ["구조", "의미"]              <span class="c"># 이 유닛의 원자가 닿은 축 — 카드 태그 [구조 · 의미]</span>
+ops: ["추가", "삭제", "변경"]        <span class="c"># 닿은 연산 — 04 에서 추가 · 삭제 카드(부분)와 변경 카드로 나뉜다</span>
+textual: []
+prose_added: []
+prose_removed: []
+audit: ok                          <span class="c"># ok | invented | omitted | unaudited | flagged</span>
 ```
-**설명** 재시도 횟수·간격 두 항목이 삭제되고 실패 임계값·개방 시간 두 항목이 …
+**설명** 절 제목이 4.2 Retry 정책에서 4.2 Circuit Breaker 정책으로 바뀌었다. Retry Count 3 · …
 
-## UNIT u-2c81de
+<span class="c">설명이 비었거나 20-analysis 가 파싱되지 않았다면</span>
+**설명** <b>설명 생성 실패</b>          <span class="c">← 부분 실패 격리. audit 필드는 없고 나머지는 그대로 렌더된다</span>
+<span class="c">지적이 남았다면 audit: invented · audit_why: "&lt;verifier 의 why&gt;" · vocab_violation: [...] 가 붙는다</span>
+
+<span class="c">… FILE architecture-md-b44d798a(units: 0) · deployment · legacy · overview 블록 생략</span>
+
+## THEME t-01                         <span class="c">← 게이트를 통과한 주제만. t-03 은 없다</span>
+
 ```yaml
-kind: changed
-structure_kind: none
-class: 의미
-section: "auth.md § 5. 토큰 정책"
-file: auth-md-a3c19d
-changed: [{key: "Access Token 만료", from: "60분", to: "30분"}]
-excerpt_ref: u-2c81de
+title: "인증 정책 값 교체"
+units: [u-22ad8e13, u-227df86d]
 ```
-<b>**설명** 설명 생성 실패</b>       <span class="c">← 부분 실패 격리. 나머지 필드는 그대로 렌더된다</span></pre>
+**한 줄** 재시도 항목이 차단 항목으로 바뀌고 Access Token 만료 값이 바뀌었다.</pre>
   </div>
   <div class="codewrap">
     <div class="bar"><span class="f">collect 6단계</span></div>
 <pre>1  파싱         20-analysis/*.md 전수. 스키마 위반 → failed_files
-2  유닛 조립     05 kind + 06 차집합 + 07 발췌 + 30 verified class + 20 설명
-3  refs 검증     설명 · FILE_SUMMARY 가 <b>실재하는 u-</b> 만 지목하나
-4  매트릭스      파일 × 성질(구조/의미/표현) × 연산(추가/삭제/변경) 카운트
+2  유닛 조립     05 kind + 06 차집합·문장 원자 + 07 발췌 + 30 verified class + 20 설명
+               + 40 판정(audit · audit_why) — 설명이 있는 유닛만 감사 대상
+3  refs 검증     설명 · FILE_SUMMARY 가 <b>실재하는 u-</b> 만 지목하나. 아니면 드롭 → refs_dropped
+4  매트릭스      <b>원자 인벤토리</b>(inventory.py) — 헤딩 변화 1 · 값 1 · 표현 재작성 1 · 문장 묶음 1 이 각각 1
+               파일 × 성질(구조/의미/표현) × 연산(추가/삭제/변경) · classes · ops · value_changes
+               원자가 하나도 없는 유닛은 미분류(개수만, 매트릭스 열 없음)
 5  그룹핑·정렬   제품 폴더 → 파일 → 절 순
+   + verify     40 을 블록에서 다시 잰다 — status · rounds · outstanding · counts_mismatch · audited · unaudited
+   + 주제 게이트  45 의 멤버를 05 유닛으로 거르고 2개 미만은 버린다 — themes_dropped · themes_failed
 6  출력         50-collect.md</pre>
   </div>
   <div class="note"><b>부분 실패 격리 — 「설명 없는 리포트」로 강등한다.</b> analysis 파싱 실패·누락 시 <b>설명 필드만</b> 비우고 구조 · 원문 · 리터럴 · 분류(도구 확정분)는 전부 렌더한다. 실측(MR !18)에서는 파싱 실패가 before/after 공백 + 레벨 기본값으로 스며들어 <b>틀린 리포트</b>가 나왔다. 빈 것과 틀린 것은 다른 실패다.</div>
   <ul class="plain">
-    <li><b>매트릭스가 리포트 2번 섹션 그대로다.</b> 집계를 렌더 단계에서 다시 하지 않는다 — 숫자의 출처가 두 곳이 되면 대조할 기준이 사라진다</li>
-    <li><b>이동은 매트릭스 열이 아니다.</b> 연산 열은 추가 · 삭제 · 변경 셋이고, 이동은 <code>moved_sections</code> 로 개요와 3.1 구조 변화에 나온다</li>
-    <li><b>검증 실패는 설명 필드만 비운다.</b> <code>doc-verifier</code> 가 2회차에도 지적을 남기면 <code>verify.outstanding</code> 에 기록하고 리포트 4 부록에 노출한다</li>
-    <li><b>refs 실패는 버린다.</b> 실재하지 않는 <code>u-</code> 를 지목한 설명은 재작성을 요청하지 않고 드롭한다 — 종료조건을 <code>required_fixes</code> 하나로 유지해서 루프가 반드시 끝나게 한다</li>
+    <li><b>매트릭스가 리포트 01 섹션 그대로다.</b> 집계를 렌더 단계에서 다시 하지 않는다 — 숫자의 출처가 두 곳이 되면 대조할 기준이 사라진다</li>
+    <li><b>유닛이 아니라 원자를 센다.</b> 헤딩 개명 1 + 값 변경 4 를 가진 유닛이 한 칸에 1 로 접히던 것(실측 !22 — 개요는 「삭제 0」인데 본문에 삭제된 문단)이 원인이다. 혼합 유닛은 닿은 칸마다 켜진다. 추가 · 삭제 유닛에 병기된 값은 정보용이라 세지 않는다 — 부록 「집계 기준」에 같은 문장이 실린다</li>
+    <li><b>이동은 매트릭스 열이 아니다.</b> 연산 열은 추가 · 삭제 · 변경 셋이고, 이동은 <code>moved_sections</code> 로 개요의 <code>이동 n</code> 과 04 파일 카드의 구조 노트에 나온다</li>
+    <li><b>검증 지적은 설명을 지우지 않는다.</b> 설명은 그대로 두고 카드에 <code>검증 지적 · 지어냄|빠뜨림</code> 배지와 <code>검증 근거 — &lt;audit_why&gt;</code> 줄을 붙이며, 지적 카드는 펼쳐진 채 렌더된다. 라운드를 다 쓰고 남은 지적은 <code>verify.outstanding</code> → 03 「검증 지적 n건 잔존」 · 05 부분 실패 목록 · 신뢰도 줄. 감사받지 못한 설명은 <code>미검증</code> 배지. verifier 가 통째로 실패하면 <code>verify.status: failed</code> → 카운트 자리에 <code>—</code></li>
+    <li><b>refs 실패는 버린다.</b> 실재하지 않는 <code>u-</code> 를 지목한 설명 · FILE_SUMMARY 는 드롭하고 <code>refs_dropped</code> 로 센다 — 실재 유닛에 재매핑하지 않는다. 대신 그 자리가 비면 <code>missing_prose</code> 가 fix 라운드에서 다시 쓰게 한다. 루프가 반드시 끝나는 것은 <code>.fix-round</code> 상한(2)이 보장한다</li>
   </ul>
 
   <hr class="rule">
 
   <h3 id="t99">report.html · slack-summary.txt</h3>
   <div class="codewrap">
-    <div class="bar"><span class="f">mrdoc render 3단계</span><span class="kind tool">툴</span></div>
-<pre>1  모든 블록의 refs 가 50-collect 에 실재하나. 아니면 그 블록 버림   <b>← 게이트는 이것 하나</b>
-2  본문은 <b>50-collect 에서 가져온다</b> — 렌더가 다시 세거나 다시 쓰지 않는다
-3  report.html + slack-summary.txt 출력   Jinja2 · 단일 파일 · 인라인 CSS · 외부 의존 0</pre>
+    <div class="bar"><span class="f">render 노드 3단계</span><span class="flow">report_render.py</span><span class="kind tool">툴</span></div>
+<pre>1  모든 유닛의 file 이 50-collect FILE 블록에 실재하나. 아니면 그 유닛 버림(refs 드롭에 합산)   <b>← 게이트는 이것 하나</b>
+2  본문은 <b>50-collect 에서 가져온다</b> — 렌더가 다시 세거나 다시 쓰지 않는다. 원문은 07, 트리는 05
+3  report.html + slack-summary.txt 출력   손으로 짠 HTML(escape) · 단일 파일 · report_style.css 를 &lt;style&gt; 에 인라인 · 외부 의존 0
+   <span class="c">Jinja2 는 쓰지 않는다 — 이 크기의 페이지에 첫 템플릿 의존을 들이지 않는다</span></pre>
   </div>
   <div class="codewrap">
-    <div class="bar"><span class="f">report.html 골격 — 4섹션</span><span class="flow">파일(제품) → 연산 → 성질</span></div>
-<pre><b>1. 개요</b>                                          <span class="c">slack-summary 와 같은 내용</span>
-  MR !18 · docs/docu-automatic · base 9c1e77a → head ee95ae7
-  영향 제품  docs/product-a          파일 1 · 유닛 4
-  구조 0 · 의미 3 (값 3) · 표현 1 · 추가 0 · 삭제 0 · 이동 0
-  03.SETUP-GUIDE.md  값 변경 3곳(버전 문구 1, 설치 명령 2), 표현 1곳
-  [리포트 신뢰도]  설명 생성 실패 파일 0 · 지적 잔존 0 · 분류 불확실 0
+    <div class="bar"><span class="f">report.html 골격 — hero · stats · 01~05</span><span class="flow">docs/mrdoc-report-template.html (navy-indigo / matrix-first)</span></div>
+<pre><b>topbar</b>   MRDOC / CHANGE INTELLIGENCE                         Matrix · Changes · Files · Quality
+<b>hero</b>     DOCUMENT CHANGE REPORT · <b>MR !482</b>
+         docs/product-a 문서 변경을 구조 · 의미 · 표현 단위로 분석한 리포트     <b>PIPELINE WARNING</b> | ANALYSIS OK
+         base 9c1e77a4b2d0 → head 3f2a1cd08e11 · docs/product-a
+<b>stats</b>    Files 5 · Units 5 · Semantic 7 (3 value-level changes) · Analysis WARN — 주제 드롭 1
+                                                  <span class="c">↑ 경고 사유 첫 번째. 사유가 없으면 OK · all checks passed</span>
 
-<b>2. 변경 매트릭스</b>                                  <span class="c">어디를 자세히 볼지 고르는 표</span>
-  파일                    구조           의미           표현
-                        추가 삭제 변경   추가 삭제 변경   추가 삭제 변경
-  03.SETUP-GUIDE.md      0   0   0      0   0   3      0   0   1
+<b>01 / CHANGE MATRIX  변경 매트릭스</b>                      <span class="c">어디를 자세히 볼지 고르는 표 — 50 matrix 그대로</span>
+  파일               구조           의미           표현
+                   추가 삭제 변경   추가 삭제 변경   추가 삭제 변경
+  architecture.md   0   0   0      0   0   0      0   0   0
+  auth.md           0   0   1      2   2   3      0   0   1
+  deployment.md     0   0   0      0   0   0      0   0   0
+  legacy.md         0   1   0      0   0   0      0   0   0
+  overview.md       1   0   0      0   0   0      0   0   0
 
-<b>3. 제품/파일별 상세</b>                               <span class="c">파일마다 반복</span>
-  03.SETUP-GUIDE.md
-    <b>파일 요약 설명</b>  구조 변화 없음. Python 버전 관련 값 3곳이 변경되었고
-                     (권장·최소 버전 문구 1곳, winget·brew 설치 명령 2곳),
-                     그 외 표현 수정 1곳. 추가·삭제된 절은 없다.
-    3.1 구조 변화    헤딩 트리 before / after 병기 + 설명
-                    어떤 절이 어디서 어디로 · 레벨 변화 · 목록↔표 형식 전환
-    3.2 추가된 내용  원문 + 설명 — 무엇을 다루는지 · 기존 어느 절 뒤/안에 들어갔는지
-                    기존 내용과의 관계(보충 · 대체 · 신규 주제)
-    3.3 삭제된 내용  원문 + 설명 — 무엇을 다루고 있었는지 · 대체 내용이 있는지(3.2 연결) · 순삭제인지
-    3.4 변경된 내용  유닛별 [의미]/[표현] 태그 + before/after 원문 병기 + 설명
+<b>02 / WHAT CHANGED  핵심 변경사항</b>                       <span class="c">45-themes 의 key-card, 구성원 많은 순</span>
+  [의미] 인증 정책 값 교체   재시도 항목이 … 바뀌었다.   2 → 30        유닛 2 · 파일 1
+  [구조] 문서 구성 정리      개요 파일이 … 삭제되었다.   + 1개 섹션    유닛 2 · 파일 2
+  <span class="c">주제가 없으면 「주제 없음」, themes 실패면 「주제 생성 실패 — 05 분석 상태 참조」</span>
 
-<b>4. 부록</b>
-  분류 기준표 · 유닛 ID 와 소스 대응 · 분류 불확실 항목 · 부분 실패 목록</pre>
+<b>03 / ATTENTION  확인이 필요한 항목</b>                     <span class="c">MR 내용 이슈와 파이프라인 상태를 분리</span>
+  amber  검증 실패 | 미검증 n유닛 · 검증 지적 n건 잔존 · 집계 불일치 n건 · 분류 불확실 n유닛
+  blue   주제 드롭 n · 주제 생성 실패 · 설명 생성 실패 파일 n · refs 드롭 n
+  <span class="c">이 예시는 blue 「주제 드롭 1」 하나. 없으면 ✓ 확인이 필요한 항목 없음</span>
+
+<b>04 / FILE CHANGES  파일별 상세</b>                         <span class="c">파일마다 반복 — 제품 폴더 → 경로 순</span>
+  FILE 02  docs/product-a/auth.md                docs/product-a · 유닛 3        5 changes
+    FILE_SUMMARY (u- id 제거)                     <span class="c">+ 「요약 검증 지적」 배지 — FILE_SUMMARY 가 FIX 대상일 때</span>
+    ▸ Document structure change  before / after outline
+        before 인증 · 3. 개요 · 4. 인증 정책 · 4.2 Retry 정책 · 5. 토큰 정책
+        after  인증 · 3. 개요 · 4. 인증 정책 · 4.2 Circuit Breaker 정책 · 5. 토큰 정책
+        §4.2 Retry 정책 가 §4.2 Circuit Breaker 정책 로 개명되었다       <span class="c">← 05 에서 도구가 만든 문장</span>
+    ▸ CHANGE 01  auth.md § 4.2 Circuit Breaker 정책   [구조 · 의미] [부분]   <span class="c">추가 원자만 — AFTER · 추가된 값</span>
+    ▸ CHANGE 02  auth.md § 4.2 Circuit Breaker 정책   [구조 · 의미] [부분]   <span class="c">삭제 원자만 — BEFORE · 삭제된 값</span>
+    ▸ CHANGE 03  auth.md § 3. 개요                    [표현]
+    ▸ CHANGE 04  auth.md § 5. 토큰 정책               [의미]
+    ▸ CHANGE 05  auth.md § 4.2 Circuit Breaker 정책   [구조 · 의미]
+  <span class="c">카드 순서는 추가 → 삭제 → 변경. 변경 유닛이 추가·삭제 원자도 가지면 그 연산 카드에 [부분]으로 한 번 더</span>
+  <span class="c">유닛 0 파일(architecture.md · deployment.md)도 카드가 있고, 구조 노트에 이동이 나온다</span>
+
+<b>05 / ANALYSIS QUALITY  분석 상태</b>                       <span class="c">+ MR diff 링크</span>
+  파이프라인 상태 [WARNING]  검증 상태 정상 · 검증 라운드 2 · 지적 잔존 0 · 집계 불일치 0 · 미검증 0
+                            · 설명 생성 실패 파일 0 · 분류 불확실 0 · refs 드롭 0 · 주제 드롭 1
+                            · 주제 생성 실패 없음 · 신뢰도 분포 high 5
+  분류 불확실 항목 · 부분 실패 목록 · high confidence 막대
+  <b>부록</b>  집계 기준 · 분류 기준표 · 유닛 ID · 소스 대응(unit_id · section · excerpt_ref) · 주제 · 유닛 대응</pre>
   </div>
-  <h4>3.4 항목은 이렇게 나온다</h4>
+  <p class="lede">v2 의 「1. 개요」 텍스트 블록은 페이지에서 빠졌다 — 같은 수치는 hero · stats 카드와 01 매트릭스가 들고, 개요 문장(<code>overview_lines</code>)은 <code>slack-summary.txt</code> 에만 쓰인다. 둘 다 <code>50-collect</code> 에서 오므로 숫자는 갈라지지 않는다. v2 의 3.1~3.4 소제목도 없다 — 구조 변화는 파일 카드의 접이식 outline 으로, 추가 · 삭제 · 변경은 한 줄로 쌓인 변경 카드로 바뀌었다.</p>
+  <h4>04 변경 카드는 이렇게 나온다</h4>
   <div class="codewrap">
-<pre><b>u-ed1a5c71</b>  [의미]
-  before  권장 Python 3.12.4, 최소 3.8+
-  after   권장 Python 3.12.7, 최소 3.10+
-  설명    권장 버전과 최소 지원 버전 두 값이 함께 바뀌었다. 권장은 패치
-          버전(3.12.4→3.12.7), 최소는 마이너 버전(3.8→3.10) 단위의 변경이다.
+<pre><b>CHANGE 04</b>  auth.md § 5. 토큰 정책                                   [의미]
+  BEFORE  토큰은 발급 시각 기준으로 만료된다.
+          Access Token 만료: 60분
+          Refresh Token 만료: 14일
+  AFTER   토큰은 발급 시각 기준으로 만료된다.
+          Access Token 만료: 30분
+          Refresh Token 만료: 14일
+  Detected values
+          Access Token 만료 60분 → 30분
+          분 60 → 30                        <span class="c">← 06 구현 주의 4 의 이중 집계가 카드에도 보인다</span>
+  WHAT CHANGED
+          설명 — Access Token 만료 60분 → 30분. Refresh Token 만료 14일은 그대로다.
 
-<b>u-27faf245</b>  [표현]
-  before  Python을 설치 한 뒤 아래 명령을 실행하세요
-  after   Python을 설치한 뒤 아래 명령을 실행하세요
-  설명    띄어쓰기 수정. 명제 변화 없음.</pre>
+<b>CHANGE 03</b>  auth.md § 3. 개요                                        [표현]
+  BEFORE  이 문서는 인증 방식을 설명한다.
+          인증은 토큰 기반으로 동작한다.
+  AFTER   이 문서는 토큰 기반으로 동작하는 인증 방식을 설명한다.
+  Detected values
+          표현 재작성: 이 문서는 인증 방식을 설명한다. 인증은 토큰 기반으로 동작한다. → 이 문서는 …
+  WHAT CHANGED
+          설명 — 문장 두 개가 하나로 병합되었다. 명제와 값은 그대로다.
+
+<span class="c">round 1 의 지적이 남았다면 (마지막 라운드까지 fix 되지 않은 경우)</span>
+<b>CHANGE 04</b>  auth.md § 5. 토큰 정책                 [의미] <b>[검증 지적 · 지어냄]</b>     <span class="c">← 카드가 펼쳐진 채 렌더</span>
+  …
+  WHAT CHANGED
+          설명 — Access Token 만료 60분 → 30분. 토큰 만료 시간 전체가 짧아졌다.
+          <b>검증 근거 —</b> 설명이 '만료 시간 전체가 짧아졌다'고 썼는데 바뀐 값은 Access Token 하나이고 …
+<span class="c">verifier 블록이 없는 설명은 [미검증]. u- id 는 카드 · 요약 · 주제 문장에서 지워지고 05 부록 표에만 남는다</span></pre>
   </div>
-  <div class="note"><b>설명의 경계는 세 줄이다.</b> 허용은 <b>무엇이 · 어떻게</b>(3.8+→3.10+ · 조건절 추가 · 3단계 삭제 · 절 이동). 금지는 <b>왜</b>(동기 · 배경 추론) · <b>그래서</b>(영향 · 의미 · 대상 사용자) · <b>평가</b>(좋다 · 나쁘다 · 적절 · 위험 · 개선 · 정렬 · 상향 · 하향). 같은 문구가 <code>doc-analyzer</code> 프롬프트와 <code>levelcheck</code> 어휘 게이트에 한 파일로 들어간다.</div>
+  <div class="note"><b>설명의 경계는 세 줄이다.</b> 허용은 <b>무엇이 · 어떻게</b>(3.8+→3.10+ · 조건절 추가 · 3단계 삭제 · 절 이동). 금지는 <b>왜</b>(동기 · 배경 추론) · <b>그래서</b>(영향 · 의미 · 대상 사용자) · <b>평가</b>(좋다 · 나쁘다 · 적절 · 위험 · 개선 · 정렬 · 상향 · 하향). 같은 목록(<code>vocab.py</code>)이 <code>doc-analyzer</code> · <code>doc-themes</code> 프롬프트와 <code>levelcheck</code> 어휘 게이트에 한 파일로 들어간다.</div>
   <h4>분류 기준표 — 부록에 고정 문구로 싣는다</h4>
   <p class="lede">제품 10개의 리포트가 <strong>서로 비교 가능해야</strong> 하므로 기준을 리포트마다 다시 쓰지 않고 같은 표를 싣는다.</p>
   <div class="tw">
@@ -1187,7 +1500,7 @@ excerpt_ref: u-2c81de
     </tbody>
   </table>
   </div>
-  <div class="note"><b>축 A(연산)는 도구가 확정한다.</b> 추가 · 삭제 · 이동은 <code>structure</code> 의 절 짝짓기와 move 판정, 변경은 짝지어진 절의 본문 차이다. <b>축 B(성질)</b> 중 구조는 <code>structure</code> 확정, 의미(값)는 <code>literals</code> 차집합이 비어 있지 않으면 확정. 차집합이 비어 있고 본문만 다른 유닛만 <b>표현 후보</b>가 되어 <code>doc-analyzer</code> 가 의미/표현을 판정한다 — LLM 에 남는 유일한 분류 판단이다.</div>
+  <div class="note"><b>축 A(연산)는 도구가 확정한다.</b> 추가 · 삭제 · 이동은 <code>structure</code> 의 절 짝짓기와 move 판정, 변경은 짝지어진 절의 본문 차이다. <b>축 B(성질)</b> 중 구조는 <code>structure</code> 확정, 의미(값)는 <code>literals</code> 차집합이 비어 있지 않으면 확정, 표현은 값이 같은 채 문장만 바뀐 구간(<code>textual</code>)이 있으면 확정. 셋 다 비어 있는데 본문이 다른 유닛만 <b>표현 후보</b>가 되어 <code>doc-analyzer</code> 의 <code>class</code> 가 의미/표현을 정한다 — LLM 에 남는 유일한 분류 판단이고, 주장이 없으면 <b>미분류</b>다. 매트릭스 카운트는 이 유닛 분류가 아니라 원자에서 센다.</div>
   <h4>v2 에서 바뀐 세 가지</h4>
   <ol class="hl">
     <li><b>판정이 없다.</b> 머지 가능 여부 · 심각도 · 권고를 내지 않는다. <span class="alt">제품 10개가 한 레포에 섞여 있어 리포트가 비즈니스 내용을 담을 수 없다</span></li>
@@ -1195,75 +1508,115 @@ excerpt_ref: u-2c81de
     <li><b>원문 · 값은 도구가, 설명만 LLM 이 쓴다.</b> <span class="alt">LLM 이 완전히 실패해도 개요 · 매트릭스 · 구조 · 원문 · 값 변경은 정확히 나오고 설명만 빈다</span></li>
   </ol>
   <div class="codewrap">
-    <div class="bar"><span class="f">slack-summary.txt</span><span class="flow">= 1. 개요 그대로</span></div>
-<pre>MR !18 docs/docu-automatic — 파일 1 · 유닛 4
-구조 0 · 의미 3 (값 3) · 표현 1 · 추가 0 · 삭제 0 · 이동 0
-03.SETUP-GUIDE.md: 값 변경 3곳(버전 문구 1, 설치 명령 2), 표현 1곳
-https://…/report.html</pre>
+    <div class="bar"><span class="f">Slack 스레드 메시지 — mrdoc-report.html 업로드의 initial_comment</span><span class="flow">rail 헤더 + slack-summary.txt</span></div>
+<pre><b>*mrdoc 문서 변경 리포트 -- MR !482* (exit=4)</b>          <span class="c">← rail 이 붙이는 헤더</span>
+MR !482 · base 9c1e77a4b2d0 → head 3f2a1cd08e11      <span class="c">← 여기부터 slack-summary.txt</span>
+영향 제품 docs/product-a — 파일 5 · 유닛 5
+구조 3 · 의미 7 (값 3) · 표현 1 · 추가 3 · 삭제 3 · <b>변경 5</b> · 이동 1
+architecture.md: 구조 변화: 배포 절차 절이 deployment.md 로 이동했다. 그 외 변경 없음.
+auth.md: 절 제목 1곳이 바뀌었다(4.2 Retry 정책 → 4.2 Circuit Breaker 정책). 값은 4.2 에서 …
+deployment.md: 구조 변화: 배포 절차 절이 architecture.md 에서 이동해 왔다. 그 외 변경 없음.
+legacy.md: 파일 삭제. 구 인증 절 1개가 삭제되었다.
+overview.md: 새 파일. 개요 절 1개가 추가되었다.
+<b>주요 주제: 인증 정책 값 교체 · 문서 구성 정리</b>              <span class="c">← 주제가 있을 때만. 구성원 많은 순 3개</span>
+<b>[리포트 신뢰도]</b> 설명 생성 실패 파일 0 · 지적 잔존 0 · 집계 불일치 0 · 미검증 0 · 분류 불확실 0 · refs 드롭 0
+https://gitlab.example/docs/product-common/-/merge_requests/482   <span class="c">← MR 웹 URL(diff_url)</span></pre>
   </div>
-  <div class="note"><b><code>[리포트 신뢰도]</code> 블록은 빼지 말 것.</b> 부분 실패가 조용히 사라지는 게 이 시스템의 최악 실패 모드다. <b>Slack 에는 문서 본문을 흘리지 않는다</b> — 개요만 싣는다.</div>
+  <dl class="fields">
+    <dt>신뢰도 줄</dt><dd><code>설명 생성 실패 파일 n · [검증 실패] · 지적 잔존 n|— · 집계 불일치 n|— · 미검증 n · 분류 불확실 n · refs 드롭 n</code>. <code>검증 실패</code> 는 <code>verify.status: failed</code> 일 때만 끼고, 그때 지적 잔존 · 집계 불일치는 <code>—</code> 다. 분류 불확실 = 원자가 하나도 없는 유닛 수(<code>classes.미분류</code>)</dd>
+    <dt>전달</dt><dd>요약과 리포트가 <strong>한 메시지</strong>로 간다 — 파일 업로드(<code>mrdoc-report.html</code>)의 <code>initial_comment</code>. 리포트가 없거나(render 전 abort) 업로드가 실패하면 요약만 평문으로 스레드에 올린다. render 전 abort 면 요약도 없으므로 <code>00</code> · <code>06</code> frontmatter 카운트 + 산출물 경로로 대신한다</dd>
+  </dl>
+  <div class="note"><b><code>[리포트 신뢰도]</code> 블록은 빼지 말 것.</b> 부분 실패가 조용히 사라지는 게 이 시스템의 최악 실패 모드다. <b>Slack 에는 문서 본문을 흘리지 않는다</b> — 개요 · 파일 요약 · 주제명만 싣는다.</div>
 
   <hr class="rule">
 
   <h3 id="tdispatch">dispatch 위임 스펙 · ledger</h3>
   <div class="codewrap">
-    <div class="bar"><span class="f">mrdoc dispatch next 출력 — agent 블록</span><span class="kind tool">툴</span></div>
-<pre>WAVE: w3
-=== SPEC agent doc-analyzer ===
-TASK: 변경 유닛 3개가 무엇이 어떻게 바뀌었는지 설명을 쓰고, 표현 후보의 성질을 판정한다
-<b>CONTEXT: &lt;abs&gt;/07-excerpts.md  — EXCERPT u-7f21bc u-2c81de u-9a03ff
-         &lt;abs&gt;/06-literals.md  — UNIT    u-7f21bc u-2c81de u-9a03ff
-         &lt;abs&gt;/05-structure.md — CHANGED 중 auth-md-a3c19d 행</b>
-TARGET FILES: &lt;abs&gt;/20-analysis/auth-md-a3c19d.md
-<b>READ: &lt;abs&gt;/base/docs/product-a/auth.md 135-158,168-171,40-50
-      &lt;abs&gt;/snapshot/docs/product-a/auth.md 135-160,168-171,40-52</b>
-CONSTRAINTS: 왜(동기) · 그래서(영향) · 평가 어휘 금지 · 분류는 표현 후보에만 ·
-             절 라인 창 ±20줄만 · 파일 통독 금지 · 재Read 금지
-BUDGET: 16 tool calls
-LEDGER: &lt;abs&gt;/ledger.md
-REPORT: &lt;abs&gt;/20-analysis/auth-md-a3c19d.md
-<b>RETURN: STATUS / UNITS / CLASSES / FILES /
-        UNCOVERED / UNCERTAIN / CONFIDENCE / REPORT   (≤12줄)</b>
-=== END WAVE (1 spec) ===</pre>
+    <div class="bar"><span class="f">dispatch.next_specs() → SpecBlock.render() — 위성 블록 3종</span><span class="flow">6줄 형식 · !482 실행 그대로</span><span class="kind tool">툴</span></div>
+<pre>WAVE 1
+SPEC analyzer
+READ &lt;abs&gt;/00-changeset.md, &lt;abs&gt;/05-structure.md, &lt;abs&gt;/06-literals.md, &lt;abs&gt;/07-excerpts.md
+BUDGET 1.0
+RETURN &lt;abs&gt;/20-analysis
+<b>SCOPE files 0..4</b>                <span class="c">← 00 FILES 의 i..j 번째 파일. mrdoc_fanout 개씩 잘라 배치마다 블록 1개, 전부 같은 wave</span>
+
+WAVE 2
+SPEC verifier
+READ &lt;abs&gt;/20-analysis, &lt;abs&gt;/07-excerpts.md, &lt;abs&gt;/06-literals.md      <span class="c">← 30-levelcheck 는 일부러 뺀다</span>
+BUDGET 1.0
+RETURN &lt;abs&gt;/40-verifier.md
+
+WAVE 4
+SPEC themes
+READ &lt;abs&gt;/20-analysis, &lt;abs&gt;/05-structure.md, &lt;abs&gt;/06-literals.md
+BUDGET 1.0
+RETURN &lt;abs&gt;/45-themes.md</pre>
   </div>
   <div class="codewrap">
-    <div class="bar"><span class="f">재호출 블록 — FIX 대상 유닛만</span><span class="flow">40-verifier 를 dispatch 가 읽어 생성</span></div>
-<pre>WAVE: w6
-=== SPEC agent doc-analyzer ===
-<b>SCOPE: units u-2c81de</b>                 <span class="c">← 이 유닛 외 블록은 건드리지 않는다</span>
-TASK: 지정 유닛의 설명을 원문 근거로 다시 쓴다
-CONTEXT: &lt;abs&gt;/40-verifier.md  — FIX r-01 (target u-2c81de, reason fidelity_invented)
-         &lt;abs&gt;/07-excerpts.md — EXCERPT u-2c81de
-READ: &lt;abs&gt;/base/docs/product-a/auth.md 168-171
-      &lt;abs&gt;/snapshot/docs/product-a/auth.md 168-171
-CONSTRAINTS: 왜 · 그래서 · 평가 어휘 금지 · 지정 유닛 외 수정 금지
-BUDGET: 6 tool calls
-REPORT: &lt;abs&gt;/20-analysis/auth-md-a3c19d.md
-=== END WAVE (1 spec) ===</pre>
+    <div class="bar"><span class="f">재호출 블록 — dispatch.fix_spec()</span><span class="flow">fix 라운드 1 · 같은 wave 안에서 verifier 뒤에 실행</span></div>
+<pre>WAVE 2
+SPEC analyzer
+READ &lt;abs&gt;/00-changeset.md, …/05-structure.md, …/06-literals.md, …/07-excerpts.md,
+     &lt;abs&gt;/<b>30-levelcheck.r1.md</b>, &lt;abs&gt;/<b>40-verifier.r1.md</b>   <span class="c">← live 게이트는 이미 아카이브됐다</span>
+BUDGET 1.0
+RETURN &lt;abs&gt;/20-analysis
+<b>SCOPE units u-227df86d</b>          <span class="c">← fix 대상 합집합. FILE_SUMMARY 재작성이면 file_id 도 여기 온다</span>
+
+<span class="c">실행기가 이 블록으로 만든 미션 프롬프트(_fix_mission)의 대상 줄 — 사유는 라운드 아카이브에서 읽는다</span>
+[재작성 대상] 아래 대상만 다시 쓴다.
+- file_id auth-md-a41b9c8e · path docs/product-a/auth.md
+  · u-227df86d (section_id s-0e23dcb2) — 설명 — fidelity_invented (설명)
+[보존] 대상이 아닌 UNIT 블록과 FILE_SUMMARY 는 기존 파일의 내용을 그대로 유지한다. …</pre>
   </div>
   <div class="codewrap">
-    <div class="bar"><span class="f">tool 블록 — 같은 형식</span></div>
-<pre>WAVE: w4
-=== SPEC tool ===
-RUN: mrdoc levelcheck --work &lt;abs&gt;
-=== END WAVE (1 spec) ===</pre>
+    <div class="bar"><span class="f">툴 노드 — 스펙 없이 in-process</span><span class="flow">코드에 남은 분기의 실제 동작</span></div>
+<pre><span class="c">dispatch.next_specs() 에는 structure · literals · excerpt 가 runnable 일 때 쓰는 분기가 남아 있다:</span>
+SPEC structure                    <span class="c">(agent 칸에 노드 이름)</span>
+READ &lt;abs&gt;/00-changeset.md
+RETURN &lt;abs&gt;/05-structure.md
+SCOPE RUN: mrdoc structure --work &lt;abs&gt;      <span class="c">← mrdoc CLI 는 없다</span>
+
+<span class="c">실제로는 이 블록이 나오지 않는다 — run_wave 가 next_specs 를 부르기 전에 툴 노드를 in-process 로 끝내므로
+그 시점에 세 노드는 이미 done 이다. 만약 나온다 해도 실행기에 해당 미션이 없어 False → abort 다.
+levelcheck · collect · render 는 분기조차 없다 — 늘 스펙 실행 뒤의 툴 노드 패스에서 돈다.</span></pre>
   </div>
   <dl class="fields">
-    <dt>READ</dt><dd><strong><code>Grep</code> 을 대체한다.</strong> 위성이 볼 위치를 스펙이 절대경로+라인으로 주므로 검색 도구가 필요 없다</dd>
-    <dt>VERIFY</dt><dd><strong>없다.</strong> 실행 가능한 검증 명령이 없고, 그 자리를 <code>levelcheck</code> 의 분류 검증·어휘 게이트, <code>collect</code> 의 refs 검증, <code>doc-verifier</code> 의 충실도 감사가 나눠 맡는다</dd>
-    <dt>SCOPE</dt><dd>재호출 블록에만 붙는다. <strong><code>40-verifier</code> 의 <code>FIX</code> 대상 유닛만</strong> 열거한다 — 이전 판은 <code>FIX</code> 를 기록만 하고 소비하는 코드가 없었다</dd>
-    <dt>작성자</dt><dd>오케스트레이터가 <strong>쓰지 않는다.</strong> 스펙 문장을 쓰는 행위가 곧 판단이고(무엇을 <code>CONTEXT</code> 에 넣을지, <code>CONSTRAINTS</code> 를 어떻게 좁힐지가 결과를 바꾼다), 매번 달라지면 같은 MR 이 다른 결론을 낸다. <code>dispatch</code> 가 결정론적으로 생성하므로 <strong>같은 MR 은 같은 프롬프트를 받는다</strong></dd>
+    <dt>형식</dt><dd><code>WAVE n</code> · <code>SPEC &lt;analyzer|verifier|themes&gt;</code> · <code>READ a, b, …</code> · <code>BUDGET &lt;usd&gt;</code> · <code>RETURN &lt;path&gt;</code> · <code>SCOPE …</code>(있을 때만) 여섯 줄이 전부다. v2 의 <code>=== SPEC … ===</code> · <code>TASK</code> · <code>CONTEXT</code> · <code>TARGET FILES</code> · <code>CONSTRAINTS</code> · <code>LEDGER</code> · <code>REPORT</code> · <code>END WAVE</code> 는 <strong>폐기</strong>다</dd>
+    <dt>프롬프트는 따로</dt><dd>스펙 블록은 codex 에 그대로 가지 않는다. 실행기(<code>satellites.satellite_executor</code>)가 <code>parse_spec</code> 으로 되읽어 <code>SPEC</code> · <code>SCOPE</code> · <code>RETURN</code> 으로 미션을 조립한다 — 시스템 프롬프트(HARD LIMITS) + 렌더러 템플릿 + 담당 파일별 <code>head · base</code> 절대경로 + 작성 규칙 + 리턴 형식. <code>READ</code> · <code>BUDGET</code> · <code>WAVE</code> 는 프롬프트에 쓰이지 않는다(스펙에 남는 기록일 뿐)</dd>
+    <dt>READ</dt><dd>산출물 <strong>경로</strong> 목록이다 — 라인 범위는 없다. 볼 절의 위치는 미션 프롬프트가 「07 발췌 → 06 → 05 CHANGED → base/·snapshot/ 해당 절 ±20줄」 순서와 절대경로로 준다. 검색 도구가 필요 없다는 전제는 그대로다</dd>
+    <dt>VERIFY</dt><dd><strong>없다.</strong> 실행 가능한 검증 명령이 없고, 그 자리를 실행기의 <code>plan.check()</code>, <code>levelcheck</code> 의 분류 검증·어휘 게이트, <code>collect</code> 의 refs 검증, <code>doc-verifier</code> 의 충실도 · 카운트 감사가 나눠 맡는다</dd>
+    <dt>SCOPE</dt><dd>일반 analyzer 배치는 <code>files i..j</code>, 재호출은 <code>units &lt;id,…&gt;</code> — 대상은 <code>40-verifier</code> FIX 만이 아니라 세 게이트의 합집합이다(→ 40-verifier 노트). verifier · themes 블록에는 없다</dd>
+    <dt>작성자</dt><dd>오케스트레이터가 <strong>쓰지 않는다.</strong> 스펙과 프롬프트를 쓰는 행위가 곧 판단이고(무엇을 넣을지, 어떻게 좁힐지가 결과를 바꾼다), 매번 달라지면 같은 MR 이 다른 결론을 낸다. <code>dispatch</code> 와 미션 빌더가 산출물에서 결정론적으로 만들므로 <strong>같은 MR 은 같은 프롬프트를 받는다</strong></dd>
   </dl>
   <div class="codewrap">
-    <div class="bar"><span class="f">ledger.md</span><span class="flow">append-only · 두 번째 소스</span></div>
-<pre>482  w1  tool      mrdoc literals   → units=3 removed=2 added=2 changed=1
-482  w2  tool      mrdoc excerpt    → excerpts=5
-482  w3  analyzer  OK auth-md-a3c19d units=3 classes=의미:2,표현:1
-482  w3  join      1/1 파일 analysis 완료
-482  w4  tool      mrdoc levelcheck → promoted=0 vocab_violations=0
-482  w5  verifier  fidelity ok2/invented1 required_fixes=1 → 40-verifier.md</pre>
+    <div class="bar"><span class="f">ledger.md</span><span class="flow">append-only · 타임스탬프 없음 · !482 실행 그대로</span></div>
+<pre>wave 1 start
+changeset done
+structure done
+literals done
+excerpt done
+analyzer done (20-analysis)
+levelcheck done
+wave 2 start
+verifier done (40-verifier.md)
+fix round 1: u-227df86d
+analyzer done (fix round, 1 targets)
+levelcheck done
+wave 3 start
+verifier done (40-verifier.md)
+wave 4 start
+themes done (45-themes.md)
+collect done
+render done
+pipeline complete
+
+<span class="c">그 밖에 나올 수 있는 줄</span>
+themes degraded (satellite failed)          verifier degraded (satellite failed)
+analyzer raised (fix round): &lt;error&gt;
+analyzer failed (fix round) — 20-analysis restored, gates reinstated
+abort: agent failed: analyzer               abort: no progress               abort: &lt;예외&gt;</pre>
   </div>
-  <p class="lede">오케스트레이터는 <strong>Python 프로세스</strong>(<code>app/mrdoc/orchestrator.py</code>)이고 위성 호출은 <code>codex exec</code> headless 다. LLM 컨텍스트가 없으므로 컴팩션도 프롬프트 망각도 애초에 없다 — 그럼에도 ledger write 를 툴에 두는 이유는 <strong>산출물 존재와 독립된 두 번째 소스</strong>가 있어야 유실을 감지하기 때문이다.</p>
+  <p class="lede">오케스트레이터는 <strong>Python 프로세스</strong>(<code>app/mrdoc/orchestrator.py</code>)이고 위성 호출은 <code>codex exec</code> headless 다. LLM 컨텍스트가 없으므로 컴팩션도 프롬프트 망각도 애초에 없다. ledger 는 노드 완료 · 라운드 · 저하 · abort 를 wave 끝에 한꺼번에 쓰는 <strong>사람용 기록</strong>이다 — 상태는 산출물 존재에서만 도출하고, 위성 리턴은 싣지 않는다. 두 소스를 대조해 유실을 감지하는 코드는 없다.</p>
 
   <h4>개정 이력 — 이전 문서 산출물명 ↔ 현재</h4>
   <div class="tw">
@@ -1278,6 +1631,7 @@ RUN: mrdoc levelcheck --work &lt;abs&gt;
       <tr><td><code>30-coverage.md</code></td><td>삭제 — mrdoc coverage 제거</td></tr>
       <tr><td><code>40-reportdata.md</code></td><td>삭제 — doc-reporter 제거</td></tr>
       <tr><td>—</td><td><code>07-excerpts.md</code> 신설</td></tr>
+      <tr><td>v2 표기 — 노드 9 · <code>mrdoc</code> 서브커맨드 · maxTurns/BUDGET 턴 · fix 1회 · 4섹션 리포트</td><td><strong>v3 2026-09-27 코드 동기화</strong> — 노드 10(doc-themes / <code>45-themes.md</code> 신설) · fix 라운드 2회 + <code>40-verifier.rN.md</code> · <code>30-levelcheck.rN.md</code> 아카이브 · CLI 폐기(in-process 툴 노드 · <code>dispatch.next_specs()</code> 직접 호출) · <code>codex exec</code> · timeout 600s(BUDGET USD 미집행) · 스펙 블록 6줄 · 리포트 01~05 · 원자 인벤토리 집계</td></tr>
     </tbody>
   </table>
   </div>
@@ -1286,6 +1640,7 @@ RUN: mrdoc levelcheck --work &lt;abs&gt;
 <footer>
   <span>mr-review-agent-design.md · 1627줄</span>
   <span>v2 개정 2026-09-04 — 판정 제거, 분류·설명 리포트로 전환. 근거: MR !18 실측</span>
+  <span>v3 동기화 2026-09-27 — app/mrdoc/ 코드 기준. Part 3 예시는 실제 렌더러 출력</span>
   <span>1차 착수 전 선행 측정: 리터럴 밀도 — 절당 3개 이상이면 설계 그대로, 1개 미만이면 분류 근거 재설계</span>
 </footer>
 </main>

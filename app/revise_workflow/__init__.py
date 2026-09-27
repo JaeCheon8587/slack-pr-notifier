@@ -4,14 +4,14 @@ The revise loop is today one headless CLI call that is told to edit the docs
 and report `{applied, unapplied, summary}` (app/ai_runner.py). Nothing checks
 that the thing a human pointed at exists, that its companions were updated,
 or that "I applied it" is true. docs/revise-workflow.html splits that into a
-fixed 9-node DAG where judgment goes to three separate LLM calls and every
+fixed 8-node DAG where judgment goes to three separate LLM calls and every
 search, existence check and comparison is a deterministic Python node.
 
 This package holds the deterministic half:
 
 - `workspace` — artifact paths under `<workspace_root>/.revise/...` plus
   file-existence state derivation (resume from the node that died).
-- `schema`    — the seven artifacts' dataclasses, parsers and renderers. The
+- `schema`    — the eight artifacts' dataclasses, parsers and renderers. The
   renderers also produce the empty templates the prompts carry, so a prompt
   and its parser physically cannot drift.
 - `nodes`     — the five tool nodes: anchor / spec / impact / gate /

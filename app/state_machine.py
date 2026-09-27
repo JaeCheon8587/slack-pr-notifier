@@ -92,7 +92,8 @@ def cas_transition(
     status=?``. Returns True if the row was updated (transition accepted),
     False if rowcount was 0 (transition rejected — someone else already
     moved the state, e.g. duplicate approve click or a racing external
-    merge/close webhook per §③ 651/§⑤ dual-write note).
+    merge/close webhook per the §③ external merge/close note / §⑤
+    dual-write note).
 
     Raises InvalidTransitionError if (from_status, to_status) is not one of
     the edges defined in ALLOWED_TRANSITIONS, or if ``reason`` is given but

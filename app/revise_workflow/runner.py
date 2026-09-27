@@ -125,7 +125,7 @@ class _Round:
 # Public entry point
 # ---------------------------------------------------------------------------
 class StagedRunner:
-    """`AIRunner` for `AI_RUNNER=staged` — drives the fixed 7-node DAG.
+    """`AIRunner` for `AI_RUNNER=staged` — drives the fixed 8-node DAG.
 
     Every failure mode is returned as `ReviseResult(kind="failed", ...)`,
     never raised: `app.revise_executor` folds that into its `revise_attempts`

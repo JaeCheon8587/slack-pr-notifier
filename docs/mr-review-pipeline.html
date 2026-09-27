@@ -248,22 +248,23 @@ footer{margin-top:30px;font-family:var(--mono);font-size:10.5px;color:var(--ink-
 
 <header>
   <div class="eyebrow">MR REVIEW PIPELINE · DOCS-PIPELINE · SQLITE v2 · DESIGN v4</div>
-  <h1>MR 리뷰 파이프라인 — 승인/의견 → <b class="mono" style="color:var(--accent)">AI 재생성 루프</b> (SQLite 기반 v2 · v4.3)</h1>
-  <p class="lede">AI가 생성한 문서 MR을 Slack에서 리뷰하고, 의견을 AI 재생성의 입력으로 사용하는 승인 게이트. 상태·의견은 SQLite에, 실행(claude CLI)·알림은 모두 미들웨어에 위임한다. <span class="v3-badge">v4 개정</span></p>
+  <h1>MR 리뷰 파이프라인 — 승인/의견 → <b class="mono" style="color:var(--accent)">AI 재생성 루프</b> (SQLite 기반 v2 · v4.4)</h1>
+  <p class="lede">AI가 생성한 문서 MR을 Slack에서 리뷰하고, 의견을 AI 재생성의 입력으로 사용하는 승인 게이트. 상태·의견은 SQLite에, 실행(claude CLI · codex CLI)·알림은 모두 미들웨어에 위임한다. <span class="v3-badge">v4 개정</span><span class="v3-badge">v4.4 개정</span></p>
   <div class="chips">
     <span class="chip">스코프 <b>MR 발행 후 ~ 머지 전</b></span>
     <span class="chip">상태 저장 <b>SQLite (미들웨어)</b></span>
-    <span class="chip">재생성 <b>미들웨어 (claude CLI)</b></span>
+    <span class="chip">재생성 <b>미들웨어 (AI_RUNNER: stub · claude · staged=codex exec)</b> <span class="v3-badge" style="font-size:9px;margin-left:2px">v4.4</span></span>
+    <span class="chip">md 지배 MR 분석 <b>mrdoc 레일 (opt-in)</b> <span class="v3-badge" style="font-size:9px;margin-left:2px">v4.4</span></span>
     <span class="chip">머지 <b>승인 후 자동(poll)</b> <span class="v3-badge" style="font-size:9px;margin-left:2px">v4.2</span></span>
     <span class="chip">Docusaurus <b>스코프 외 (머지 후)</b></span>
   </div>
 </header>
 
 <div class="rev-history">
-  <div class="rh-title">개정 이력 (v3 / v3.1 / v3.2 / v4 / v4.1 / v4.2 / v4.3) <span class="v3-badge">v3 개정</span><span class="v3-badge">v3.1 개정</span><span class="v3-badge">v3.2 개정</span><span class="v3-badge">v4 개정</span><span class="v3-badge">v4.1 개정</span><span class="v3-badge">v4.2 개정</span><span class="v3-badge">v4.3 개정</span> · REV 2026-07-27</div>
+  <div class="rh-title">개정 이력 (v3 / v3.1 / v3.2 / v4 / v4.1 / v4.2 / v4.3 / v4.4) <span class="v3-badge">v3 개정</span><span class="v3-badge">v3.1 개정</span><span class="v3-badge">v3.2 개정</span><span class="v3-badge">v4 개정</span><span class="v3-badge">v4.1 개정</span><span class="v3-badge">v4.2 개정</span><span class="v3-badge">v4.3 개정</span><span class="v3-badge">v4.4 개정</span> · REV 2026-09-27</div>
   <ol>
     <li><b>[1]</b> 상태 전이를 원자적 CAS(<span class="mono">UPDATE … WHERE status=?</span>) 한 문장으로 명시하고 누락 엣지 4개 추가 → check-then-act 레이스 제거, 상태기계를 완전하게 함</li>
-    <li><b>[2]</b> round 상한·사람커밋 감지 가드를 CI에서 미들웨어(Pipeline Trigger 직전)로 이동 → 2-엔드포인트 원칙(doc:299)을 지키면서 가드 결과를 안전하게 기록</li>
+    <li><b>[2]</b> round 상한·사람커밋 감지 가드를 CI에서 미들웨어(Pipeline Trigger 직전)로 이동 → 2-엔드포인트 원칙(§① 원칙)을 지키면서 가드 결과를 안전하게 기록</li>
     <li><b>[3]</b> <span class="mono">-o ci.skip</span>을 봇 전용 경량 파이프라인으로, 즉시 merge를 mergeable-poll 방식으로 교체 → "Pipelines must succeed" 설정과의 충돌 해소</li>
     <li><b>[4]</b> <span class="mono">/internal/notify</span>에 Idempotency-Key 도입, <span class="mono">opinion</span>에 UNIQUE 제약 추가 → 재시도·이중 클릭 시 중복 알림·중복 의견 방지</li>
     <li><b>[5]</b> SHA 신선도 검증을 클릭 시점 GitLab API 조회로 변경 → 사람이 새로 push한 이후에도 최신본을 정확히 판단</li>
@@ -275,29 +276,31 @@ footer{margin-top:30px;font-family:var(--mono);font-size:10.5px;color:var(--ink-
     <li><b>[11]</b> v4.1: 접합부 감사(critical 4) 반영 — review-prep 기동 조건 축소, GitLab approve 단계 제거(머지 API 단일화), 외부 머지/닫힘 웹훅 감지, opinion PK·last_verdict 및 event_log 발송 상태 스키마 보강. 장애모드·의견로더·재발급 정합(M1-M5). 워크스페이스·merging 레일·권한·타이머 정합(M7-M12).</li>
     <li><b>[12]</b> v4.2: 재감사 잔존 구현 정합 3건([1]-[3]) 및 표기 정리 8건(m1-m8) 반영 — §S4 구현 상태(현재는 단일 claude CLI 호출 러너 v1, 오케스트레이터+서브에이전트 체인은 백로그) 명시, 운영자 재개 전이 미구현(백로그) 표기, revise 성공 vs 외부 머지/닫힘 경합 시 DB 불변이나 원격 잔존 커밋은 사람 확인 대상으로 명시. 헤더 chip·CI 시대 용어·[A]/[B] 레터링·내부 함수 인자 표기·"발신"→"결과 처리" 블록명·event_log.kind 목록/네임스페이스 구분·DB 유실 복구 범위(부분 복구로 하향)·CSS 잔재 클래스 주석 정리. <span class="v3-badge">v4.2 신규</span></li>
     <li><b>[13]</b> v4.3: §③ 상태 기계 도표를 Mermaid(top-down)로 교체 — 가독성 개선, 전이·사유는 구현(state_machine.py) 기준으로 정렬. 렌더 크기·가독성 조정.</li>
+    <li><b>[14]</b> v4.4 (2026-09-27): 코드 동기화 — §S4 AI 체인을 구현 기준으로 개정: <span class="mono">AI_RUNNER=staged</span> 러너가 8노드 고정 체인(intent→anchor→spec→impact→edit→gate→verify→summary)을 Python으로 흐름 제어하고 3a·3b·3c를 각각 별도 <span class="mono">codex exec</span> 호출로 실행 — v3.1의 "단일 세션·단계별 별도 CLI 호출 금지" 결정은 폐기(헤드리스 서브에이전트 결과 회수가 실측에서 조용히 실패, mrdoc의 노드별 <span class="mono">codex exec</span> + 산출물 존재 검증 선례 채택). 결정론 노드(스펙 게이트·연관문서 검증·gate 되돌림·크기 상한·summary 커밋 경로 축소), 되물음(clarify) 라운드, 라운드 재알림(새 최상위 메시지·라운드 report.html), S1 리뷰 요약(summary/key_changes/points_to_watch, 등급·확인질문 없음)과 mrdoc 레일, S1 버튼 문구·HMAC 토큰(MR 정보 + 24h exp, session_id 없음), poller·Socket Mode·<span class="mono">/health</span>, 타이머 실값(벽시계 2400s·스위퍼 3000s·단계 600s), event_log.kind 실제 목록, idempotency_key 실제 용도(웹훅 UUID dedup), <span class="mono">manual→reviewing</span>(mr_reopened, poller) 반영. revising 중 의견도 저장돼 다음 라운드에 포함됨(INSERT가 CAS보다 먼저)으로 정정. GitLab 라벨·permalink 미러와 그에 기댄 DB 유실 부분 복구, 확인질문 체크박스·question_refs, 전역 세마포어, 재기동 시 revise 재시도는 구현 부재로 정정(설계 원안은 취소선으로 보존)하고, 발송 재시도 큐는 스위퍼 알림에만 쓰임을 명시. 사람 push 후 재발급 [승인] 버튼(빈 필드 토큰 → 클릭 실패)과 웹훅 reopen 시 manual 유지를 알려진 결함으로 표기. <span class="v3-badge">v4.4 신규</span></li>
   </ol>
 </div>
 
 <!-- ① 컴포넌트 맵 -->
 <section class="sect">
-  <div class="sec-head"><span class="num">①</span><h2>컴포넌트 맵</h2><span class="rule"></span><span class="v3-badge">v4 개정</span></div>
+  <div class="sec-head"><span class="num">①</span><h2>컴포넌트 맵</h2><span class="rule"></span><span class="v3-badge">v4 개정</span><span class="v3-badge">v4.4 개정</span></div>
   <div class="comp-grid">
     <div class="comp-card ci">
-      <div class="ctitle">🤖 AI 실행기 <span class="badge">claude CLI 서브프로세스</span><span class="v3-badge">v4 개정</span></div>
-      <div class="csub">미들웨어 내부 구성요소 · claude CLI 서브프로세스 + git 워크스페이스 <span class="v3-badge">v4 개정</span></div>
+      <div class="ctitle">🤖 AI 실행기 <span class="badge">claude · codex CLI 서브프로세스</span><span class="v3-badge">v4.4 개정</span></div>
+      <div class="csub">미들웨어 내부 구성요소 · claude CLI(review-prep·<span class="mono">AI_RUNNER=claude</span>) / codex CLI(<span class="mono">AI_RUNNER=staged</span>·mrdoc 위성) 서브프로세스 + git 워크스페이스 <span class="v3-badge">v4.4 개정</span></div>
 
       <div class="job-block">
-        <div class="jl">[A] review-prep 실행 <span class="tag">MR open 웹훅 수신 직후 / revise 완료 직후(내부 호출)</span> <span class="v3-badge">v4.1 개정</span></div>
+        <div class="jl">[A] review-prep 실행 <span class="tag">MR open 웹훅 수신 직후 (revise 라운드 뒤에는 재호출하지 않음)</span> <span class="v3-badge">v4.4 개정</span></div>
         <ul>
-          <li>맥락 diff JSON + <code>report.html</code> 생성 (claude)</li>
+          <li>리뷰 요약 JSON(<code>summary</code> · <code>key_changes</code> · <code>points_to_watch</code>) 생성 (claude CLI) + 알림 스레드에 범용 <code>report.html</code> 업로드(<span class="mono">REPORT_HTML_ENABLED</span>, 기본 켜짐) — 설계의 등급(🔴🟡🟢)·확인질문은 생성하지 않음 <span class="v3-badge">v4.4 개정</span></li>
           <li>코어에 내부 함수 호출로 결과 전달(notify) — CI 없이 미들웨어 프로세스 내에서 직접 수행 <span class="v3-badge">v4 개정</span></li>
+          <li>md 지배 MR: <span class="mono">MRDOC_ENABLED</span>·<span class="mono">MRDOC_SATELLITE_ENABLED</span>(둘 다 기본 꺼짐)가 모두 켜져 있고 md 비율 ≥ 0.8이면 Slack 발송 뒤 데몬 스레드로 mrdoc 레일 기동 — codex 위성(analyzer·verifier·themes)으로 분석하고 스레드에 <code>mrdoc-report.html</code> 메시지 1건(요약은 <span class="mono">initial_comment</span>)을 올림, 이때 범용 report.html은 생략. 변경 분류 라벨은 구조 · 의미(맥락) · 의미(값) · 표현 · 미분류(설계의 3등급과 다름). 상세는 <a href="mrdoc-pipeline.html">mrdoc-pipeline.html</a> <span class="v3-badge">v4.4 신규</span></li>
         </ul>
       </div>
       <div class="job-block">
-        <div class="jl">[B] revise 실행 <span class="tag">미들웨어가 직접 기동(내부 함수 호출, <span class="mono">session_id, mr_iid</span> 인자) · MR 단위 직렬화 큐(락)</span> <span class="v3-badge">v4 개정</span><span class="v3-badge">v4.2 개정</span></div>
+        <div class="jl">[B] revise 실행 <span class="tag">미들웨어가 직접 기동(내부 함수 호출 <span class="mono">enqueue_revise(session_id)</span>) · 직렬화 큐(프로세스 전역 큐 1개 + 워커 스레드 1개)</span> <span class="v3-badge">v4 개정</span><span class="v3-badge">v4.2 개정</span><span class="v3-badge">v4.4 개정</span></div>
         <ul>
-          <li>의견 반영해 문서 재생성 — <b>메타프롬프팅 → 재생성 → 대조검증</b> 오케스트레이터 + 서브에이전트 3단 체인 (단일 세션·호출 1회) <span class="v3-badge">v3.1 개정</span></li>
-          <li>MR 커밋 → <code>[A]</code> 재호출</li>
+          <li>의견 반영해 문서 재생성 — 러너는 <span class="mono">AI_RUNNER</span>로 선택: <span class="mono">stub</span>(기본) · <span class="mono">claude</span>(단일 claude CLI 호출 v1) · <span class="mono">staged</span>(<b>메타프롬프팅 → 재생성 → 대조검증</b>을 포함한 8노드 고정 체인, 노드별 <span class="mono">codex exec</span>, 흐름 제어는 Python — §S4②) <span class="v3-badge">v3.1 개정</span><span class="v3-badge">v4.4 개정</span></li>
+          <li>MR 커밋·push → 라운드 재알림(새 최상위 메시지 + 라운드 요약 <code>report.html</code>) — <code>[A]</code> review-prep·mrdoc는 재호출하지 않음 <span class="v3-badge">v4.4 개정</span></li>
         </ul>
       </div>
     </div>
@@ -310,14 +313,16 @@ footer{margin-top:30px;font-family:var(--mono);font-size:10.5px;color:var(--ink-
         <div class="jl">수신 <span class="tag">/webhooks/gitlab/mr <span class="v3-badge">v4 신규</span></span></div>
         <ul>
           <li>GitLab 웹훅: MR open/update/merge/close · push 이벤트 · secret token 검증(comment 이벤트는 구독하지 않음 — 의견 유입은 Slack 모달 단일 경로이고, MR 코멘트는 미들웨어의 발신 전용 미러라 소비자가 없음) <span class="v3-badge">v4 신규</span><span class="v3-badge">v4.1 개정</span></li>
-          <li>MR <b>open</b> 시에만 AI 실행기(review-prep) 기동(그 외 재기동은 revise 완료 직후 내부 호출뿐) · push/merge/close → 사람 push 정책·외부 머지/닫힘 감지 레일로 평가(§③ 상태 기계 참조) — push와 MR update 이벤트가 동시 발화하므로 update 이벤트는 review-prep 재기동에 사용하지 않는다 <span class="v3-badge">v4.1 개정</span></li>
+          <li>재전송 dedup: GitLab <span class="mono">X-Gitlab-Webhook-UUID</span> 헤더를 <span class="mono">event_log.idempotency_key</span>(UNIQUE)에 적재 — 같은 UUID가 다시 오면 no-op(헤더가 없으면 dedup 없이 진행) <span class="v3-badge">v4.4 신규</span></li>
+          <li>대체 수신(opt-in): 인바운드 웹훅이 막힌 환경용 GitLab poller(<span class="mono">POLL_ENABLED</span>·<span class="mono">POLL_PROJECT_IDS</span>, 주기 <span class="mono">POLL_INTERVAL=60</span>초, 기본 꺼짐) — opened MR 목록·head SHA·상태를 DB와 비교해 신규 MR·사람 push·외부 머지/닫힘·재오픈을 감지하고 웹훅과 같은 처리 함수(<span class="mono">app/ingest.py</span>)를 호출 <span class="v3-badge">v4.4 신규</span></li>
+          <li>MR <b>open</b> 시에만 AI 실행기(review-prep) 기동 · push/merge/close → 사람 push 정책·외부 머지/닫힘 감지 레일로 평가(§③ 상태 기계 참조) — push와 MR update 이벤트가 동시 발화하므로 update 이벤트는 review-prep 재기동에 사용하지 않는다 <span class="v3-badge">v4.1 개정</span><span class="v3-badge">v4.4 개정</span></li>
         </ul>
       </div>
       <div class="job-block">
         <div class="jl">결과 처리 <span class="tag">AI 실행기 결과(내부 호출: kind ok | failed) 수신</span> <span class="v3-badge">v4 개정</span><span class="v3-badge">v4.2 개정</span></div>
         <ul>
           <li>Block Kit 렌더 → Slack 발송 (메인 메시지 + 스레드 <span class="mono">report.html</span> 다운로드 링크)</li>
-          <li>세션 기록 · 발송 재시도 큐 + event_log 발송 상태(pending/sent/failed)로 관리 — round 카운터 소유자는 미들웨어 <span class="v3-badge">v4 개정</span></li>
+          <li>세션 기록 — round 카운터 소유자는 미들웨어. 발송 재시도 큐(event_log 발송 상태 pending/sent/failed)를 쓰는 발송은 스위퍼 알림뿐 — 최초 알림·revise 재알림 발송 실패는 로그만 남는다 <span class="v3-badge">v4 개정</span><span class="v3-badge">v4.4 개정</span></li>
           <li>담당자 매핑이 공집합인 세션은 알림 시점에 즉시 <span class="mono">status=manual</span> 분기 + Slack 채널 경고 메시지로 종료(승인 클릭 권한 규칙 §⑦ 참조) <span class="v3-badge">v4.1 개정</span></li>
         </ul>
       </div>
@@ -325,8 +330,9 @@ footer{margin-top:30px;font-family:var(--mono);font-size:10.5px;color:var(--ink-
         <div class="jl">수신 <span class="tag">/webhooks/slack/actions</span></div>
         <ul>
           <li>승인 버튼 → 클릭 시점 GitLab API로 최신 SHA 재조회 후 merge API poll 호출(SHA 고정, GitLab 측 approve 호출 없음 — 공식 승인 기록은 Slack 클릭 + DB 세션 기록 + MR 코멘트 미러) <span class="v3-badge">v4.1 개정</span></li>
-          <li>의견 버튼 → 모달 저장 → opinion INSERT(+ GitLab 코멘트 이중 기록) → 가드(a)(b) 평가 → CAS 잠금(<span class="mono">reviewing→revising</span>, 거부 시 <span class="mono">reviewing→manual</span>) → 미들웨어가 revise 실행기(claude CLI 서브프로세스)를 직접 기동 → Slack 갱신 <span class="v3-badge">v4 개정</span></li>
+          <li>의견 버튼 → 모달 저장 → opinion INSERT(+ GitLab 코멘트 이중 기록) → 가드(a)(b) 평가 → CAS 잠금(<span class="mono">reviewing→revising</span>, 거부 시 <span class="mono">reviewing→manual</span>) → 미들웨어가 revise 실행기(<span class="mono">AI_RUNNER</span>별 claude/codex CLI 서브프로세스)를 직접 기동 → Slack 갱신 <span class="v3-badge">v4 개정</span><span class="v3-badge">v4.4 개정</span></li>
           <li>상태 갱신(CAS)</li>
+          <li>대체 수신(opt-in): Slack Socket Mode(<span class="mono">SLACK_SOCKET_MODE</span> + <span class="mono">SLACK_APP_TOKEN</span>, 기본 꺼짐) — 아웃바운드 WebSocket으로 버튼·모달 상호작용을 받아 HTTP 경로와 같은 처리 함수(<span class="mono">dispatch_interaction</span>)로 넘김 <span class="v3-badge">v4.4 신규</span></li>
         </ul>
       </div>
       <div class="job-block">
@@ -337,10 +343,10 @@ footer{margin-top:30px;font-family:var(--mono);font-size:10.5px;color:var(--ink-
       </div>
     </div>
 
-    <div class="link-note"><span class="seg">claude · git → 미들웨어 내부 실행기 전용</span> <span class="v3-badge">v4 개정</span>⇄<span class="seg">실행기↔코어 내부 호출 계약</span> <span class="v3-badge">v4 개정</span>⇄<span class="seg">Slack 자격증명 · ts · 상태 → 미들웨어 전용</span></div>
+    <div class="link-note"><span class="seg">claude · codex · git → 미들웨어 내부 실행기 전용</span> <span class="v3-badge">v4 개정</span><span class="v3-badge">v4.4 개정</span>⇄<span class="seg">실행기↔코어 내부 호출 계약</span> <span class="v3-badge">v4 개정</span>⇄<span class="seg">Slack 자격증명 · ts · 상태 → 미들웨어 전용</span></div>
   </div>
   <div class="principle" style="background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin-top:2px">
-    <b>원칙</b>: Slack 자격증명·메시지 ts·상태·claude·git은 모두 미들웨어 프로세스 내부에만 존재한다. AI 실행은 미들웨어 내부 함수 호출이며, <span class="mono">/internal/notify</span>·<span class="mono">/internal/opinions</span> HTTP 엔드포인트는 폐지되고 실행기↔코어 내부 호출 계약으로 대체됐다. 외부 접점은 <span class="mono">/webhooks/gitlab/mr</span>(GitLab 웹훅 수신)과 <span class="mono">/webhooks/slack/actions</span>(Slack actions 수신) 2개뿐이다. <span class="v3-badge">v4 개정</span>
+    <b>원칙</b>: Slack 자격증명·메시지 ts·상태·claude·codex·git은 모두 미들웨어 프로세스 내부에만 존재한다. AI 실행은 미들웨어 내부 함수 호출이며, <span class="mono">/internal/notify</span>·<span class="mono">/internal/opinions</span> HTTP 엔드포인트는 폐지되고 실행기↔코어 내부 호출 계약으로 대체됐다. <s>외부 접점은 2개뿐이다.</s> <span class="v3-badge">v4 개정</span> → v4.4: HTTP 수신구는 <span class="mono">/webhooks/gitlab/mr</span>(GitLab 웹훅)·<span class="mono">/webhooks/slack/actions</span>(Slack actions)와 상태 확인용 <span class="mono">GET /health</span>. 인바운드가 막힌 환경을 위한 아웃바운드 대체 경로 2개(둘 다 opt-in·기본 꺼짐): GitLab poller(<span class="mono">POLL_ENABLED</span>)와 Slack Socket Mode(<span class="mono">SLACK_SOCKET_MODE</span>) — 둘 다 HTTP 경로와 같은 처리 함수를 호출하고, 상태 전이는 모두 같은 CAS를 거친다 <span class="v3-badge">v4.4 개정</span>
   </div>
 </section>
 
@@ -352,21 +358,21 @@ footer{margin-top:30px;font-family:var(--mono);font-size:10.5px;color:var(--ink-
     <!-- S1 -->
     <div class="scenario s1">
       <div class="s-tag">S1 · 최초 알림</div>
-      <h3>웹훅(MR open) 수신 → 미들웨어가 claude로 리뷰 자료 생성 → Slack 알림 <span class="v3-badge">v4.1 개정</span></h3>
+      <h3>웹훅(MR open) 수신 → 미들웨어가 claude로 리뷰 요약 생성 → Slack 알림 → 스레드에 report.html (md 지배 MR은 mrdoc 레일) <span class="v3-badge">v4.1 개정</span><span class="v3-badge">v4.4 개정</span></h3>
       <div class="steps-rail">
         <div class="step hum">
           <div class="no">1</div><div class="tt">/webhooks/gitlab/mr 수신</div>
-          <div class="ss">MR open 이벤트 · secret token 검증 — update 이벤트는 push와 동시 발화하므로 이 흐름을 재기동하지 않음(§③ 참조) <span class="v3-badge">v4.1 개정</span></div>
+          <div class="ss">MR open/reopen 이벤트 · secret token 검증 — update 이벤트는 push와 동시 발화하므로 이 흐름을 재기동하지 않음(§③ 참조) <span class="v3-badge">v4.1 개정</span><br>poller가 켜져 있으면 신규 opened MR 감지도 같은 흐름으로 들어옴. 담당자 매핑이 공집합이면 review-prep 없이 즉시 <span class="mono">manual</span> + 채널 경고로 종료 <span class="v3-badge">v4.4 개정</span></div>
         </div>
         <div class="sarrow"><svg width="16" height="12" viewBox="0 0 16 12" fill="none"><path d="M0 6h12M8 1l6 5-6 5" stroke="currentColor" stroke-width="1.5"/></svg></div>
         <div class="step ai">
           <div class="no">2</div><div class="tt">[A] review-prep</div>
-          <div class="ss">미들웨어가 claude CLI 서브프로세스로 맥락 diff 생성<br><span class="mono">변경동인·서술이동·독자영향</span> <span class="v3-badge">v4 개정</span></div>
+          <div class="ss">GitLab에서 MR 컨텍스트(변경 파일·diff·내용) 조회 → claude CLI 서브프로세스가 리뷰 요약 JSON 생성: <span class="mono">summary · key_changes · points_to_watch</span> (승인/거절 판단은 하지 않음). 실패 시 AI 내용 없이 알림만 발송 <span class="v3-badge">v4.4 개정</span><br><s><span class="mono">맥락 diff: 변경동인·서술이동·독자영향</span></s> — 설계 원안, 미구현 <span class="v3-badge">v4 개정</span></div>
         </div>
         <div class="sarrow"><svg width="16" height="12" viewBox="0 0 16 12" fill="none"><path d="M0 6h12M8 1l6 5-6 5" stroke="currentColor" stroke-width="1.5"/></svg></div>
         <div class="step ai">
-          <div class="no">3</div><div class="tt">등급 · 확인질문</div>
-          <div class="ss">문서별 🔴주장변경 🟡보강 🟢표현만<br>+ 확인질문 리스트</div>
+          <div class="no">3</div><div class="tt"><s>등급 · 확인질문</s> (설계 원안 — 미구현)</div>
+          <div class="ss"><s>문서별 🔴주장변경 🟡보강 🟢표현만<br>+ 확인질문 리스트</s><br>→ v4.4: review-prep은 등급·확인질문을 만들지 않음. 문서 변경 분류는 opt-in mrdoc 레일(7단계)만 하며 라벨은 구조 · 의미(맥락) · 의미(값) · 표현 · 미분류 <span class="v3-badge">v4.4 개정</span></div>
         </div>
         <div class="sarrow"><svg width="16" height="12" viewBox="0 0 16 12" fill="none"><path d="M0 6h12M8 1l6 5-6 5" stroke="currentColor" stroke-width="1.5"/></svg></div>
         <div class="step">
@@ -376,12 +382,17 @@ footer{margin-top:30px;font-family:var(--mono);font-size:10.5px;color:var(--ink-
         <div class="sarrow"><svg width="16" height="12" viewBox="0 0 16 12" fill="none"><path d="M0 6h12M8 1l6 5-6 5" stroke="currentColor" stroke-width="1.5"/></svg></div>
         <div class="step hum">
           <div class="no">5</div><div class="tt">Slack 발송</div>
-          <div class="ss">담당자 멘션 · 요약+확인질문<br>[승인][의견] 버튼 (HMAC 토큰:<span class="mono">session_id+sha</span>)</div>
+          <div class="ss"><s>담당자 멘션 · 요약+확인질문</s> → 메인 메시지: MR 링크·브랜치·작성자·커밋 + 🤖 AI 요약(<span class="mono">summary</span>)·주요 변경점(<span class="mono">key_changes</span> 최대 6개). 담당자 멘션 없음, <span class="mono">points_to_watch</span>는 report.html에만<br>버튼 <span class="mono">Yes · 승인</span>(확인 대화상자) · <span class="mono">No · 변경 요청</span>(의견 모달). HMAC 토큰 = MR 정보(project_id·iid·sha·title·url·브랜치·작성자) 서명 + 24시간 <span class="mono">exp</span> — <s><span class="mono">session_id+sha</span></s>, 세션은 project_id+iid로 조회 <span class="v3-badge">v4.4 개정</span></div>
         </div>
         <div class="sarrow"><svg width="16" height="12" viewBox="0 0 16 12" fill="none"><path d="M0 6h12M8 1l6 5-6 5" stroke="currentColor" stroke-width="1.5"/></svg></div>
         <div class="step hum">
           <div class="no">6</div><div class="tt">스레드 업로드</div>
-          <div class="ss"><span class="mono">report.html</span> 첨부 — Slack은 HTML 인라인 렌더 불가, <b>다운로드 링크</b>로 제공됨 (§⑦ v2 옵션의 HTML→PNG와 연결) <span class="v3-badge">v3 개정</span></div>
+          <div class="ss">범용 <span class="mono">report.html</span>(<span class="mono">report-&lt;repo&gt;-&lt;iid&gt;-&lt;sha8&gt;.html</span>: 요약·변경점·살펴볼 지점·파일별 diff) 첨부 — <span class="mono">REPORT_HTML_ENABLED</span>(기본 켜짐), Slack files API v2(<span class="mono">files:write</span>). Slack은 HTML 인라인 렌더 불가, <b>다운로드 링크</b>로 제공됨 (§⑦ v2 옵션의 HTML→PNG와 연결) <span class="v3-badge">v3 개정</span><br>mrdoc 레일이 맡는 md 지배 MR이면 생략 <span class="v3-badge">v4.4 개정</span></div>
+        </div>
+        <div class="sarrow"><svg width="16" height="12" viewBox="0 0 16 12" fill="none"><path d="M0 6h12M8 1l6 5-6 5" stroke="currentColor" stroke-width="1.5"/></svg></div>
+        <div class="step ai">
+          <div class="no">7</div><div class="tt">mrdoc 레일 (opt-in)</div>
+          <div class="ss"><span class="mono">MRDOC_ENABLED</span>·<span class="mono">MRDOC_SATELLITE_ENABLED</span>(둘 다 기본 꺼짐)가 켜져 있고 md/mdx 비율 ≥ 0.8이면 Slack 발송 뒤 MR당 데몬 스레드 1개로 기동. 10노드(changeset→structure→literals→excerpt→analysis→levelcheck→verifier→themes→collect→render), LLM 노드는 codex 위성 analyzer·verifier·themes, fix round ≤ 2, 종료 코드 4(완료)/2(중단). 스레드에 <span class="mono">mrdoc-report.html</span> 메시지 1건(요약은 <span class="mono">initial_comment</span>) — 상세는 <a href="mrdoc-pipeline.html">mrdoc-pipeline.html</a> <span class="v3-badge">v4.4 신규</span></div>
         </div>
       </div>
     </div>
@@ -420,12 +431,12 @@ footer{margin-top:30px;font-family:var(--mono);font-size:10.5px;color:var(--ink-
         <div class="sarrow"><svg width="16" height="12" viewBox="0 0 16 12" fill="none"><path d="M0 6h12M8 1l6 5-6 5" stroke="currentColor" stroke-width="1.5"/></svg></div>
         <div class="step ok">
           <div class="no">5</div><div class="tt">status=merged</div>
-          <div class="ss"><span class="mono">merging→merged</span>(CAS) · 라벨 <span class="mono">docs-approved</span> <span class="v3-badge">v3.2 개정</span></div>
+          <div class="ss"><span class="mono">merging→merged</span>(CAS) · GitLab 라벨 미러 없음(라벨을 다루는 코드 없음) <span class="v3-badge">v3.2 개정</span><span class="v3-badge">v4.4 개정</span></div>
         </div>
         <div class="sarrow"><svg width="16" height="12" viewBox="0 0 16 12" fill="none"><path d="M0 6h12M8 1l6 5-6 5" stroke="currentColor" stroke-width="1.5"/></svg></div>
         <div class="step ok">
           <div class="no">6</div><div class="tt">Slack 메인 메시지 갱신</div>
-          <div class="ss">"✅ 승인·머지 완료"</div>
+          <div class="ss">"✅ 승인됨" <span class="v3-badge">v4.4 개정</span></div>
         </div>
       </div>
       <div class="guard">
@@ -450,7 +461,7 @@ footer{margin-top:30px;font-family:var(--mono);font-size:10.5px;color:var(--ink-
         <div class="sarrow"><svg width="16" height="12" viewBox="0 0 16 12" fill="none"><path d="M0 6h12M8 1l6 5-6 5" stroke="currentColor" stroke-width="1.5"/></svg></div>
         <div class="step hum">
           <div class="no">2</div><div class="tt">모달 입력</div>
-          <div class="ss">확인질문 체크박스 + 자유 텍스트</div>
+          <div class="ss"><s>확인질문 체크박스 +</s> 자유 텍스트만 — 확인질문을 생성하지 않으므로 체크박스 입력은 제거됨 <span class="v3-badge">v4.4 개정</span></div>
         </div>
         <div class="sarrow"><svg width="16" height="12" viewBox="0 0 16 12" fill="none"><path d="M0 6h12M8 1l6 5-6 5" stroke="currentColor" stroke-width="1.5"/></svg></div>
         <div class="step warn">
@@ -470,7 +481,7 @@ footer{margin-top:30px;font-family:var(--mono);font-size:10.5px;color:var(--ink-
         <div class="sarrow"><svg width="16" height="12" viewBox="0 0 16 12" fill="none"><path d="M0 6h12M8 1l6 5-6 5" stroke="currentColor" stroke-width="1.5"/></svg></div>
         <div class="step ai">
           <div class="no">6</div><div class="tt">revise 실행기 기동</div>
-          <div class="ss">미들웨어가 revise 실행기(claude CLI 서브프로세스)를 직접 기동 — MR 단위 직렬화 큐(락) 획득 후 실행 <span class="v3-badge">v4 개정</span></div>
+          <div class="ss">미들웨어가 revise 실행기(<span class="mono">AI_RUNNER</span>별 claude/codex CLI 서브프로세스)를 직접 기동 — 직렬화 큐(프로세스 전역 큐 1개 + 워커 스레드 1개) 경유 실행 <span class="v3-badge">v4 개정</span><span class="v3-badge">v4.4 개정</span></div>
         </div>
         <div class="sarrow"><svg width="16" height="12" viewBox="0 0 16 12" fill="none"><path d="M0 6h12M8 1l6 5-6 5" stroke="currentColor" stroke-width="1.5"/></svg></div>
         <div class="step hum">
@@ -478,7 +489,7 @@ footer{margin-top:30px;font-family:var(--mono);font-size:10.5px;color:var(--ink-
           <div class="ss">메인 메시지 <span class="mono">chat.update</span>로 버튼 제거 · "🔄 개선 작업 진행 중" (가드 거부 시 "⚠️ 자동개선 한도" / "👤 수동 편집 감지")</div>
         </div>
       </div>
-      <div class="subnote">S4① 참조 — 동일 사건의 단일 처리 순서(opinion INSERT → 가드(a)(b) → CAS 잠금 → 미들웨어가 revise 실행기 기동 <span class="v3-badge">v4 개정</span> → Slack 갱신). 2차 방어: 모든 상태 전이는 미들웨어가 원자적 CAS 한 문장 <span class="mono">UPDATE review_session SET status=? WHERE id=? AND status=?</span>으로 수행 — 잠금 직전 모달을 열어둔 사람의 늦은 제출은 이 CAS의 <span class="mono">rowcount=0</span>으로 자동 거부(check-then-act 아님) — "개선 작업 진행 중, 새 버전 알림에서 다시". <span class="v3-badge">v3 개정</span></div>
+      <div class="subnote">S4① 참조 — 동일 사건의 단일 처리 순서(opinion INSERT → 가드(a)(b) → CAS 잠금 → 미들웨어가 revise 실행기 기동 <span class="v3-badge">v4 개정</span> → Slack 갱신). 2차 방어: 모든 상태 전이는 미들웨어가 원자적 CAS 한 문장 <span class="mono">UPDATE review_session SET status=? WHERE id=? AND status=?</span>으로 수행 — 잠금 직전 모달을 열어둔 사람의 늦은 제출은 이 CAS의 <span class="mono">rowcount=0</span>으로 잠금·revise 기동만 거부된다(check-then-act 아님) <span class="v3-badge">v3 개정</span>. <s>"개선 작업 진행 중, 새 버전 알림에서 다시"</s> → v4.4: opinion INSERT가 CAS보다 먼저라 의견 행은 이미 저장돼 있고, 제출자에게는 ephemeral "이미 개선 작업이 진행 중입니다 — 의견은 접수되었고 다음 라운드에 자동 반영됩니다."가 간다. 이 의견은 <span class="mono">created_at</span>이 현재 라운드의 잠금 시각보다 늦어 이번 라운드에서는 빠지고, <span class="mono">applied_round IS NULL</span>로 남아 다음 라운드(다음 의견 제출로 시작되는 라운드)에 포함된다 <span class="v3-badge">v4.4 개정</span></div>
     </div>
 
     <div class="band" style="padding:10px 14px;margin:4px 0">
@@ -487,12 +498,12 @@ footer{margin-top:30px;font-family:var(--mono);font-size:10.5px;color:var(--ink-
         <thead><tr><th>상황</th><th>처리</th></tr></thead>
         <tbody>
           <tr><td>승인+승인</td><td>첫 번째 클릭이 CAS로 <span class="mono">reviewing→merging</span> 전환에 성공, 두 번째 클릭은 CAS <span class="mono">rowcount=0</span>으로 자체 거부 (GitLab 응답에 기대지 않음) <span class="v3-badge">v3.2 개정</span></td></tr>
-          <tr><td>승인 후 의견</td><td>동일하게 CAS <span class="mono">rowcount=0</span>으로 거부</td></tr>
-          <tr><td>revising 중 모든 버튼</td><td>버튼 자체가 제거됨(동결). 레이스 제출도 CAS <span class="mono">WHERE status='reviewing'</span> 조건 불일치로 거부</td></tr>
+          <tr><td>승인 후 의견</td><td>동일하게 CAS <span class="mono">rowcount=0</span>으로 잠금 거부 — 단 의견 행은 이미 INSERT돼 남고, 제출자는 revising 경합과 같은 "의견은 접수되었고 다음 라운드에 자동 반영" 안내를 받는다(세션이 merging/merged여도 문구 동일) <span class="v3-badge">v4.4 개정</span></td></tr>
+          <tr><td>revising 중 모든 버튼</td><td>버튼 자체가 제거됨(동결). 레이스 제출은 CAS <span class="mono">WHERE status='reviewing'</span> 조건 불일치로 잠금·revise 기동이 거부되지만, 의견은 이미 저장돼 다음 라운드 대상이 된다(S3 subnote 참조) <span class="v3-badge">v4.4 개정</span></td></tr>
           <tr><td>권한 없는 클릭</td><td>0단계 권한 검사에서 매핑 담당자 집합 불일치/공집합으로 거부 — ephemeral 응답만 반환, CAS 시도 자체가 발생하지 않으므로 상태 불변 <span class="v3-badge">v4.1 신규</span></td></tr>
-          <tr><td>외부 머지 웹훅 vs 진행 중 전이</td><td>승인 클릭·의견 제출 등 진행 중이던 전이와 외부 머지/닫힘 웹훅이 동시에 CAS를 다투면 먼저 성공한 쪽이 확정되고 후착은 <span class="mono">rowcount=0</span>으로 무효 처리(§③ 651 참조) <span class="v3-badge">v4.1 신규</span></td></tr>
+          <tr><td>외부 머지 웹훅 vs 진행 중 전이</td><td>승인 클릭·의견 제출 등 진행 중이던 전이와 외부 머지/닫힘 웹훅이 동시에 CAS를 다투면 먼저 성공한 쪽이 확정되고 후착은 <span class="mono">rowcount=0</span>으로 무효 처리(§③ 상태 기계의 외부 머지/닫힘 서술 참조) <span class="v3-badge">v4.1 신규</span><span class="v3-badge">v4.4 개정</span></td></tr>
           <tr><td>revise 성공 vs 외부 머지/닫힘 경합</td><td>CAS 패배 시 DB(round·applied_round·sha)는 불변이나 push된 커밋은 원격 브랜치에 잔존(DB 불변 ≠ 원격 불변) → 세션은 merged/manual로 종료되고, 잔존 커밋은 사람 확인 대상으로 남는다 <span class="v3-badge">v4.2 신규</span></td></tr>
-          <tr><td>원칙</td><td>모든 전이는 CAS 한 문장으로 수행되며, 승인·의견 모두 <span class="mono">status=reviewing</span> 조건을 만족할 때만 rowcount&gt;0. revising 중 의견은 "곧 교체될 버전에 대한 의견"이라 받지 않음 — 새 버전에서 재판단</td></tr>
+          <tr><td>원칙</td><td>모든 전이는 CAS 한 문장으로 수행되며, 승인·의견 모두 <span class="mono">status=reviewing</span> 조건을 만족할 때만 rowcount&gt;0. <s>revising 중 의견은 "곧 교체될 버전에 대한 의견"이라 받지 않음 — 새 버전에서 재판단</s> → v4.4: revising 중 의견도 저장은 된다(INSERT가 CAS보다 먼저) — 거부되는 것은 새 잠금·revise 기동뿐이고, 의견은 미반영 큐에 남아 다음 라운드에 포함된다 <span class="v3-badge">v4.4 개정</span></td></tr>
         </tbody>
       </table>
     </div>
@@ -502,11 +513,11 @@ footer{margin-top:30px;font-family:var(--mono);font-size:10.5px;color:var(--ink-
     <!-- S4 -->
     <div class="scenario s4">
       <div class="s-tag">S4 · revise 루프</div>
-      <h3>이벤트 구동(미들웨어가 직접 기동) → 가드 → git 워크스페이스 fetch/checkout → 의견 로드 → claude 단일 세션(오케스트레이터: 메타프롬프팅 → 재생성 → 대조검증 서브에이전트) → 재알림 → 루프 <span class="v3-badge">v4 개정</span></h3>
+      <h3>이벤트 구동(미들웨어가 직접 기동) → 가드 → git 워크스페이스 fetch/checkout → 의견 로드 → staged 체인(노드별 <span class="mono">codex exec</span>: intent(3a) → anchor → spec → impact → edit(3b) → gate → verify(3c) → summary) → 재알림(또는 되물음) → 루프 <span class="v3-badge">v4 개정</span><span class="v3-badge">v4.4 개정</span></h3>
 
       <div class="band" style="border:1.5px solid var(--warn);background:var(--warn-soft);padding:12px 14px;margin-bottom:14px">
-        <b style="color:var(--warn)">⚠️ 구현 상태 (v4.2 명시)</b> <span class="v3-badge">v4.2 신규</span>
-        <div style="font-size:12.5px;color:var(--ink-2);margin-top:6px">현 구현(v1)은 단일 <span class="mono">claude</span> CLI 호출 러너다: 워크스페이스에서 의견을 반영하고 <span class="mono">{applied, unapplied(사유), summary}</span> JSON을 반환하는 한 번의 호출로 끝난다. 아래에서 서술하는 오케스트레이터 + 3a(메타프롬프팅)/3b(재생성)/3c(대조검증) 서브에이전트 체인은 <b>향후 확장 설계(백로그)</b>이며 아직 구현되지 않았다. 이하 §S4의 체인 서술은 설계 목표로서 유지한다.</div>
+        <b style="color:var(--warn)">⚠️ 구현 상태 (v4.2 명시 → v4.4 갱신)</b> <span class="v3-badge">v4.2 신규</span><span class="v3-badge">v4.4 개정</span>
+        <div style="font-size:12.5px;color:var(--ink-2);margin-top:6px">러너는 <span class="mono">AI_RUNNER</span>로 고른다: <span class="mono">stub</span>(기본) · <span class="mono">claude</span>(v1 — 워크스페이스에서 의견을 반영하고 <span class="mono">{applied, unapplied(사유), summary}</span> JSON을 반환하는 단일 <span class="mono">claude</span> CLI 호출) · <span class="mono">staged</span>. v4.2에서 "향후 확장 설계(백로그)"로 표기했던 3a(메타프롬프팅)/3b(재생성)/3c(대조검증) 체인은 <span class="mono">staged</span> 러너로 구현됐다 — 단 단일 세션 오케스트레이터가 아니라 Python이 흐름을 제어하는 8노드 고정 체인이며, 3a·3b·3c는 각각 별도 <span class="mono">codex exec --ephemeral --sandbox read-only|workspace-write --output-last-message</span> 호출이다. 이하 §S4②는 staged 기준이며, 노드별 계약·산출물·게이트 검사·재투입 예산의 상세는 <a href="revise-workflow.html">revise-workflow.html</a>(v1.2)을 따른다.</div>
       </div>
 
       <div style="font-family:var(--mono);font-size:11.5px;font-weight:700;color:var(--human);margin:2px 0 8px">① 의견 접수 순간 (미들웨어)</div>
@@ -518,7 +529,7 @@ footer{margin-top:30px;font-family:var(--mono);font-size:10.5px;color:var(--ink-
         <div class="sarrow"><svg width="16" height="12" viewBox="0 0 16 12" fill="none"><path d="M0 6h12M8 1l6 5-6 5" stroke="currentColor" stroke-width="1.5"/></svg></div>
         <div class="step warn">
           <div class="no">2</div><div class="tt">가드 (a)(b) 평가</div>
-          <div class="ss"><b>CAS 잠금 이전, 미들웨어가 수행</b> — 거부 시 전이는 <span class="mono">reviewing→manual</span> <span class="v3-badge">v3.2 개정</span><br>(a) round≥3 → DB round 체크(claude 호출 낭비 없음) <span class="v3-badge">v4.2 개정</span><br>(b) 사람 커밋 → GitLab commits API 1회 조회<br>사람 push 후 재발급되는 버튼은 [승인] 버튼만 — [의견] 버튼은 비활성(사람 커밋 이후 자동 revise 금지, 가드(b)와 항상 정합) <span class="v3-badge">v4.1 개정</span></div>
+          <div class="ss"><b>CAS 잠금 이전, 미들웨어가 수행</b> — 거부 시 전이는 <span class="mono">reviewing→manual</span> <span class="v3-badge">v3.2 개정</span><br>(a) round≥3 → DB round 체크(claude 호출 낭비 없음) <span class="v3-badge">v4.2 개정</span><br>(b) 사람 커밋 → GitLab commits API 1회 조회<br>사람 push 후 재발급되는 버튼은 [승인] 버튼만 — [의견] 버튼은 비활성(사람 커밋 이후 자동 revise 금지, 가드(b)와 항상 정합) <span class="v3-badge">v4.1 개정</span><br>⚠️ 알려진 결함: 재발급 토큰은 title·url·브랜치·작성자가 빈 값이라 클릭 시 토큰 검증(<span class="mono">_decode_mr</span>, 빈 필드 거부)에서 HTTP 400으로 실패 — 재발급 [승인]은 현재 동작하지 않음(§③ reviewing 자기유지 서술 참조) <span class="v3-badge">v4.4 신규</span></div>
         </div>
         <div class="sarrow"><svg width="16" height="12" viewBox="0 0 16 12" fill="none"><path d="M0 6h12M8 1l6 5-6 5" stroke="currentColor" stroke-width="1.5"/></svg></div>
         <div class="step warn">
@@ -528,7 +539,7 @@ footer{margin-top:30px;font-family:var(--mono);font-size:10.5px;color:var(--ink-
         <div class="sarrow"><svg width="16" height="12" viewBox="0 0 16 12" fill="none"><path d="M0 6h12M8 1l6 5-6 5" stroke="currentColor" stroke-width="1.5"/></svg></div>
         <div class="step ai">
           <div class="no">4</div><div class="tt">revise 실행기 기동</div>
-          <div class="ss">CAS 잠금 성공 시 미들웨어가 revise 실행기(claude CLI 서브프로세스)를 직접 기동 — MR 단위 직렬화 큐(락) 경유, 큐 대기 상한(기본 10분, 초과 시 <span class="mono">kind=failed</span>로 <span class="mono">revise_attempts</span> 규칙 합류) 有 · 큐를 실제로 획득해 실행이 시작되는 시점에 <span class="mono">revising_since</span> 재설정 <span class="v3-badge">v4 개정</span><span class="v3-badge">v4.1 개정</span></div>
+          <div class="ss">CAS 잠금 성공 시 미들웨어가 revise 실행기(<span class="mono">AI_RUNNER</span>별 claude/codex CLI 서브프로세스)를 직접 기동 <span class="v3-badge">v4.4 개정</span> — 직렬화 큐 경유(프로세스 전역 in-memory 큐 1개 + 워커 스레드 1개 → MR 간에도 한 번에 1건), 큐 대기 상한(<span class="mono">REVISE_QUEUE_WAIT_LIMIT=600</span>초, 초과 시 <span class="mono">kind=failed</span>로 <span class="mono">revise_attempts</span> 규칙 합류) 有 · 큐를 실제로 획득해 실행이 시작되는 시점에 <span class="mono">revising_since</span> 재설정 <span class="v3-badge">v4 개정</span><span class="v3-badge">v4.1 개정</span></div>
         </div>
         <div class="sarrow"><svg width="16" height="12" viewBox="0 0 16 12" fill="none"><path d="M0 6h12M8 1l6 5-6 5" stroke="currentColor" stroke-width="1.5"/></svg></div>
         <div class="step hum">
@@ -551,51 +562,51 @@ footer{margin-top:30px;font-family:var(--mono);font-size:10.5px;color:var(--ink-
         </div>
         <div class="sarrow"><svg width="16" height="12" viewBox="0 0 16 12" fill="none"><path d="M0 6h12M8 1l6 5-6 5" stroke="currentColor" stroke-width="1.5"/></svg></div>
         <div class="ai-session-group">
-          <div class="gl-label">CLAUDE 단일 세션(호출 1회) — 최상위는 오케스트레이터. 3a·3b·3c는 각각 독립 컨텍스트의 서브에이전트로 수행. 단계별 별도 CLI 호출 금지. 오케스트레이터는 의견 원문·문서 전문을 직접 읽지 않고 구조화 산출물과 영수증만 다룬다 <span class="v3-badge">v3.1 개정</span></div>
+          <div class="gl-label"><s>CLAUDE 단일 세션(호출 1회) — 최상위는 오케스트레이터. 3a·3b·3c는 각각 독립 컨텍스트의 서브에이전트로 수행. 단계별 별도 CLI 호출 금지. 오케스트레이터는 의견 원문·문서 전문을 직접 읽지 않고 구조화 산출물과 영수증만 다룬다</s> <span class="v3-badge">v3.1 개정</span> → v4.4 폐기: 헤드리스 서브에이전트 결과 회수가 실측에서 조용히 실패 — mrdoc 선례(노드별 <span class="mono">codex exec</span> + 산출물 존재 검증)를 따라 Python이 흐름을 제어하는 8노드 고정 체인으로 교체(<a href="revise-workflow.html">revise-workflow.html</a> Part 4 §4.1). 3a·3b·3c = 노드별 별도 <span class="mono">codex exec</span>, 그 밖의 노드는 결정론 코드 <span class="v3-badge">v4.4 개정</span></div>
           <div class="step ai">
-            <div class="no">3a</div><div class="tt">의견 메타프롬프팅 (서브에이전트)</div>
-            <div class="ss">입력 = 의견 원문 + diff + 문서 목록. 출력 = 의견별 구조화 스펙 JSON: <span class="mono">{opinion_id, 대상문서: [..], 범위: local|cross-doc, 대상주장, 수정방향, 근거, 통합(중복 의견 id 배열), 충돌해소}</span><br>오케스트레이터는 스키마 형태만 검사, 내용 재해석 금지 <span class="v3-badge">v3.2 개정</span></div>
+            <div class="no">3a</div><div class="tt">의견 메타프롬프팅 (intent · codex exec)</div>
+            <div class="ss">입력 = 의견 원문 + 문서 목차(제목)만 — diff·변경 파일 목록은 넘기지 않음 <span class="v3-badge">v4.4 개정</span>. 출력 = 의견별 구조화 스펙 JSON: <span class="mono">{opinion_id, 대상문서: [..], 범위: local|cross-doc, 대상주장, 수정방향, 근거, 통합(중복 의견 id 배열), 충돌해소}</span> + <span class="mono">op(create|modify|delete)</span> · <span class="mono">연관문서</span> · <span class="mono">search_terms</span> <span class="v3-badge">v3.2 개정</span><span class="v3-badge">v4.4 개정</span><br>이어 결정론 노드: anchor(대상 절 특정) → spec 게이트(<span class="mono">15-spec.md</span> — 의견 id 커버리지, 목표 값 B의 원문 출처, create+치환 모순을 대조하고 현재 값 A를 코드가 확정, 이미 반영은 편집 없이 applied, 대상 미확인은 되물음) → impact(연관문서 기계 검증, 교차 문서 동반 파일을 결정론으로 찾음) <span class="v3-badge">v4.4 신규</span></div>
           </div>
           <div class="sarrow"><svg width="16" height="12" viewBox="0 0 16 12" fill="none"><path d="M0 6h12M8 1l6 5-6 5" stroke="currentColor" stroke-width="1.5"/></svg></div>
           <div class="step ai">
-            <div class="no">3b</div><div class="tt">재생성 (문서별 워커 서브에이전트)</div>
-            <div class="ss">범위=local 항목: 각 워커는 자기 문서 + 그 문서에 해당하는 스펙 항목만 받음(전체 의견 전달 금지 — 월권 수정 방지, local 한정)<br>범위=cross-doc 항목: 전용 "정합성 워커"가 관련 문서 집합을 함께 받아 처리 <span class="v3-badge">v3.2 신규</span><br>반환 = 수정본 + 영수증(처리한 opinion_id / 못 한 것 + 사유)<br>기본 순차, 대상 문서가 완전히 분리된 경우에만 병렬</div>
+            <div class="no">3b</div><div class="tt">재생성 (edit · codex exec)</div>
+            <div class="ss"><s>범위=local: 문서별 워커 / 범위=cross-doc: 전용 "정합성 워커" / 대상 문서 분리 시 병렬</s> <span class="v3-badge">v3.2 신규</span> → v4.4: 스펙 게이트를 통과한 의견 전부를 <b>한 번의 edit 호출</b>로 처리하고, 수정 가능 파일은 <span class="mono">allowed_files</span> = anchor ∪ impact 파일로 제한(교차 문서 동반 파일은 impact 노드가 결정론으로 찾음)<br>이어 결정론 gate: 리터럴 치환 검사(<span class="mono">a_in_base_text</span> — 현재 값 A 부재 시 공허한 통과 차단)·위반 변경 되돌림·크기 상한 <span class="mono">REVISE_MAX_CHANGED_FILES=10</span> / <span class="mono">REVISE_MAX_CHANGED_LINES=400</span> <span class="v3-badge">v4.4 개정</span></div>
           </div>
           <div class="sarrow"><svg width="16" height="12" viewBox="0 0 16 12" fill="none"><path d="M0 6h12M8 1l6 5-6 5" stroke="currentColor" stroke-width="1.5"/></svg></div>
           <div class="step ai">
-            <div class="no">3c</div><div class="tt">의견↔수정본 대조 검증 (fresh-context 서브에이전트)</div>
-            <div class="ss">입력은 의견 원문 + 스펙 + 수정본 셋 — 3b의 영수증·작성 맥락은 공유하지 않음(자기 채점 방지). 판정 축은 의견 원문(스펙은 참고용) — 3a가 원문을 잘못 옮긴 오역도 3c가 원문 대비로 잡아낸다 <span class="v3-badge">v3.2 개정</span>. 의견별 반영/미반영/부분 + 근거(문서 내 위치) 판정<br>오케스트레이터가 3c 판정과 3b 영수증을 대조하고, 불일치 시 3c를 신뢰(워커의 "했다"는 주장이지 증거가 아님)<br>미반영 발견 시 오케스트레이터가 원인 분류: (i) 3b 구현 누락 → 해당 문서 워커에 3c 근거를 첨부해 재투입, (ii) 스펙 모호·모순 → 해당 의견만 3a에 재투입 후 갱신 스펙으로 3b 재실행. 재시도는 라운드당 서브에이전트 재투입 총 2회 한정(3a·3b 합산, 사람 라운드 소모 없음), 재시도분만 3c 재검증<br>재시도도 실패 → 그대로 진행 + 재알림에 "⚠️ 의견 N번 미반영 + 사유" 정직 표기 — 사유는 3b의 변명이 아니라 3c의 판정문을 인용</div>
+            <div class="no">3c</div><div class="tt">의견↔수정본 대조 검증 (verify · fresh-context codex exec)</div>
+            <div class="ss">입력 = intent 스펙 + 의견 원문 + git diff — 3b의 작성 맥락은 공유하지 않음(자기 채점 방지). 스펙 게이트를 통과한 의견만 대상이며, 게이트가 막은 의견은 3c에 보내지 않고 코드가 판정 <span class="v3-badge">v4.4 개정</span>. 판정 축은 의견 원문(스펙은 참고용) — 3a가 원문을 잘못 옮긴 오역도 3c가 원문 대비로 잡아낸다 <span class="v3-badge">v3.2 개정</span>. 의견별 반영/미반영/부분 + 근거(문서 내 위치) 판정<br>원인별 재투입은 코드가 결정론으로 라우팅: 스펙 게이트 반려 → 이유를 붙여 intent(3a) 재투입, gate 리터럴 실패 → edit(3b) 재투입, 3c 미반영 → edit 후 intent. 예산 <span class="mono">REINJECT_LIMIT=2</span>(라운드당, 사람 라운드 소모 없음) — 3c 에스컬레이션은 스펙 재투입으로 세지 않음 <span class="v3-badge">v4.4 개정</span><br>소진 시 그대로 진행 + 재알림에 "⚠️ 의견 N번 미반영 + 사유" 정직 표기 — 사유는 3c의 판정문을 인용</div>
           </div>
         </div>
-        <div class="loopback">↺ 원인 분류 라우팅: 구현 누락→3b 재투입 / 스펙 모호→3a 재투입 — 라운드당 서브에이전트 재투입 총 2회 한정(3a·3b 합산) (round 소모 X) <span class="v3-badge">v3.2 개정</span></div>
+        <div class="loopback">↺ 원인별 결정론 라우팅: 스펙 반려→3a / 리터럴 미치환→3b / 3c 미반영→3b 후 3a — <span class="mono">REINJECT_LIMIT=2</span> (round 소모 X) <span class="v3-badge">v3.2 개정</span><span class="v3-badge">v4.4 개정</span></div>
         <div class="sarrow"><svg width="16" height="12" viewBox="0 0 16 12" fill="none"><path d="M0 6h12M8 1l6 5-6 5" stroke="currentColor" stroke-width="1.5"/></svg></div>
         <div class="step ai">
-          <div class="no">4</div><div class="tt">커밋 · push</div>
-          <div class="ss">봇 계정으로 커밋·push. CI를 쓰지 않으므로 봇 커밋이 파이프라인을 유발하는 문제 자체가 없음(v3.2의 N1 우려 소멸) <span class="v3-badge">v4 개정</span></div>
+          <div class="no">4</div><div class="tt">summary · 커밋 · push</div>
+          <div class="ss">summary 노드가 <span class="mono">commit_paths</span>를 applied/partial 의견의 파일로 좁히고 나머지 변경은 되돌림 → 그 경로만 커밋(경로 지정 커밋) <span class="v3-badge">v4.4 신규</span><br>봇 계정으로 커밋·push. CI를 쓰지 않으므로 봇 커밋이 파이프라인을 유발하는 문제 자체가 없음(v3.2의 N1 우려 소멸) <span class="v3-badge">v4 개정</span></div>
         </div>
         <div class="sarrow"><svg width="16" height="12" viewBox="0 0 16 12" fill="none"><path d="M0 6h12M8 1l6 5-6 5" stroke="currentColor" stroke-width="1.5"/></svg></div>
         <div class="step ai">
-          <div class="no">5</div><div class="tt">[A] review-prep</div>
-          <div class="ss">내부 함수 호출로 notify — 결과 객체 <span class="mono">{kind: ok|failed, unapplied: [{opinion_id, reason}]}</span>을 코어에 반환(3c 미반영 목록 = <span class="mono">unapplied</span>, reason은 3c 판정문 인용). revise 실패 시 <span class="mono">kind=failed</span> — 외부 접점 수는 2개 유지 <span class="v3-badge">v4 개정</span></div>
+          <div class="no">5</div><div class="tt">결과 반환</div>
+          <div class="ss">내부 함수 호출로 결과 객체 <span class="mono">{kind: ok|failed, unapplied: [{opinion_id, reason}], detail, commit_paths, clarify}</span>를 코어에 반환(3c 미반영 목록 = <span class="mono">unapplied</span>, reason은 3c 판정문 인용, <span class="mono">clarify</span>가 있으면 되물음 라운드). revise 실패 시 <span class="mono">kind=failed</span>. <code>[A]</code> review-prep은 재호출하지 않음 <span class="v3-badge">v4 개정</span><span class="v3-badge">v4.4 개정</span></div>
         </div>
       </div>
-      <div class="subnote">사람 라운드는 상한 3회의 희소 자원, 서브에이전트 재시도는 싼 자원 — 대조검증(3c)에서 원인 분류 후 한 번 더 돌고 나가는 것이 항상 이득. 수렴 규칙: 라운드당 서브에이전트 재투입은 총 2회 한정(3a·3b 합산), 소진 시 정직 표기로 전진 — 모든 경로가 "성공" 또는 "표기 후 진행"으로 종료(무한 루프 없음). round·사람커밋 가드는 ①에서 이미 통과했으므로 실행기가 유일하게 인지하는 실패는 revise 자체 실패(<span class="mono">kind=failed</span>)뿐이다. <span class="v3-badge">v4 개정</span></div>
+      <div class="subnote">사람 라운드는 상한 3회의 희소 자원, 노드 재투입은 싼 자원 — 원인 분류 후 한 번 더 돌고 나가는 것이 항상 이득. 수렴 규칙: 라운드당 재투입 <span class="mono">REINJECT_LIMIT=2</span>, 소진 시 정직 표기로 전진 — 모든 경로가 "성공" 또는 "표기 후 진행"으로 종료(무한 루프 없음). round·사람커밋 가드는 ①에서 이미 통과했으므로 실행기가 유일하게 인지하는 실패는 revise 자체 실패(<span class="mono">kind=failed</span>)뿐이다. <span class="v3-badge">v4 개정</span><span class="v3-badge">v4.4 개정</span></div>
 
       <div style="font-family:var(--mono);font-size:11.5px;font-weight:700;color:var(--human);margin:16px 0 8px">③ 재알림 (미들웨어)</div>
       <div class="steps-rail">
         <div class="step ok">
           <div class="no">1</div><div class="tt">round+1 · mr_sha 갱신</div>
-          <div class="ss">3c 판정이 "반영"인 의견에 한해 <span class="mono">applied_round</span> 기록, 미반영/부분은 NULL 유지(다음 라운드 자동 재포함, 재제출 불필요) — 전제: 3c 판정 목록(의견별 반영/미반영/부분)이 revise 완료 시 미들웨어에 전달됨 <span class="v3-badge">v3.2 개정</span></div>
+          <div class="ss">3c 판정이 "반영"인 의견에 한해 <span class="mono">applied_round</span> 기록, 미반영/부분은 NULL 유지(다음 라운드 자동 재포함, 재제출 불필요) — 전제: 3c 판정 목록(의견별 반영/미반영/부분)이 revise 완료 시 미들웨어에 전달됨 <span class="v3-badge">v3.2 개정</span><br>되물음(clarify) 라운드: 커밋이 없으면 round 번호를 유지하고 시도 횟수만 리셋. 한도 <span class="mono">REVISE_CLARIFY_LIMIT=2</span> 소진 시 해당 의견의 <span class="mono">applied_round</span>를 판정문 "대상 미확인 — 재질문 한도 소진"과 함께 기록 <span class="v3-badge">v4.4 신규</span></div>
         </div>
         <div class="sarrow"><svg width="16" height="12" viewBox="0 0 16 12" fill="none"><path d="M0 6h12M8 1l6 5-6 5" stroke="currentColor" stroke-width="1.5"/></svg></div>
         <div class="step hum">
           <div class="no">2</div><div class="tt">재알림</div>
-          <div class="ss">기존 스레드 · 새 <span class="mono">report.html</span><br>"🔄 N차 개선본·의견 M건 반영" · 새 SHA 토큰 버튼<br>결과 객체의 <span class="mono">kind=ok</span> + <span class="mono">unapplied</span> 비어있지 않음 = 부분 성공 → "⚠️ 미반영 의견 + 사유" 표기(사유=3c 판정문) <span class="v3-badge">v4 개정</span></div>
+          <div class="ss"><s>기존 스레드</s> → 새 최상위 메시지(<span class="mono">chat.postMessage</span>, 스레드 아님) — 헤더 <span class="mono">🔄 라운드 N 완료 — 재확인 후 승인해주세요</span> + 변경 요약·diff stat·compare 링크, 되물음이면 헤더 <span class="mono">❓ 대상을 찾지 못했습니다 — 확인 부탁드립니다</span>. 라운드 <span class="mono">report.html</span>(<span class="mono">report-&lt;repo&gt;-&lt;iid&gt;-rN-&lt;sha8&gt;.html</span>: 라운드 요약·diff stat·미반영 사유) · 새 SHA 토큰 버튼 <span class="v3-badge">v4.4 개정</span><br>결과 객체의 <span class="mono">kind=ok</span> + <span class="mono">unapplied</span> 비어있지 않음 = 부분 성공 → "⚠️ 미반영 의견 + 사유" 표기(사유=3c 판정문) <span class="v3-badge">v4 개정</span></div>
         </div>
         <div class="sarrow"><svg width="16" height="12" viewBox="0 0 16 12" fill="none"><path d="M0 6h12M8 1l6 5-6 5" stroke="currentColor" stroke-width="1.5"/></svg></div>
         <div class="step ok">
           <div class="no">3</div><div class="tt">잠금 해제</div>
-          <div class="ss">새 SHA 토큰으로 버튼 복원 → <span class="mono">status=reviewing</span> 복귀, 담당자 재판단 대기</div>
+          <div class="ss"><span class="mono">slack_ts</span>를 새 메시지로 옮기고 이전 메시지의 버튼은 회수 → <span class="mono">status=reviewing</span> 복귀, 담당자 재판단 대기 <span class="v3-badge">v4.4 개정</span></div>
         </div>
       </div>
 
@@ -611,7 +622,7 @@ footer{margin-top:30px;font-family:var(--mono);font-size:10.5px;color:var(--ink-
 
 <!-- ③ 상태 기계 -->
 <section class="sect">
-  <div class="sec-head"><span class="num">③</span><h2>상태 기계</h2><span class="rule"></span><span class="v3-badge">v3 개정</span><span class="v3-badge">v3.2 개정</span><span class="v3-badge">v4.3 개정</span></div>
+  <div class="sec-head"><span class="num">③</span><h2>상태 기계</h2><span class="rule"></span><span class="v3-badge">v3 개정</span><span class="v3-badge">v3.2 개정</span><span class="v3-badge">v4.3 개정</span><span class="v3-badge">v4.4 개정</span></div>
   <div class="band">
     <div class="principle" style="margin-top:0;border-top:none;padding-top:0">
       <b>원칙</b>: 모든 전이는 미들웨어가 소유한 원자적 CAS 한 문장 <span class="mono">UPDATE review_session SET status=? WHERE id=? AND status=?</span>로 수행된다. <span class="mono">rowcount=0</span>이면 그 전이는 거부된 것 — check-then-act가 아니라 단일 SQL 문이 곧 잠금이다.
@@ -648,6 +659,7 @@ stateDiagram-v2
     revising --> merged : 외부 머지 웹훅
 
     manual --> merged : 사람이 직접 머지
+    manual --> reviewing : MR 재오픈 관측 (poller · mr_reopened)<br/>외부 close로 manual이 된 세션만
     manual --> reviewing : ⚠️ 운영자 재개 (미구현·백로그)
 
     merged --> [*]
@@ -662,12 +674,13 @@ stateDiagram-v2
         <span class="lg"><span class="sw" style="background:var(--human)"></span>manual (사람 개입)</span>
       </div>
 
-      <div class="subnote" style="max-width:640px">↺ <span class="mono">reviewing</span> 자기유지(상태 전이 아님): <span class="mono">/webhooks/gitlab/mr</span> push 수신(발화 주체=웹훅) → 새 SHA로 [승인] 버튼만 재발급([의견] 버튼은 비활성 — 사람 커밋 이후 자동 revise 금지, 가드(b)와 일치), <span class="mono">reviewing</span> 유지 <span class="v3-badge">v3 신규</span><span class="v3-badge">v4 개정</span><span class="v3-badge">v4.1 개정</span></div>
+      <div class="subnote" style="max-width:640px">↺ <span class="mono">reviewing</span> 자기유지(상태 전이 아님): <span class="mono">/webhooks/gitlab/mr</span> push 수신(발화 주체=웹훅) → 새 SHA로 [승인] 버튼만 재발급([의견] 버튼은 비활성 — 사람 커밋 이후 자동 revise 금지, 가드(b)와 일치), <span class="mono">reviewing</span> 유지 <span class="v3-badge">v3 신규</span><span class="v3-badge">v4 개정</span><span class="v3-badge">v4.1 개정</span><br>⚠️ 알려진 결함(v4.4 명시): push 이벤트에는 MR title·url·브랜치·작성자가 없고 세션에도 저장돼 있지 않아, 재발급 토큰은 이 필드들이 빈 값으로 서명된다. 클릭 시 <span class="mono">_decode_mr</span>가 빈 필드를 거부해 HTTP 400으로 끝나므로 재발급 [승인] 버튼은 동작하지 않는다(<span class="mono">app/ingest.py</span> <span class="mono">_reissue_approve_button</span>의 RISKS 주석). 보완(GitLab API 재조회 또는 스키마 확장)은 미구현 <span class="v3-badge">v4.4 신규</span></div>
       <div class="subnote" style="max-width:640px">merging 중 사람 push 수신 시 즉시 <span class="mono">merging→manual</span> — 서버측 <span class="mono">sha</span> 파라미터 거부(M8a)와 이중 방어. poll 도중 새 커밋이 들어오면 머지를 진행하지 않고 담당자 재판단으로 회수한다. <span class="v3-badge">v4.1 개정</span></div>
       <div class="subnote" style="max-width:640px">사람 push 중 자동 revise를 진행 중이던 경우 즉시 중단(<span class="mono">revising→manual</span>) — 사람 커밋이 CI를 유발하는 모순은 CI 부재로 소멸. <span class="v3-badge">v4 개정</span></div>
       <div class="subnote" style="max-width:640px">외부 머지 웹훅(action=merge) 수신 시 <span class="mono">(reviewing|revising|merging)→merged</span> — 사람이 GitLab에서 직접 머지. 외부 닫힘 웹훅(action=close) 수신 시 <span class="mono">(reviewing|revising|merging)→manual</span>로 전이. 두 경우 모두 처리: Slack 버튼 회수(<span class="mono">chat.update</span>) + 스레드에 "⚠️ 외부 머지/닫힘 감지" 알림. 이 전이도 CAS 한 문장으로 수행되며 진행 중이던 다른 전이(승인 클릭 등)와 경합 시 먼저 성공한 쪽이 확정, 후착은 <span class="mono">rowcount=0</span>으로 거부된다. <span class="v3-badge">v4.1 신규</span></div>
       <div class="subnote" style="max-width:640px">revise 실패 → <span class="mono">revising</span> 상태 유지, 미들웨어가 즉시 1회 자동 재트리거 · <span class="mono">revise_attempts</span>는 <span class="mono">kind=failed</span> 수신 시 +1, <span class="mono">revise_attempts≥2</span> → manual(<span class="mono">revising→manual</span>) <span class="v3-badge">v3.2 개정</span></div>
-      <div class="subnote" style="max-width:640px">⚠️ <b>미구현(백로그)</b> — <span class="mono">manual→reviewing</span>(운영자 재개)은 상태머신에 전이 정의만 예약돼 있을 뿐, 이를 발동하는 운영자 인터페이스(커맨드·API·UI)는 현재 존재하지 않는다. manual 세션은 실질적으로 사람이 GitLab에서 직접 처리(§ manual→merged 참조)하거나 방치된다. <span class="v3-badge">v4.2 개정</span></div>
+      <div class="subnote" style="max-width:640px">⚠️ <b>미구현(백로그)</b> — <span class="mono">manual→reviewing</span>(운영자 재개, 사유 <span class="mono">operator_resume</span>)은 상태머신에 전이 정의만 예약돼 있을 뿐, 이를 발동하는 운영자 인터페이스(커맨드·API·UI)는 현재 존재하지 않는다. manual 세션은 실질적으로 사람이 GitLab에서 직접 처리(§ manual→merged 참조)하거나 방치된다. <span class="v3-badge">v4.2 개정</span></div>
+      <div class="subnote" style="max-width:640px">같은 <span class="mono">manual→reviewing</span> 엣지의 <span class="mono">mr_reopened</span> 사유는 동작한다 — poller가 opened로 다시 관측한 MR의 세션이 manual이고 그 세션의 마지막 event_log가 <span class="mono">external_close</span>일 때만 CAS 후 새 [승인][의견] 알림을 다시 올린다(round·<span class="mono">revise_attempts</span> 보존). guard_reject·human_push·revise 실패 등 다른 사유의 manual은 되살리지 않는다(매 주기 재알림 방지). 웹훅 reopen은 이 CAS를 하지 않는다 — open 처리를 다시 돌려 새 알림은 올리지만 status는 manual에 남아, 그 버튼의 클릭은 CAS <span class="mono">rowcount=0</span>으로 거부된다(알려진 공백) <span class="v3-badge">v4.4 신규</span></div>
     </div>
   </div>
 </section>
@@ -683,7 +696,7 @@ stateDiagram-v2
         <div class="col"><span class="cn">mr_sha</span><span class="cc">최근 통지된 커밋 SHA — <b>표시용으로 강등</b>, 토큰 검증은 클릭 시점 GitLab API 조회 사용 <span class="v3-badge">v3 개정</span></span></div>
         <div class="col"><span class="cn">round</span><span class="cc">revise 반복 횟수 (0부터)</span></div>
         <div class="col"><span class="cn">status</span><span class="cc">reviewing / merging / revising / manual / merged <span class="v3-badge">v3.2 개정</span></span></div>
-        <div class="col"><span class="cn">revising_since</span><span class="cc">MR 단위 직렬화 큐를 <b>획득해 실행이 시작되는 시점</b>(CAS 잠금 시점이 아님)에 재설정됨 — 타임아웃 스위퍼 판단 기준 <span class="v3-badge">v3 신규</span><span class="v3-badge">v4.1 개정</span></span></div>
+        <div class="col"><span class="cn">revising_since</span><span class="cc">CAS 잠금 때 한 번 기록되고, 직렬화 큐에서 꺼내져 <b>실행이 시작되는 시점</b>에 재설정됨(재시도마다 다시 재설정) — 타임아웃 스위퍼 판단 기준 <span class="v3-badge">v3 신규</span><span class="v3-badge">v4.1 개정</span><span class="v3-badge">v4.4 개정</span></span></div>
         <div class="col"><span class="cn">merging_since</span><span class="cc">merging 진입 시각 — 타임아웃 스위퍼 판단 기준 <span class="v3-badge">v3.2 신규</span></span></div>
         <div class="col"><span class="cn">revise_attempts</span><span class="cc">revise 실패 재시도 횟수 — 2 이상이면 manual <span class="v3-badge">v3 신규</span> · 라운드 성공(<span class="mono">round+1</span>) 시 0 리셋 <span class="v3-badge">v4.1 개정</span></span></div>
         <div class="col"><span class="cn">repo_slug</span><span class="cc">담당자 매핑용 레포 식별</span></div>
@@ -696,7 +709,7 @@ stateDiagram-v2
         <div class="col"><span class="cn">id</span><span class="cc">INTEGER PK — 내부 계약 <span class="mono">{opinion_id, reason}</span>의 <span class="mono">opinion_id</span>가 참조하는 대상 <span class="v3-badge">v4.1 신규</span></span></div>
         <div class="col"><span class="cn">session_id</span><span class="cc">review_session FK</span></div>
         <div class="col"><span class="cn">slack_user</span><span class="cc">의견 작성자</span></div>
-        <div class="col"><span class="cn">question_refs</span><span class="cc">체크된 확인질문 참조</span></div>
+        <div class="col"><span class="cn">question_refs</span><span class="cc"><s>체크된 확인질문 참조</s> → 항상 NULL — 확인질문을 생성하지 않아 모달 입력이 제거됨, 컬럼은 향후 복원 대비 유지 <span class="v3-badge">v4.4 개정</span></span></div>
         <div class="col"><span class="cn">body</span><span class="cc">자유 텍스트 의견</span></div>
         <div class="col"><span class="cn">applied_round</span><span class="cc">3c "반영" 판정 의견만 opinion별로 기록, NULL = 미반영 큐(다음 revise 대상, 재제출 불필요) <span class="v3-badge">v3.2 개정</span></span></div>
         <div class="col"><span class="cn">last_verdict</span><span class="cc">3c 판정문 저장 — 내부 계약 <span class="mono">unapplied: [{opinion_id, reason}]</span>의 <span class="mono">reason</span>이 이 컬럼에 영속되어 다음 라운드 재표기 근거로 쓰임 <span class="v3-badge">v4.1 신규</span></span></div>
@@ -707,12 +720,12 @@ stateDiagram-v2
       <div class="th">event_log</div>
       <div class="tb">
         <div class="col"><span class="cn">session_id</span><span class="cc">review_session FK</span></div>
-        <div class="col"><span class="cn">kind</span><span class="cc">notify / approve / opinion / revise_start / revise_fail(=notify kind=failed로 기록) / merge / push / webhook_missed … <span class="v3-badge">v4.2 개정</span></span></div>
+        <div class="col"><span class="cn">kind</span><span class="cc"><s>notify / approve / opinion / revise_start / revise_fail / merge / push / webhook_missed …</s> <span class="v3-badge">v4.2 개정</span> → v4.4 실제 값(CHECK 제약 없는 자유 문자열):<br>· CAS 전이 사유 = kind: <span class="mono">approve</span> · <span class="mono">opinion</span> · <span class="mono">guard_reject</span> · <span class="mono">external_merge</span> · <span class="mono">external_close</span> · <span class="mono">human_merge</span> · <span class="mono">merge_poll_success</span> · <span class="mono">merge_poll_failed</span> · <span class="mono">push_during_merge</span> · <span class="mono">human_push</span> · <span class="mono">revise_success</span> · <span class="mono">revise_timeout</span> · <span class="mono">revise_attempts_exceeded</span> · <span class="mono">mr_reopened</span><br>· 웹훅 수신 기록(UUID 있을 때): <span class="mono">mr_open</span> · <span class="mono">mr_reopen</span> · <span class="mono">mr_update_ignored</span> · <span class="mono">mr_merge</span> · <span class="mono">mr_close</span> · <span class="mono">push</span><br>· revise 실행기: <span class="mono">enqueued</span> · <span class="mono">failed</span>(revise 실패, <span class="mono">revise_attempts</span>+1) · <span class="mono">requeued</span> · <span class="mono">revise_success_raced</span> · <span class="mono">clarify</span> · <span class="mono">clarify_exhausted</span><br>· 클릭 거부 기록: <span class="mono">guard_reject</span>(권한 없음) · <span class="mono">sha_stale</span> · <span class="mono">duplicate_click</span><br>· 발송 outbox: <span class="mono">notify</span>(스위퍼 알림만)<br><span class="mono">revise_start</span> · <span class="mono">revise_fail</span> · <span class="mono">merge</span> · <span class="mono">webhook_missed</span>는 존재하지 않음 <span class="v3-badge">v4.4 개정</span></span></div>
         <div class="col"><span class="cc">주의: 이 <span class="mono">kind</span>는 내부 계약 결과 객체의 <span class="mono">kind(ok|failed)</span>와 이름만 같을 뿐 서로 다른 네임스페이스 — event_log.kind는 이벤트 종류, 내부 계약 kind는 revise 성패 플래그다 <span class="v3-badge">v4.2 신규</span></span></div>
         <div class="col"><span class="cn">detail</span><span class="cc">자유 형식 컨텍스트 (디버그·감사용)</span></div>
-        <div class="col"><span class="cn">send_state</span><span class="cc">pending / sent / failed — 미들웨어 내부 발송 재시도 큐가 참조하는 발송 상태(§⑥ 738 서사와 일치) <span class="v3-badge">v4.1 신규</span></span></div>
-        <div class="col"><span class="cn">attempts</span><span class="cc">발송 재시도 횟수 <span class="v3-badge">v4.1 신규</span></span></div>
-        <div class="col"><span class="cn">idempotency_key</span><span class="cc">UNIQUE, nullable — <span class="mono">hash(project_id|mr_iid|round|sha)</span>, <b>Slack 발송 dedup 전용</b>: notify 재시도 dedup에만 사용. revise_fail 등 감사 행은 키를 채우지 않고 append-only로 적재되므로 같은 round/sha에서 실패가 2회 기록돼도 UNIQUE 충돌이 나지 않는다 <span class="v3-badge">v4.1 개정</span></span></div>
+        <div class="col"><span class="cn">send_state</span><span class="cc">pending / sent / failed — 발송 재시도 큐(<span class="mono">app/notify_queue.py</span>)가 참조하는 발송 상태 <span class="v3-badge">v4.1 신규</span>. 의미가 있는 것은 <span class="mono">kind=notify</span> 행(스위퍼 알림 outbox)뿐 — 다른 행은 기본값 <span class="mono">pending</span>이 그대로 남을 뿐 발송 대상이 아니다(§⑥ 장애 모드 "미들웨어 다운"·"Slack 장애" 행과 일치) <span class="v3-badge">v4.4 개정</span></span></div>
+        <div class="col"><span class="cn">attempts</span><span class="cc">발송 재시도 횟수 — 선형 백오프 <span class="mono">NOTIFY_RETRY_BASE=30</span>초 × 시도 수, <span class="mono">NOTIFY_MAX_ATTEMPTS=5</span>에서 failed <span class="v3-badge">v4.1 신규</span><span class="v3-badge">v4.4 개정</span></span></div>
+        <div class="col"><span class="cn">idempotency_key</span><span class="cc">UNIQUE, nullable — <s><span class="mono">hash(project_id|mr_iid|round|sha)</span>, Slack 발송 dedup 전용</s> <span class="v3-badge">v4.1 개정</span> → v4.4: GitLab <span class="mono">X-Gitlab-Webhook-UUID</span>를 그대로 담는 <b>웹훅 재전송 dedup 전용</b> — 같은 UUID 재수신은 UNIQUE 위반으로 no-op. notify outbox를 포함한 나머지 행은 키를 채우지 않고(NULL) append-only로 적재되므로 같은 round/sha에서 실패가 2회 기록돼도 UNIQUE 충돌이 나지 않는다. Slack 발송 dedup 키는 없다 <span class="v3-badge">v4.4 개정</span></span></div>
       </div>
     </div>
   </div>
@@ -723,35 +736,35 @@ stateDiagram-v2
 
 <!-- ⑤ 이중 기록 -->
 <section class="sect">
-  <div class="sec-head"><span class="num">⑤</span><h2>이중 기록 — DB=원본, GitLab=사람용 미러</h2><span class="rule"></span></div>
+  <div class="sec-head"><span class="num">⑤</span><h2>이중 기록 — DB=원본, GitLab=사람용 미러</h2><span class="rule"></span><span class="v3-badge">v4.4 개정</span></div>
   <div class="band" style="padding:6px 0">
     <table class="dual-table">
       <thead><tr><th>영역</th><th>DB (원본)</th><th>GitLab (사람용 미러)</th></tr></thead>
       <tbody>
-        <tr><td>리뷰 단계</td><td class="db">session.status</td><td class="gl">라벨 docs-review / docs-revise / <span class="mono">docs-merging</span> / docs-approved / docs-manual — 5-상태 머신과 1:1 정합 <span class="v3-badge">v4.1 개정</span></td></tr>
-        <tr><td>round</td><td class="db">session.round</td><td class="gl">라벨 <span class="mono">docs-revise-1/2/3</span>로 라운드 번호 자체를 미러링 <span class="v3-badge">v3 신규</span></td></tr>
-        <tr><td>의견</td><td class="db">opinion 레코드</td><td class="gl">MR 코멘트</td></tr>
-        <tr><td>메시지 좌표</td><td class="db">slack_ts</td><td class="gl">Slack permalink를 MR 코멘트로 미러링 <span class="v3-badge">v3 신규</span></td></tr>
-        <tr><td>승인·머지</td><td class="db">status=merged</td><td class="gl">GitLab merge만 호출(approve 단계 없음) — 승인의 공식 기록은 Slack 클릭 + DB 세션 기록 + MR 코멘트 미러(단일 경로) <span class="v3-badge">v4.1 개정</span></td></tr>
+        <tr><td>리뷰 단계</td><td class="db">session.status</td><td class="gl"><s>라벨 docs-review / docs-revise / <span class="mono">docs-merging</span> / docs-approved / docs-manual — 5-상태 머신과 1:1 정합</s> <span class="v3-badge">v4.1 개정</span> → ⚠️ 미구현: GitLab 라벨을 다루는 코드 없음 — 미러 없음 <span class="v3-badge">v4.4 개정</span></td></tr>
+        <tr><td>round</td><td class="db">session.round</td><td class="gl"><s>라벨 <span class="mono">docs-revise-1/2/3</span>로 라운드 번호 자체를 미러링</s> <span class="v3-badge">v3 신규</span> → ⚠️ 미구현: 미러 없음 <span class="v3-badge">v4.4 개정</span></td></tr>
+        <tr><td>의견</td><td class="db">opinion 레코드</td><td class="gl">MR 코멘트(의견 제출 시 "❌ 변경 요청" + 의견 본문 + 리뷰어·대상 커밋, best-effort — 실패해도 흐름은 계속) <span class="v3-badge">v4.4 개정</span></td></tr>
+        <tr><td>메시지 좌표</td><td class="db">slack_ts</td><td class="gl"><s>Slack permalink를 MR 코멘트로 미러링</s> <span class="v3-badge">v3 신규</span> → ⚠️ 미구현: permalink 코멘트 없음 <span class="v3-badge">v4.4 개정</span></td></tr>
+        <tr><td>승인·머지</td><td class="db">status=merged</td><td class="gl">GitLab merge만 호출(approve 단계 없음) — 승인의 공식 기록은 Slack 클릭 + DB 세션 기록 + MR 코멘트 미러(단일 경로). 코멘트("✅ 승인")는 merge API 호출이 받아들여진 직후 best-effort로 남김 <span class="v3-badge">v4.1 개정</span><span class="v3-badge">v4.4 개정</span></td></tr>
         <tr><td>이력</td><td class="db">event_log</td><td class="gl">— (없음)</td></tr>
       </tbody>
     </table>
-    <div class="recover-note">⚠️ <span><b>DB 유실 시</b> 부분 복구만 가능(상태·round·의견 본문·메시지 좌표는 라벨·코멘트·permalink 미러로 재구성) — <span class="mono">applied_round</span>·<span class="mono">revise_attempts</span>·발송 상태(event_log)는 미러가 없어 복구 불가. <span class="v3-badge">v3 개정</span><span class="v3-badge">v4.2 개정</span></span></div>
+    <div class="recover-note">⚠️ <span><b>DB 유실 시</b> <s>부분 복구만 가능(상태·round·의견 본문·메시지 좌표는 라벨·코멘트·permalink 미러로 재구성)</s> <span class="v3-badge">v3 개정</span><span class="v3-badge">v4.2 개정</span> → v4.4: 라벨·permalink 미러가 없으므로 상태·round·메시지 좌표는 재구성할 근거가 없다. GitLab에 남는 것은 의견·승인 MR 코멘트뿐이라 사람이 읽는 이력으로만 쓸 수 있고, 이를 DB로 되살리는 복구 도구도 없다 — <span class="mono">applied_round</span>·<span class="mono">revise_attempts</span>·발송 상태(event_log)도 복구 불가 <span class="v3-badge">v4.4 개정</span></span></div>
   </div>
 </section>
 
 <!-- ⑥ 장애 모드 -->
 <section class="sect">
-  <div class="sec-head"><span class="num">⑥</span><h2>장애 모드</h2><span class="rule"></span></div>
+  <div class="sec-head"><span class="num">⑥</span><h2>장애 모드</h2><span class="rule"></span><span class="v3-badge">v4.4 개정</span></div>
   <div class="band" style="padding:6px 0">
     <table class="fail-table">
       <thead><tr><th>구성요소</th><th>증상</th><th>복구</th></tr></thead>
       <tbody>
-        <tr><td>미들웨어 다운</td><td>알림·버튼·승인·머지·revise 기동 전부 정지</td><td class="rec">진행 중이던 revise는 유실(claude가 자식 프로세스), 재기동 시 워크스페이스 reset 후 <span class="mono">revise_attempts</span> 규칙으로 재시도. 이미 push된 라운드 산출물만 MR에 잔존. 미들웨어 내부 발송 재시도 큐 + event_log 발송 상태(pending/sent/failed)로 재기동 후 자동 정상화 <span class="v3-badge">v4 개정</span><span class="v3-badge">v4.1 개정</span></td></tr>
-        <tr><td>claude CLI 실행 실패/타임아웃·호스트 자원 부족</td><td>새 문서 생성·revise 불가</td><td class="rec">이미 알림이 발송된 세션의 버튼·승인·머지는 정상(미들웨어 처리) — 신규 MR 알림(review-prep)·revise는 불가. <span class="mono">revising</span> 세션은 동결됨 — 타임아웃 스위퍼가 <span class="mono">manual</span>로 전환 + Slack 알림. <span class="mono">revise_attempts</span> 규칙은 기존 그대로 <span class="v3-badge">v4 개정</span><span class="v3-badge">v4.1 개정</span></td></tr>
-        <tr><td>claude 실패</td><td>맥락 diff 요약 없음</td><td class="rec">실패 알림은 그대로 발송. revise 실패는 <span class="mono">revising</span> 상태 유지 + 미들웨어 즉시 1회 자동 재트리거, <span class="mono">revise_attempts≥2</span>면 manual <span class="v3-badge">v3.2 개정</span></td></tr>
-        <tr><td>웹훅 유실</td><td><span class="mono">/webhooks/gitlab/mr</span> 이벤트 미수신 — (a) 신규 MR 알림 누락 (b) 사람 push 정책 미평가(승인 게이트가 구 SHA 기준으로 열려 있음) (c) 외부 머지/닫힘 미감지 — revise 기동은 Slack 의견 제출(내부 경로)이 유일한 발화점이라 웹훅 유실과 무관</td><td class="rec">수동 재기동 또는 poller 보완 — §⑦ 미결 참조. 승인 클릭 시 head SHA 재조회(§① 319)가 (b)를 부분적으로 커버함 <span class="v3-badge">v4 신규</span><span class="v3-badge">v4.1 개정</span></td></tr>
-        <tr><td>Slack 장애</td><td>메시지 발송·버튼 응답 불가</td><td class="rec">미들웨어 내부 재시도 큐로 발송 재시도 — 실행기 재실행 불필요 <span class="v3-badge">v4 개정</span></td></tr>
+        <tr><td>미들웨어 다운</td><td>알림·버튼·승인·머지·revise 기동 전부 정지</td><td class="rec">진행 중이던 revise는 유실(CLI가 자식 프로세스). <s>재기동 시 워크스페이스 reset 후 <span class="mono">revise_attempts</span> 규칙으로 재시도</s> → v4.4: revise 큐는 in-memory라 재기동 시 되살리는 코드가 없다 — 세션은 <span class="mono">revising</span>에 남았다가 스위퍼가 <span class="mono">revising_timeout</span>(3000초) 경과 시 <span class="mono">manual</span> + Slack 알림으로 넘기고, 이후는 사람이 처리. 진행 중이던 merge poll도 유실 → <span class="mono">merging_timeout</span>(300초) 스위퍼가 <span class="mono">manual</span>. mrdoc 레일 스레드·미발송 최초 알림도 재실행되지 않는다. 이미 push된 라운드 산출물만 MR에 잔존. <s>발송 재시도 큐로 재기동 후 자동 정상화</s> → 재기동 시 다시 큐에 넣는 발송은 <span class="mono">kind=notify</span> outbox의 <span class="mono">pending</span> 행(스위퍼 알림)뿐 <span class="v3-badge">v4 개정</span><span class="v3-badge">v4.1 개정</span><span class="v3-badge">v4.4 개정</span></td></tr>
+        <tr><td>claude/codex CLI 실행 실패/타임아웃·호스트 자원 부족</td><td>리뷰 요약·revise·mrdoc 분석 불가</td><td class="rec">이미 알림이 발송된 세션의 버튼·승인·머지는 정상(미들웨어 처리). 신규 MR 알림은 AI 요약 없이 나간다(review-prep 실패는 알림을 막지 않음). revise는 단계 상한(<span class="mono">REVISE_STAGE_TIMEOUT_SECONDS=600</span>)·벽시계 상한(2400초) 초과를 포함해 <span class="mono">kind=failed</span> → <span class="mono">revise_attempts</span> 규칙. 끝나지 않는 <span class="mono">revising</span> 세션은 타임아웃 스위퍼가 <span class="mono">manual</span>로 전환 + Slack 알림 <span class="v3-badge">v4 개정</span><span class="v3-badge">v4.1 개정</span><span class="v3-badge">v4.4 개정</span></td></tr>
+        <tr><td>claude 실패</td><td><s>맥락 diff 요약 없음</s> 리뷰 요약 없음 <span class="v3-badge">v4.4 개정</span></td><td class="rec">알림은 AI 요약 없이 그대로 발송(요약이 없으면 범용 report.html도 올리지 않음) <span class="v3-badge">v4.4 개정</span>. revise 실패는 <span class="mono">revising</span> 상태 유지 + 미들웨어 즉시 1회 자동 재트리거, <span class="mono">revise_attempts≥2</span>면 manual <span class="v3-badge">v3.2 개정</span></td></tr>
+        <tr><td>웹훅 유실</td><td><span class="mono">/webhooks/gitlab/mr</span> 이벤트 미수신 — (a) 신규 MR 알림 누락 (b) 사람 push 정책 미평가(승인 게이트가 구 SHA 기준으로 열려 있음) (c) 외부 머지/닫힘 미감지 — revise 기동은 Slack 의견 제출(내부 경로)이 유일한 발화점이라 웹훅 유실과 무관</td><td class="rec"><s>수동 재기동 또는 poller 보완 — §⑦ 미결 참조</s> → v4.4: poller(<span class="mono">POLL_ENABLED</span>, 기본 꺼짐)를 켜면 (a)(b)(c)를 <span class="mono">POLL_INTERVAL</span>(60초) 주기 비교로 감지 — 웹훅과 병행해도 CAS로 중복 안전. 꺼져 있으면 수동 처리. 승인 클릭 시 head SHA 재조회(§① 미들웨어 카드의 <span class="mono">/webhooks/slack/actions</span> 승인 버튼 항목)가 (b)를 부분적으로 커버함 <span class="v3-badge">v4 신규</span><span class="v3-badge">v4.1 개정</span><span class="v3-badge">v4.4 개정</span></td></tr>
+        <tr><td>Slack 장애</td><td>메시지 발송·버튼 응답 불가</td><td class="rec"><s>미들웨어 내부 재시도 큐로 발송 재시도</s> → v4.4: 재시도 큐를 거치는 발송은 스위퍼 알림(타임아웃 <span class="mono">manual</span> 전환 시 버튼 회수)뿐. 최초 알림 실패는 로그만 — 세션은 <span class="mono">slack_ts</span> 없이 <span class="mono">reviewing</span>에 남아 누를 버튼이 없고 재발송 경로도 없다. revise 재알림 실패도 로그만 — 라운드는 이미 <span class="mono">reviewing</span>으로 돌아갔지만 이전 메시지의 버튼은 revise 시작 때 제거돼 누를 버튼이 없다. 그 밖의 버튼 갱신·ephemeral도 로그만. 실행기 재실행은 불필요 <span class="v3-badge">v4 개정</span><span class="v3-badge">v4.4 개정</span></td></tr>
       </tbody>
     </table>
   </div>
@@ -759,36 +772,38 @@ stateDiagram-v2
 
 <!-- ⑦ 기본값·미결 -->
 <section class="sect">
-  <div class="sec-head"><span class="num">⑦</span><h2>기본값 · 미결</h2><span class="rule"></span><span class="v3-badge">v3 개정</span></div>
+  <div class="sec-head"><span class="num">⑦</span><h2>기본값 · 미결</h2><span class="rule"></span><span class="v3-badge">v3 개정</span><span class="v3-badge">v4.4 개정</span></div>
   <div class="band" style="margin-bottom:14px;border-left:3px solid var(--crit)">
     <div style="font-family:var(--mono);font-size:11.5px;font-weight:700;color:var(--crit);margin-bottom:8px">전제조건 (구축 전 확인 필수) <span class="v3-badge">v3 신규</span><span class="v3-badge">v4 개정</span></div>
     <ul style="margin:0;padding-left:18px;font-size:12.5px;color:var(--ink-2)">
-      <li>미들웨어 호스트에 <span class="mono">claude</span> CLI · <span class="mono">git</span> 설치 (AI 실행기 동작 전제) <span class="v3-badge">v4 신규</span></li>
+      <li>미들웨어 호스트에 <span class="mono">claude</span> CLI · <span class="mono">git</span> 설치 (AI 실행기 동작 전제) <span class="v3-badge">v4 신규</span> — v4.4: <span class="mono">claude</span>는 review-prep과 <span class="mono">AI_RUNNER=claude</span>용, <span class="mono">AI_RUNNER=staged</span> 러너와 mrdoc 위성은 <span class="mono">codex</span> CLI가 필요(경로 재지정 <span class="mono">CLAUDE_BIN</span>·<span class="mono">CODEX_BIN</span>, 없으면 PATH 조회) <span class="v3-badge">v4.4 개정</span></li>
       <li>봇 계정 PAT — <span class="mono">api</span> 스코프, push+merge 권한을 갖는 Maintainer 역할 <span class="v3-badge">v4 신규</span></li>
       <li>GitLab 프로젝트 웹훅 등록: MR open/update/merge/close · push 이벤트, secret token 설정 (<span class="mono">/webhooks/gitlab/mr</span> 대상) — comment 이벤트는 등록하지 않음(현 설계에 소비자 없음, §① 참조) <span class="v3-badge">v4 신규</span><span class="v3-badge">v4.1 개정</span></li>
-      <li>git 워크스페이스 = MR(<span class="mono">project_id/mr_iid</span>)별 디렉터리로 분리 — 필요 디스크 공간은 "동시 진행 가능 MR 수 × 워크스페이스 1개 용량"으로 산정. claude 서브프로세스는 전역 동시 실행 상한(기본 1, 글로벌 세마포어)을 두어 초과분은 직렬화 큐에서 대기 <span class="v3-badge">v4 신규</span><span class="v3-badge">v4.1 개정</span></li>
+      <li>git 워크스페이스 = MR(<span class="mono">project_id/mr_iid</span>)별 디렉터리로 분리 — 필요 디스크 공간은 "동시 진행 가능 MR 수 × 워크스페이스 1개 용량"으로 산정. <s>claude 서브프로세스는 전역 동시 실행 상한(기본 1, 글로벌 세마포어)을 두어 초과분은 직렬화 큐에서 대기</s> <span class="v3-badge">v4 신규</span><span class="v3-badge">v4.1 개정</span> → v4.4: 세마포어는 구현되지 않았다. revise는 프로세스 전역 in-memory 큐 1개를 워커 스레드 1개가 비우는 구조라 결과적으로 한 번에 1건(MR 간에도 직렬) — 문서의 "MR 단위 직렬화 큐"는 이 전역 큐를 가리킨다. review-prep claude 호출(요청별 백그라운드 작업)과 mrdoc 레일(MR당 데몬 스레드 1개, 스레드 안에서 위성을 fanout 배치로 호출)은 이 큐 밖에서 따로 돌아 전역 상한이 없다. mrdoc 산출물은 워크스페이스와 별도로 <span class="mono">.mrdoc-ws/.work/&lt;iid&gt;-&lt;sha8&gt;</span>에 쌓인다 <span class="v3-badge">v4.4 개정</span></li>
       <li>(v4.1 삭제) 봇 계정은 승인(approve) 동작을 수행하지 않으므로(merge API 호출만 사용) 봇의 approve 자격 관련 프로젝트 설정 확인 항목은 무관해져 삭제됨 <span class="v3-badge">v4.1 개정</span></li>
-      <li>웹훅 유실 대비 poller 보완 여부(감지 대상: 미알림 MR·미반영 push·외부 머지) — <b>미결</b> (§⑥ 장애 모드 참조) <span class="v3-badge">v4 신규</span><span class="v3-badge">v4.1 개정</span></li>
-      <li>승인 클릭 권한 = 해당 세션의 매핑 담당자 집합에 한정(빈 집합 = 거부) — 담당자 매핑이 공집합인 세션은 알림 시점에 즉시 <span class="mono">manual</span> 분기 + 채널 경고로 종료(§① 발신 서술 참조), 개별 클릭은 0단계 권한 검사에서 ephemeral 거부 <span class="v3-badge">v4 신규</span><span class="v3-badge">v4.1 개정</span></li>
+      <li><s>웹훅 유실 대비 poller 보완 여부(감지 대상: 미알림 MR·미반영 push·외부 머지) — 미결</s> <span class="v3-badge">v4 신규</span><span class="v3-badge">v4.1 개정</span> → v4.4 구현됨(opt-in): <span class="mono">POLL_ENABLED=true</span> + <span class="mono">POLL_PROJECT_IDS</span>(쉼표 구분 프로젝트 id)일 때만 기동, 주기 <span class="mono">POLL_INTERVAL=60</span>초. 감지 대상 = 신규 opened MR·head SHA 변경(사람 push)·외부 머지/닫힘·외부 close 후 재오픈(§⑥ 장애 모드 참조) <span class="v3-badge">v4.4 개정</span></li>
+      <li>인바운드 HTTP가 막힌 환경의 Slack 수신: Socket Mode(<span class="mono">SLACK_SOCKET_MODE=true</span> + <span class="mono">SLACK_APP_TOKEN</span>, 기본 꺼짐) — 켜지 않으면 Slack이 <span class="mono">/webhooks/slack/actions</span>에 도달할 수 있어야 함 <span class="v3-badge">v4.4 신규</span></li>
+      <li>승인 클릭 권한 = 해당 세션의 매핑 담당자 집합에 한정(빈 집합 = 거부) — 담당자 매핑이 공집합인 세션은 알림 시점에 즉시 <span class="mono">manual</span> 분기 + 채널 경고로 종료(§① 미들웨어 카드의 "결과 처리" 블록 참조), 개별 클릭은 0단계 권한 검사에서 ephemeral 거부 <span class="v3-badge">v4 신규</span><span class="v3-badge">v4.1 개정</span><span class="v3-badge">v4.4 개정</span></li>
       <li>배포는 <span class="mono">uvicorn --workers 1</span> 고정 (CAS·단일 writer 전제)</li>
     </ul>
   </div>
   <div class="notes">
     <div class="note warn"><span class="nt">가정</span>round 상한 = 3</div>
     <div class="note warn"><span class="nt">가정</span>사람 커밋 감지 시 자동 revise 중단 — 가드는 미들웨어가 실행기 기동 직전 수행 <span class="v3-badge">v3 개정</span><span class="v3-badge">v4 개정</span></div>
-    <div class="note warn"><span class="nt">가정</span>AI 체인 세션 벽시계 상한(예: 15분) — 초과 시 <span class="mono">kind=failed</span>로 처리 <span class="v3-badge">v3.2 신규</span></div>
-    <div class="note warn"><span class="nt">가정</span>merge poll = 3초 간격 × 10회, <span class="mono">merging_since</span> 타임아웃 5분 <span class="v3-badge">v4.1 신규</span></div>
-    <div class="note warn"><span class="nt">가정</span>MR 단위 직렬화 큐 대기 상한 = 10분(초과 시 <span class="mono">kind=failed</span>로 <span class="mono">revise_attempts</span> 규칙 합류) <span class="v3-badge">v4.1 신규</span></div>
-    <div class="note warn"><span class="nt">확정</span>세 타이머 순서: 큐 대기 상한(10분) → 세션 벽시계 상한(15분) → <span class="mono">revising_since</span> 스위퍼 임계값(세션 상한 15분 + 여유 5분 = 20분 이상) — 스위퍼 임계값은 항상 세션 벽시계 상한보다 크게 둔다 <span class="v3-badge">v4.1 신규</span></div>
+    <div class="note warn"><span class="nt">확정</span>AI 체인 세션 벽시계 상한 <s>(예: 15분)</s> = <span class="mono">REVISE_WALL_CLOCK_SECONDS=2400</span>(40분) — 러너 호출 1회 전체에 걸리며 초과 시 <span class="mono">kind=failed</span>로 처리. staged 러너가 한 라운드에 CLI를 세 번 부르므로 900초에서 상향 <span class="v3-badge">v3.2 신규</span><span class="v3-badge">v4.4 개정</span></div>
+    <div class="note warn"><span class="nt">확정</span>staged 단계 상한 <span class="mono">REVISE_STAGE_TIMEOUT_SECONDS=600</span>(10분) — 3a·3b·3c <span class="mono">codex exec</span> 호출 각각에 걸리며 초과 시 그 라운드는 <span class="mono">kind=failed</span> <span class="v3-badge">v4.4 신규</span></div>
+    <div class="note warn"><span class="nt">가정</span>merge poll = 3초 간격 × 10회, <span class="mono">merging_since</span> 타임아웃 5분(<span class="mono">MERGING_TIMEOUT=300</span>) <span class="v3-badge">v4.1 신규</span></div>
+    <div class="note warn"><span class="nt">가정</span>직렬화 큐 대기 상한 = 10분(<span class="mono">REVISE_QUEUE_WAIT_LIMIT=600</span>, 초과 시 <span class="mono">kind=failed</span>로 <span class="mono">revise_attempts</span> 규칙 합류) <span class="v3-badge">v4.1 신규</span><span class="v3-badge">v4.4 개정</span></div>
+    <div class="note warn"><span class="nt">확정</span>세 타이머 순서(불변식 큐 대기 &lt; 세션 벽시계 &lt; 스위퍼): 큐 대기 상한(600초) → 세션 벽시계 상한(2400초) → <span class="mono">revising_since</span> 스위퍼 임계값 <span class="mono">REVISING_TIMEOUT=3000</span>초(벽시계 + 여유 600초) <s>(10분 → 15분 → 20분 이상)</s> — 스위퍼 임계값은 항상 세션 벽시계 상한보다 크게 둔다. 셋 중 하나만 올리면 불변식이 깨져 아직 도는 세션을 스위퍼가 <span class="mono">manual</span>로 넘긴다. 스위퍼 주기 <span class="mono">SWEEP_INTERVAL=60</span>초 <span class="v3-badge">v4.1 신규</span><span class="v3-badge">v4.4 개정</span></div>
     <div class="note warn"><span class="nt">요건</span>사람 게이트는 Slack 승인 버튼 하나뿐 — 승인 이후 머지는 미들웨어가 poll 기반으로 수행. 미들웨어의 GitLab 봇 토큰에 보호브랜치 merge 권한 필요 (Maintainer 역할 또는 protected branch allow 설정)</div>
-    <div class="note"><span class="nt">확정</span>revise 트리거 = 이벤트 구동 — 미들웨어가 revise 실행기(claude CLI 서브프로세스)를 직접 기동, 별도 외부 트리거 메커니즘 불필요. 스케줄 기반 수거 방식 폐기 <span class="v3-badge">v4 개정</span></div>
+    <div class="note"><span class="nt">확정</span>revise 트리거 = 이벤트 구동 — 미들웨어가 revise 실행기(<span class="mono">AI_RUNNER</span>별 claude/codex CLI 서브프로세스)를 직접 기동, 별도 외부 트리거 메커니즘 불필요. 스케줄 기반 수거 방식 폐기 <span class="v3-badge">v4 개정</span></div>
     <div class="note hold"><span class="nt">보류</span>L3 코드 대조 fact-check</div>
     <div class="note v2"><span class="nt">v2 옵션</span>HTML → PNG 스크린샷 (Slack 인라인 렌더용)</div>
     <div class="note v2"><span class="nt">v2 옵션</span>의견 이력 → 생성 프롬프트 환류 (조직 학습): opinion 테이블에 축적된 반복 지적을 주기 배치로 추출해 레포별 스타일 가이드로 다음 review-prep 프롬프트에 주입 <span class="v3-badge">v4.2 개정</span>. 이를 위해 opinion 데이터는 세션 종료 후에도 보존</div>
   </div>
 </section>
 
-<footer>MR REVIEW PIPELINE · SQLITE v2 · REV 2026-07-27 (v4 개정 반영)</footer>
+<footer>MR REVIEW PIPELINE · SQLITE v2 · REV 2026-09-27 (v4.4 개정 반영)</footer>
 </div>
 <script type="module">
   import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
