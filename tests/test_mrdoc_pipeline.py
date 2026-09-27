@@ -11,9 +11,10 @@ from __future__ import annotations
 from collections.abc import Callable
 from pathlib import Path
 
-from app.mrdoc import dispatch
+from app.mrdoc import dispatch, satellites
 from app.mrdoc.analysis import AnalysisUnit, FileAnalysis, render_analysis
 from app.mrdoc.changeset import parse_changeset
+from app.mrdoc.collect import EXPLANATION_FAILED, parse_collect
 from app.mrdoc.excerpt import parse_excerpts, render_excerpts
 from app.mrdoc.frontmatter import parse_frontmatter
 from app.mrdoc.levelcheck import (
@@ -77,22 +78,38 @@ def _agent(
     fixes_round1: bool = False,
     fixes_round2: bool = False,
     fixes_round3: bool = False,
+    omit_on_first_call: bool = False,
+    fix_call_fails: bool = False,
+    fix_target: str | None = None,
 ) -> Callable[[str], bool]:
     """A satellite double whose two gates can be made to complain on demand.
 
     The knobs exist so the retry branch can be driven from both sides: a
-    verifier that files a FIX, and an analyzer whose 설명 trips the vocab gate.
+    verifier that files a FIX, and an analyzer whose 설명 trips the vocab gate
+    — or whose first call leaves a unit out, or whose re-call crashes after
+    it already scribbled over 20-analysis.
     """
 
     def run(spec_text: str) -> bool:
         mission = parse_spec(spec_text)
         work = mission.return_path.parent
         if mission.agent == "analyzer":
-            return _write_analyses(mission, work, explanation, rewritten)
+            fix_call = mission.scope.startswith("units ")
+            if fix_call and fix_call_fails:
+                for path in mission.return_path.glob("*.md"):
+                    path.write_text("half-written by a crashed satellite", encoding="utf-8")
+                return False
+            return _write_analyses(
+                mission,
+                work,
+                explanation,
+                rewritten,
+                omit_last=omit_on_first_call and not fix_call,
+            )
         if mission.agent == "verifier":
             round_no = 1 + fix_rounds_used(work)
             flag = (fixes_round1, fixes_round2, fixes_round3)[round_no - 1]
-            return _write_verifier(mission, work, round_no, flag)
+            return _write_verifier(mission, work, round_no, flag, fix_target)
         if mission.agent == "themes":
             return _write_themes(mission, work)
         return False
@@ -100,7 +117,9 @@ def _agent(
     return run
 
 
-def _write_analyses(mission, work: Path, explanation: str, rewritten: str) -> bool:
+def _write_analyses(
+    mission, work: Path, explanation: str, rewritten: str, *, omit_last: bool = False
+) -> bool:
     structure = parse_structure(_read(work, "05-structure.md"))
     changeset = parse_changeset(_read(work, "00-changeset.md"))
     path_by_fid = {entry.fid: entry.path for entry in changeset.files}
@@ -118,6 +137,8 @@ def _write_analyses(mission, work: Path, explanation: str, rewritten: str) -> bo
         grouped.setdefault(unit.file_id, []).append(unit)
     mission.return_path.mkdir(parents=True, exist_ok=True)
     for fid, units in grouped.items():
+        if omit_last:
+            units = units[:-1]  # the block a real satellite sometimes forgets
         analysis = FileAnalysis(
             file_id=fid,
             path=path_by_fid.get(fid, fid),
@@ -146,21 +167,26 @@ def _write_analyses(mission, work: Path, explanation: str, rewritten: str) -> bo
     return True
 
 
-def _write_verifier(mission, work: Path, round_no: int, flag: bool) -> bool:
+def _write_verifier(
+    mission, work: Path, round_no: int, flag: bool, fix_target: str | None = None
+) -> bool:
     changeset = parse_changeset(_read(work, "00-changeset.md"))
     structure = parse_structure(_read(work, "05-structure.md"))
+    # fix_target aims the FIX somewhere other than a unit, so the units
+    # themselves pass — the FIX is the only finding
+    judged = flag and fix_target is None
     units = tuple(
         VerifierUnit(
             unit_id=unit.unit_id,
-            fidelity="omitted" if flag else "ok",
+            fidelity="omitted" if judged else "ok",
             class_stated="",
             class_opinion="agree",
-            why="바뀐 줄 하나가 설명에 없다." if flag else "",
+            why="바뀐 줄 하나가 설명에 없다." if judged else "",
         )
         for unit in structure.changed
     )
     fixes = (
-        (Fix("r-01", units[0].unit_id, "설명", "fidelity_omitted"),)
+        (Fix("r-01", fix_target or units[0].unit_id, "설명", "fidelity_omitted"),)
         if flag and units
         else ()
     )
@@ -424,7 +450,14 @@ def test_spent_retries_do_not_buy_another_call(tmp_path: Path) -> None:
     assert paths["verifier_r1"].is_file() and paths["verifier_r2"].is_file()
     collect = parse_frontmatter(_read(directory, "50-collect.md"))
     verify = collect["verify"]
-    assert verify == {"rounds": 3, "outstanding": 1, "counts_mismatch": 0}
+    assert verify == {
+        "status": "ok",
+        "rounds": 3,
+        "outstanding": 1,
+        "counts_mismatch": 0,
+        "audited": 1,
+        "unaudited": 0,
+    }
 
 
 def test_vocab_violation_alone_opens_the_fix_round(tmp_path: Path) -> None:
@@ -477,6 +510,209 @@ def test_fix_targets_union_both_gates(tmp_path: Path) -> None:
     dispatch.close_fix_round(directory)
     assert dispatch.fix_round_due(directory) == ()  # both spent, never again
     assert paths["verifier_r2"].is_file() and not paths["verifier"].is_file()
+
+
+def test_missing_explanation_is_written_in_the_fix_round(tmp_path: Path) -> None:
+    """A unit the first call forgot is a re-call target, not a permanent hole."""
+
+    code, directory = _run(
+        _agent(omit_on_first_call=True), tmp_path, _two_unit_inputs()
+    )
+    assert code == dispatch.EXIT_COMPLETE
+    missing = parse_structure(_read(directory, "05-structure.md")).changed[-1].unit_id
+    ledger = artifact_paths(directory)["ledger"].read_text(encoding="utf-8")
+    assert f"fix round 1: {missing}" in ledger
+    collect = parse_collect(_read(directory, "50-collect.md"))
+    assert all(unit.explanation != EXPLANATION_FAILED for unit in collect.units)
+
+
+def test_failed_fix_round_restores_and_still_reports(tmp_path: Path) -> None:
+    """A crashed re-call costs the round, never the report it could not improve."""
+
+    code, directory = _run(
+        _agent(fixes_round1=True, fix_call_fails=True), tmp_path
+    )
+    paths = artifact_paths(directory)
+    ledger = paths["ledger"].read_text(encoding="utf-8")
+    assert code == dispatch.EXIT_COMPLETE
+    assert "abort" not in ledger
+    assert ledger.count("analyzer failed (fix round)") == 2  # both rounds spent
+    assert paths["render"].is_file()
+    for path in (directory / "20-analysis").glob("*.md"):
+        text = path.read_text(encoding="utf-8")
+        assert "half-written" not in text
+        assert _CLEAN in text  # the pre-round prose is what the report prints
+    verify = parse_frontmatter(_read(directory, "50-collect.md"))["verify"]
+    assert verify["outstanding"] == 1  # the unanswered FIX still shows
+    # themes waited for the owed second round instead of grouping in between
+    assert ledger.index("fix round 2") < ledger.index("themes done")
+
+
+def test_fix_round_that_raises_degrades_like_a_rejection(tmp_path: Path) -> None:
+    inner = _agent(fixes_round1=True)
+
+    def agent(spec_text: str) -> bool:
+        if parse_spec(spec_text).scope.startswith("units "):
+            raise RuntimeError("codex vanished mid-round")
+        return inner(spec_text)
+
+    code, directory = _run(agent, tmp_path)
+    ledger = artifact_paths(directory)["ledger"].read_text(encoding="utf-8")
+    assert code == dispatch.EXIT_COMPLETE
+    assert "codex vanished mid-round" in ledger
+    assert ledger.count("analyzer failed (fix round)") == 2
+    assert artifact_paths(directory)["render"].is_file()
+
+
+def test_fix_aimed_at_an_unknown_id_does_not_abort(tmp_path: Path) -> None:
+    """Nothing to rewrite means no round — the FIX still counts as 잔존."""
+
+    code, directory = _run(
+        _agent(fixes_round1=True, fix_target="u-nosuch0"), tmp_path
+    )
+    paths = artifact_paths(directory)
+    assert code == dispatch.EXIT_COMPLETE
+    assert not paths["fix_marker"].exists()
+    assert "fix round" not in paths["ledger"].read_text(encoding="utf-8")
+    verify = parse_frontmatter(_read(directory, "50-collect.md"))["verify"]
+    assert verify["outstanding"] == 1
+    # no card can wear it, so 05 names it by the id the verifier wrote
+    html = paths["render"].read_text(encoding="utf-8")
+    assert "u-nosuch0 — 검증 지적 (가리키는 대상 없음)" in html
+
+
+def test_fix_without_unit_block_marks_the_card_not_unaudited(tmp_path: Path) -> None:
+    """A FIX alone is a verdict: 검증 지적 · 빠뜨림 on the card, never 미검증."""
+
+    inner = _agent()
+
+    def agent(spec_text: str) -> bool:
+        mission = parse_spec(spec_text)
+        if mission.agent != "verifier":
+            return inner(spec_text)
+        unit = parse_structure(_read(mission.return_path.parent, "05-structure.md"))
+        target = unit.changed[0].unit_id
+        report = Verifier(
+            mr_iid=1, fixes=(Fix("r-01", target, "설명", "fidelity_omitted"),)
+        )
+        mission.return_path.write_text(render_verifier(report), encoding="utf-8")
+        return True
+
+    code, directory = _run(agent, tmp_path)
+    assert code == dispatch.EXIT_COMPLETE
+    verify = _verify_of(directory)
+    assert (verify["outstanding"], verify["audited"], verify["unaudited"]) == (1, 1, 0)
+    collect = parse_collect(_read(directory, "50-collect.md"))
+    assert [unit.audit for unit in collect.units] == ["omitted"]
+    html = artifact_paths(directory)["render"].read_text(encoding="utf-8")
+    assert "검증 지적 · 빠뜨림" in html
+    assert 'tag-audit-none">미검증<' not in html
+
+
+def test_real_fix_round_prompt_carries_the_gates_reasons(tmp_path: Path) -> None:
+    """The mission is built after the gates were archived — it must still see them."""
+
+    captured: dict[str, object] = {}
+    inner = _agent(fixes_round1=True)
+
+    def agent(spec_text: str) -> bool:
+        mission = parse_spec(spec_text)
+        if mission.agent == "analyzer" and mission.scope.startswith("units "):
+            plan = satellites._analyzer_mission(mission, mission.return_path.parent)
+            captured["prompt"] = plan.prompt
+            captured["unreadable"] = [path for path in mission.read if not path.exists()]
+        return inner(spec_text)
+
+    code, _directory = _run(agent, tmp_path)
+    assert code == dispatch.EXIT_COMPLETE
+    assert "fidelity_omitted" in str(captured["prompt"])
+    assert captured["unreadable"] == []
+
+
+def _verify_of(directory: Path) -> dict:
+    return parse_frontmatter(_read(directory, "50-collect.md"))["verify"]
+
+
+def test_verifier_that_writes_nothing_degrades_to_failed(tmp_path: Path) -> None:
+    """A silent verifier costs the audit, not the report — and says so."""
+
+    inner = _agent()
+
+    def agent(spec_text: str) -> bool:
+        if parse_spec(spec_text).agent == "verifier":
+            return False  # nothing written
+        return inner(spec_text)
+
+    code, directory = _run(agent, tmp_path)
+    paths = artifact_paths(directory)
+    assert code == dispatch.EXIT_COMPLETE
+    assert "verifier degraded" in paths["ledger"].read_text(encoding="utf-8")
+    assert parse_verifier(_read(directory, "40-verifier.md")).is_stub
+    assert _verify_of(directory)["status"] == "failed"
+    summary = paths["slack_summary"].read_text(encoding="utf-8")
+    assert "검증 실패" in summary and "지적 잔존 —" in summary
+
+
+def test_unreadable_audit_is_failed_not_clean(tmp_path: Path) -> None:
+    """The measured hole: garbage in 40-verifier used to read as zero findings."""
+
+    inner = _agent()
+
+    def agent(spec_text: str) -> bool:
+        mission = parse_spec(spec_text)
+        if mission.agent == "verifier":
+            mission.return_path.write_text("검사 완료, 문제 없음.\n", encoding="utf-8")
+            return True
+        return inner(spec_text)
+
+    code, directory = _run(agent, tmp_path)
+    assert code == dispatch.EXIT_COMPLETE
+    verify = _verify_of(directory)
+    assert (verify["status"], verify["unaudited"]) == ("failed", 1)
+    html = artifact_paths(directory)["render"].read_text(encoding="utf-8")
+    assert "확인이 필요한 항목 없음" not in html
+    assert "<h3>검증 실패</h3>" in html
+
+
+def test_partial_audit_marks_the_skipped_unit(tmp_path: Path) -> None:
+    inner = _agent()
+
+    def agent(spec_text: str) -> bool:
+        mission = parse_spec(spec_text)
+        if mission.agent != "verifier":
+            return inner(spec_text)
+        first = parse_structure(_read(mission.return_path.parent, "05-structure.md"))
+        report = Verifier(
+            mr_iid=1,
+            units=(VerifierUnit(first.changed[0].unit_id, "ok", "", "agree"),),
+        )
+        mission.return_path.write_text(render_verifier(report), encoding="utf-8")
+        return True
+
+    code, directory = _run(agent, tmp_path, _two_unit_inputs())
+    assert code == dispatch.EXIT_COMPLETE
+    verify = _verify_of(directory)
+    assert (verify["status"], verify["audited"], verify["unaudited"]) == ("ok", 1, 1)
+    collect = parse_collect(_read(directory, "50-collect.md"))
+    assert [unit.audit for unit in collect.units] == ["ok", "unaudited"]
+    paths = artifact_paths(directory)
+    assert "미검증 1" in paths["slack_summary"].read_text(encoding="utf-8")
+    html = paths["render"].read_text(encoding="utf-8")
+    assert html.count('class="pill tag-audit-none">미검증<') == 1
+    assert "<h3>미검증 1유닛</h3>" in html
+
+
+def test_outstanding_finding_is_marked_on_its_card(tmp_path: Path) -> None:
+    """지적 잔존 used to be a bare count — the reader now lands on the unit."""
+
+    code, directory = _run(
+        _agent(fixes_round1=True, fixes_round2=True, fixes_round3=True), tmp_path
+    )
+    assert code == dispatch.EXIT_COMPLETE
+    html = artifact_paths(directory)["render"].read_text(encoding="utf-8")
+    assert "검증 지적 · 빠뜨림" in html
+    assert "검증 근거 — 바뀐 줄 하나가 설명에 없다." in html
+    assert '<details class="change-card" open>' in html
 
 
 def test_fanout_batches_analysis_specs(tmp_path: Path) -> None:

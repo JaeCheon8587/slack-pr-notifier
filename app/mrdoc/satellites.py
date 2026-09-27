@@ -33,12 +33,14 @@ from .analysis import (
     render_analysis,
 )
 from .changeset import Changeset, parse_changeset
+from .dispatch import REASON_EXPLANATION_MISSING, missing_prose, round_gate
 from .inventory import build_inventory
 from .levelcheck import parse_levelcheck
 from .literals import parse_literals
 from .structure import parse_structure
 from .themes import Theme, Themes, parse_themes, render_themes
 from .verifier import (
+    FLAGGED_FIDELITY,
     CountMismatch,
     CountsCheck,
     Fix,
@@ -47,7 +49,7 @@ from .verifier import (
     parse_verifier,
     render_verifier,
 )
-from .workspace import artifact_paths, fix_rounds_used
+from .workspace import fix_rounds_used
 
 logger = logging.getLogger("uvicorn.error")
 
@@ -384,7 +386,12 @@ def _read(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
 
-def _unit_audit(paths: tuple[Path, ...], *, preserve: bool = False) -> Callable[[], str]:
+def _unit_audit(
+    paths: tuple[Path, ...],
+    *,
+    preserve: bool = False,
+    known: frozenset[str] | None = None,
+) -> Callable[[], str]:
     """Audit the analyzer's own output before the wave accepts it.
 
     Duplicate ids are checked on every call, first one included: the yaml
@@ -400,16 +407,24 @@ def _unit_audit(paths: tuple[Path, ...], *, preserve: bool = False) -> Callable[
     rest — the report would then show '설명 생성 실패' for units that had a
     perfectly good 설명 a minute earlier. There the prior artifact is the
     contract, so a rewrite that no longer parses is a rejection too.
+
+    Only ids in `known` (05 CHANGED) are owed preservation. An orphan block
+    — the analyzer's typo of a real id — is dropped by collect anyway, and
+    renaming it to the id it meant is exactly the rewrite the round asks
+    for; requiring it back used to reject that correction and abort the run.
+    A prior file that does not parse preserves nothing: it is rewritten whole.
     """
 
-    before = {
-        path: tuple(
-            unit.unit_id
-            for unit in parse_analysis(path.read_text(encoding="utf-8")).units
+    def _ids(path: Path) -> tuple[str, ...]:
+        try:
+            units = parse_analysis(path.read_text(encoding="utf-8")).units
+        except ValueError:
+            return ()
+        return tuple(
+            unit.unit_id for unit in units if known is None or unit.unit_id in known
         )
-        for path in paths
-        if preserve and path.is_file()
-    }
+
+    before = {path: _ids(path) for path in paths if preserve and path.is_file()}
 
     def check() -> str:
         for path in paths:
@@ -448,7 +463,10 @@ def _analyzer_mission(mission: Mission, work_dir: Path) -> MissionPlan:
 
     scoped = _scope_units(mission.scope)
     if scoped is not None:
-        return _fix_mission(mission, work_dir, changeset, units_by_file, scoped)
+        sections = {unit.unit_id: unit.section_id for unit in structure.changed}
+        return _fix_mission(
+            mission, work_dir, changeset, units_by_file, sections, scoped
+        )
 
     span = _scope_indices(mission.scope) or (0, len(changeset.files) - 1)
     lo, hi = span
@@ -502,13 +520,17 @@ def _fix_mission(
     work_dir: Path,
     changeset: Changeset,
     units_by_file: dict[str, list[str]],
+    sections: dict[str, str],
     targets: tuple[str, ...],
 ) -> MissionPlan:
     """The one re-call: rewrite these units' 설명, leave every other block alone.
 
-    Reasons come from the two gates that produced them — doc-verifier's FIX
-    blocks and levelcheck's vocab hits — read here from the files rather than
-    carried through the orchestrator, so the spec stays deterministic.
+    Reasons come from the gates that produced them — doc-verifier's FIX
+    blocks, levelcheck's vocab hits and dispatch.missing_prose — read here
+    from the files rather than carried through the orchestrator, so the spec
+    stays deterministic. A unit whose prose never arrived has no block to
+    edit, so every target line carries its section_id: the satellite can
+    write the block from scratch without guessing either id.
     """
 
     owner = {
@@ -552,7 +574,10 @@ def _fix_mission(
         expected.append(mission.return_path / f"{fid}.md")
         lines.append(f"- file_id {fid} · path {paths.get(fid, fid)}")
         for unit in grouped.get(fid, []):
-            lines.append(f"  · {unit} — 설명 — {reasons.get(unit, '재작성 요청')}")
+            lines.append(
+                f"  · {unit} (section_id {sections.get(unit, '?')}) — 설명 — "
+                f"{reasons.get(unit, '재작성 요청')}"
+            )
         if fid in file_targets:
             lines.append(
                 f"  · FILE_SUMMARY — {reasons.get(fid, '집계 불일치')}"
@@ -569,9 +594,14 @@ def _fix_mission(
             "[보존] 대상이 아닌 UNIT 블록과 FILE_SUMMARY 는 기존 파일의 내용을 "
             "그대로 유지한다. 파일을 새로 쓰더라도 나머지 유닛이 전부 남아 있어야 하고, "
             "같은 unit_id 를 두 번 쓰지 않는다 — 유실이나 중복이 있으면 결과가 폐기된다.",
+            f"[누락 채우기] 사유가 {REASON_EXPLANATION_MISSING} 인 유닛은 블록이 없거나 "
+            "설명이 비어 있다 — 위에 적힌 unit_id · section_id 로 UNIT 블록을 새로 쓴다. "
+            "기존 파일을 읽을 수 없으면 그 파일의 대상 유닛 전부를 템플릿대로 새로 쓴다.",
+            "[id 규칙] UNIT 헤더와 FILE_SUMMARY refs 에는 05-structure.md CHANGED 표에 "
+            "있는 id 만 쓴다 — 표에 없는 id 의 블록과 그 id 를 refs 로 든 요약은 버려진다.",
             "[FILE_SUMMARY 재작성] FILE_SUMMARY 가 대상인 파일은 요약 문단만 "
             "다시 쓴다 — 카운트 서술은 위에 준 원자 집계와 일치해야 하고 "
-            "그 파일의 UNIT 블록은 그대로 둔다.",
+            "그 파일에서 대상이 아닌 UNIT 블록은 그대로 둔다.",
             f"[근거] {excerpts} 의 before/after 와 base/·snapshot/ 원문을 다시 읽고 쓴다.",
             "",
             _ANALYZER_WRITING,
@@ -585,25 +615,39 @@ def _fix_mission(
         _ANALYZER_SYSTEM,
         prompt,
         tuple(expected),
-        _unit_audit(tuple(expected), preserve=True),
+        _unit_audit(tuple(expected), preserve=True, known=frozenset(owner)),
     )
 
 
 def _fix_reasons(work_dir: Path) -> dict[str, str]:
-    """unit_id -> why it is being redone, from 40-verifier and 30-levelcheck."""
+    """target -> why it is being redone, from 40-verifier, 30-levelcheck, 20-analysis.
 
-    paths = artifact_paths(work_dir)
+    The gates are read through round_gate: by the time this mission is built
+    the orchestrator has already archived them, and reading the live paths
+    here meant every production prompt said '재작성 요청' and nothing else.
+    """
+
+    verifier = round_gate(work_dir, "verifier")
+    levelcheck = round_gate(work_dir, "levelcheck")
     reasons: dict[str, str] = {}
-    if paths["verifier"].is_file():
+    if verifier.is_file():
         try:
-            report = parse_verifier(paths["verifier"].read_text(encoding="utf-8"))
+            report = parse_verifier(verifier.read_text(encoding="utf-8"))
         except ValueError:
             report = None
         for fix in report.fixes if report else ():
             reasons[fix.target] = f"{fix.reason} ({fix.field})"
-    if paths["levelcheck"].is_file():
+            if fix.target.startswith("f-"):
+                # dispatch strips the prefix from the scope; keep the reason
+                # reachable under the id the mission will look it up by.
+                reasons.setdefault(fix.target[2:], reasons[fix.target])
+        for unit in report.units if report else ():
+            if unit.fidelity in FLAGGED_FIDELITY:
+                # the verdict without its FIX copy is still a reason
+                reasons.setdefault(unit.unit_id, f"fidelity_{unit.fidelity} (설명)")
+    if levelcheck.is_file():
         try:
-            check = parse_levelcheck(paths["levelcheck"].read_text(encoding="utf-8"))
+            check = parse_levelcheck(levelcheck.read_text(encoding="utf-8"))
         except ValueError:
             check = None
         for row in check.units if check else ():
@@ -613,6 +657,8 @@ def _fix_reasons(work_dir: Path) -> dict[str, str]:
             reasons[row.unit_id] = (
                 f"{reasons[row.unit_id]} / {hit}" if row.unit_id in reasons else hit
             )
+    for target, reason in missing_prose(work_dir).items():
+        reasons[target] = f"{reasons[target]} / {reason}" if target in reasons else reason
     return reasons
 
 
@@ -648,8 +694,40 @@ def _counts_table(work_dir: Path, changeset: Changeset) -> list[str]:
     return lines
 
 
+def _audit_checklist(work_dir: Path, changeset: Changeset) -> list[str]:
+    """The units the verifier owes a verdict — the same set collect measures.
+
+    A unit is owed when 05 produced it and 20-analysis gave it a 설명; one
+    without 설명 is already 설명 생성 실패 and has nothing to audit. Naming
+    the ids here is what the analyzer prompt already does: told only to
+    "read 20-analysis", a verifier skips blocks or copies a typo'd id.
+    """
+
+    structure = parse_structure(_read(work_dir / "05-structure.md"))
+    analyses, _failed = load_analyses_split(work_dir / "20-analysis")
+    explained = {
+        unit.unit_id
+        for analysis in analyses
+        for unit in analysis.units
+        if unit.explanation.strip()
+    }
+    heads = {row.section_id: row for row in (*structure.base_tree, *structure.tree)}
+    paths = {entry.fid: entry.path for entry in changeset.files}
+    lines: list[str] = []
+    for unit in structure.changed:
+        if unit.unit_id not in explained:
+            continue
+        where = paths.get(unit.file_id, unit.file_id)
+        row = heads.get(unit.section_id)
+        if row:
+            where += " § " + row.heading_path.rsplit(" > ", 1)[-1]
+        lines.append(f"- {unit.unit_id} · {where}")
+    return lines
+
+
 def _verifier_mission(mission: Mission, work_dir: Path) -> MissionPlan:
     changeset = parse_changeset(_read(work_dir / "00-changeset.md"))
+    checklist = _audit_checklist(work_dir, changeset)
     excerpts = (work_dir / "07-excerpts.md").resolve()
     literals = (work_dir / "06-literals.md").resolve()
     analysis_dir = (work_dir / "20-analysis").resolve()
@@ -667,7 +745,11 @@ def _verifier_mission(mission: Mission, work_dir: Path) -> MissionPlan:
             f"{analysis_dir} 의 UNIT 별 설명 → {excerpts} 의 같은 유닛 before/after → "
             f"{literals} 의 같은 유닛 값 → "
             f"{(work_dir / 'base').resolve()} · {(work_dir / 'snapshot').resolve()} 의 변경 절.",
-            "20-analysis 의 UNIT 마다 UNIT 블록 하나를 쓴다. "
+            f"[감사 대상] 아래 {len(checklist)}개 unit_id 마다 UNIT 블록 하나를 쓴다 — "
+            "목록에 없는 id 는 쓰지 않고, 목록의 id 는 한 글자도 바꾸지 않는다. "
+            "fidelity 는 ok · invented · omitted 셋 중 하나만 쓴다 — 다른 값은 "
+            "감사하지 않은 것으로 센다:",
+            *checklist,
             "class_stated 는 20-analysis 가 쓴 class 를 그대로 옮기고, 없으면 null 이다.",
             "fidelity 가 ok 가 아닌 유닛마다 FIX 블록을 하나씩 쓴다 "
             "(reason: fidelity_invented | fidelity_omitted). "

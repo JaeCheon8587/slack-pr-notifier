@@ -199,6 +199,9 @@ a { color: inherit; }
 .pill.tag-의미, .pill[class*="의미"] { color:#9ddfff; border-color:rgba(107,213,255,.32); background:rgba(107,213,255,.07); }
 .pill.tag-표현, .pill[class*="표현"] { color:#c6ced8; }
 .pill.tag-부분 { color:#ffd786; border-color:rgba(255,200,87,.28); background:rgba(255,200,87,.055); }
+.pill.tag-audit-flag { color:#ffb1b7; border-color:rgba(240,126,134,.42); background:rgba(240,126,134,.085); }
+.pill.tag-audit-none { color:#ffd786; border-color:rgba(255,200,87,.28); background:transparent; border-style:dashed; }
+.file-summary .pill { margin-left:6px; vertical-align:middle; }
 
 .change-body { padding:0 22px 22px; }
 .diff-grid { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
@@ -223,6 +226,7 @@ pre {
 .explain { margin-top:12px; }
 .explain-label { color:var(--dim); font-size:10px; letter-spacing:.1em; font-weight:900; }
 .explain p { margin:5px 0 0; color:#aebac7; }
+.explain p.audit-note { color:#ffb1b7; }
 
 .trees { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
 .trees h5 { margin:0 0 8px; color:var(--muted); font-size:10px; letter-spacing:.11em; text-transform:uppercase; }
@@ -310,7 +314,7 @@ footer {
 <div class="stat"><div class="label">Files</div><div class="value">2</div><div class="subv">affected documents</div></div>
 <div class="stat"><div class="label">Units</div><div class="value">10</div><div class="subv">analyzed changes</div></div>
 <div class="stat"><div class="label">Semantic</div><div class="value">9</div><div class="subv">5 value-level changes</div></div>
-<div class="stat"><div class="label">Analysis</div><div class="value" style="font-size:24px;color:#ffd77e">WARN</div><div class="subv">theme drop 3</div></div>
+<div class="stat"><div class="label">Analysis</div><div class="value" style="font-size:24px;color:#ffd77e">WARN</div><div class="subv">미검증 1</div></div>
 </section><section class="section" id="matrix">
 <div class="section-head">
 <div><div class="section-num">01 / CHANGE MATRIX</div><h2>변경 매트릭스</h2></div>
@@ -342,6 +346,10 @@ footer {
 <div class="mid">≠</div>
 <div><span class="c-label">FLOW DIAGRAM</span><b>최대 2회</b></div>
 </div>
+</div>
+<div class="alert">
+<div class="alert-top"><div class="alert-icon">!</div><h3>미검증 1유닛</h3></div>
+<p>verifier가 감사하지 않은 설명이 있다 — 04 섹션에서 '미검증' 표시가 붙은 카드를 원문과 대조해 확인.</p>
 </div>
 <div class="alert secondary">
 <div class="alert-top"><div class="alert-icon">i</div><h3>Theme aggregation incomplete</h3></div>
@@ -421,7 +429,10 @@ footer {
 <div class="change-kicker">CHANGE 03</div>
 <div class="change-title">00.README.md § 1차 스코프 테마</div>
 </div>
-<div class="change-tags"><span class="pill tag-의미">[의미]</span><span class="pill tag-부분">부분</span></div>
+<!-- audit pill: verifier가 판정하지 않은 설명은 '미검증'. 재시도를 소진한 지적은
+     <span class="pill tag-audit-flag">검증 지적 · 빠뜨림</span> 으로 바뀌고, 카드가
+     열린 채로 설명 아래에 <p class="audit-note">검증 근거 — …</p> 한 줄이 붙는다. -->
+<div class="change-tags"><span class="pill tag-의미">[의미]</span><span class="pill tag-부분">부분</span><span class="pill tag-audit-none">미검증</span></div>
 </summary>
 <div class="change-body">
 <div class="diff-grid single">
@@ -767,11 +778,11 @@ python3 --version
 <div class="analysis-wrap">
 <div class="analysis-panel">
 <p>파이프라인 상태<span class="badge">WARNING</span></p>
-<div class="wrap"><table><thead><tr><th>항목</th><th>값</th></tr></thead><tbody><tr><th>검증 라운드</th><td>3</td></tr><tr><th>지적 잔존</th><td>0</td></tr><tr><th>집계 불일치</th><td>0</td></tr><tr><th>설명 생성 실패 파일</th><td>0</td></tr><tr><th>분류 불확실</th><td>0</td></tr><tr><th>refs 드롭</th><td>0</td></tr><tr><th>주제 드롭</th><td>3</td></tr><tr><th>주제 생성 실패</th><td>없음</td></tr><tr><th>신뢰도 분포</th><td>high 2</td></tr></tbody></table></div>
+<div class="wrap"><table><thead><tr><th>항목</th><th>값</th></tr></thead><tbody><tr><th>검증 상태</th><td>정상</td></tr><tr><th>검증 라운드</th><td>3</td></tr><tr><th>지적 잔존</th><td>0</td></tr><tr><th>집계 불일치</th><td>0</td></tr><tr><th>미검증</th><td>1</td></tr><tr><th>설명 생성 실패 파일</th><td>0</td></tr><tr><th>분류 불확실</th><td>0</td></tr><tr><th>refs 드롭</th><td>0</td></tr><tr><th>주제 드롭</th><td>3</td></tr><tr><th>주제 생성 실패</th><td>없음</td></tr><tr><th>신뢰도 분포</th><td>high 2</td></tr></tbody></table></div>
 <h4>분류 불확실 항목</h4>
 <ul class="plain"><li>u-a0c3709c 신규 절 본문은 06-literals.md에 원자로 잡히지 않음 (prose_added 비어 있음)</li><li>u-e599f392 제목 변경과 u-99475a5e 신규 절 본문은 06-literals.md에 원자로 잡히지 않음</li></ul>
 <h4>부분 실패 목록</h4>
-<p class="none">없음</p>
+<ul class="plain"><li>u-3972e5b6 — 미검증</li></ul>
 <div class="trustbar" title="high confidence distribution"><span></span></div>
 </div>
 <div class="appendix-panel">

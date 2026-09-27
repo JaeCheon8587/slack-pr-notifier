@@ -19,6 +19,7 @@ committed.
 from __future__ import annotations
 
 import subprocess
+from dataclasses import replace
 from pathlib import Path
 
 from app.config import Settings
@@ -143,21 +144,34 @@ def _stage_of(kwargs: dict) -> str:
 
 
 def _script(
-    monkeypatch, workspace: Path, *, replies: dict[str, str], calls: list[str], edited=True
+    monkeypatch,
+    workspace: Path,
+    *,
+    replies: dict[str, str | list[str]],
+    calls: list[str],
+    edited=True,
+    seen: dict[str, list[str]] | None = None,
 ):
     """Replace the CLI: record the stage, optionally edit the doc, reply.
 
     The artifact travels through `--output-last-message`, the same channel
-    the real `codex exec` uses — stdout itself stays empty.
+    the real `codex exec` uses — stdout itself stays empty. A list reply is
+    one answer per call of that stage (the last one repeats); `seen`
+    collects each stage's prompts in call order.
     """
 
     def fake_run(cmd, **kwargs):
         stage = _stage_of(kwargs)
         calls.append(stage)
+        if seen is not None:
+            seen.setdefault(stage, []).append(kwargs["input"])
         if stage == "edit" and edited:
             (workspace / DOC).write_text(DOC_TEXT.replace("3.2", "4.0"), encoding="utf-8")
+        reply = replies[stage]
+        if isinstance(reply, list):
+            reply = reply[min(calls.count(stage), len(reply)) - 1]
         out = Path(cmd[cmd.index("--output-last-message") + 1])
-        out.write_text(replies[stage], encoding="utf-8")
+        out.write_text(reply, encoding="utf-8")
         return _Proc("")
 
     monkeypatch.setattr(runner.subprocess, "run", fake_run)
@@ -173,21 +187,35 @@ def _fake_git(
     *,
     changed: list[str] | None = None,
     diff: str = _DIFF,
+    pristine: str = DOC_TEXT,
 ):
-    """Stub every git call the runner makes; track reverts for assertions."""
+    """Stub every git call the runner makes; track reverts for assertions.
+
+    `pristine` is DOC as committed — what a restore puts back and what the
+    working tree is compared to.
+    """
 
     reverted: list[list[str]] = []
     state = {"changed": changed if changed is not None else [DOC]}
 
     monkeypatch.setattr(runner.git_workspace, "_workspace_root", lambda settings: tmp_path / "ws")
     monkeypatch.setattr(runner.git_workspace, "current_sha", lambda s, w: "abc1234")
-    monkeypatch.setattr(runner.git_workspace, "changed_paths", lambda s, w: list(state["changed"]))
+    def fake_changed(settings, ws):
+        # An edit written after a restore is dirty again, as git would say.
+        dirty = (workspace / DOC).read_text(encoding="utf-8") != pristine
+        return sorted(set(state["changed"]) | ({DOC} if dirty else set()))
+
+    monkeypatch.setattr(runner.git_workspace, "changed_paths", fake_changed)
     monkeypatch.setattr(runner.git_workspace, "untracked_paths", lambda s, w: [])
 
     def fake_restore(settings, ws, paths):
+        # Like `git restore`: the content goes back too — the spec gate reads
+        # the document again after a re-injection.
         reverted.append(list(paths))
         for path in paths:
             state["changed"] = [p for p in state["changed"] if p != path]
+            if path == DOC:
+                (workspace / DOC).write_text(pristine, encoding="utf-8")
 
     monkeypatch.setattr(runner.git_workspace, "restore_paths", fake_restore)
     monkeypatch.setattr(runner, "_diff", lambda r: diff)
@@ -540,3 +568,169 @@ def test_verify_prompt_never_carries_the_edit_receipt(monkeypatch, tmp_path):
     prompt = seen["verify"]
     assert OPINIONS[0]["body"] in prompt, "the opinion original is the judging axis"
     assert "## RECEIPT" not in prompt and "files_touched" not in prompt
+
+
+# ---------------------------------------------------------------------------
+# spec gate
+# ---------------------------------------------------------------------------
+def _intent_with(**changes) -> schema.Intent:
+    intent = _intent()
+    return replace(intent, opinions=(replace(intent.opinions[0], **changes),))
+
+
+def _round_dir(tmp_path: Path) -> Path:
+    return tmp_path / "ws" / ".revise" / "1009" / "11" / "r1"
+
+
+def test_an_already_applied_opinion_costs_no_edit_and_closes_as_applied(monkeypatch, tmp_path):
+    applied_text = DOC_TEXT.replace("3.2", "4.0")
+    workspace = _workspace(tmp_path)
+    (workspace / DOC).write_text(applied_text, encoding="utf-8")
+    _fake_git(monkeypatch, workspace, tmp_path, changed=[], diff="", pristine=applied_text)
+    calls: list[str] = []
+    _script(
+        monkeypatch,
+        workspace,
+        calls=calls,
+        replies={
+            "intent": schema.render_intent(_intent_with(search_terms=("2. 설치 절차",))),
+            "edit": "",
+            "verify": "",
+        },
+        edited=False,
+    )
+
+    result = runner.StagedRunner(_settings(tmp_path)).run(workspace, OPINIONS, SESSION, 900)
+
+    assert result.kind == "ok"
+    assert calls == ["intent"], "neither 3b nor 3c has anything to do"
+    assert result.unapplied == [] and result.clarify == [] and result.commit_paths == []
+    verify = schema.parse_verify((_round_dir(tmp_path) / "40-verify.md").read_text("utf-8"))
+    assert [(row.opinion_id, row.verdict) for row in verify.verdicts] == [(41, "applied")]
+    summary = (_round_dir(tmp_path) / "50-summary.md").read_text(encoding="utf-8")
+    assert "이미 반영" in summary
+
+
+def test_a_rejected_spec_reinjects_intent_with_the_finding(monkeypatch, tmp_path):
+    workspace = _workspace(tmp_path)
+    _fake_git(monkeypatch, workspace, tmp_path)
+    calls: list[str] = []
+    seen: dict[str, list[str]] = {}
+    _script(
+        monkeypatch,
+        workspace,
+        calls=calls,
+        seen=seen,
+        replies={
+            # the target value is not the human's: '4.0.0' vs "4.0으로"
+            "intent": [
+                schema.render_intent(_intent_with(수정방향="3.2 → 4.0.0")),
+                schema.render_intent(_intent()),
+            ],
+            "edit": schema.render_edit(_receipt()),
+            "verify": schema.render_verify(_verify()),
+        },
+    )
+
+    result = runner.StagedRunner(_settings(tmp_path)).run(workspace, OPINIONS, SESSION, 900)
+
+    assert result.kind == "ok"
+    assert calls == ["intent", "intent", "edit", "verify"], "no 3b call on the bad spec"
+    assert "재투입" not in seen["intent"][0]
+    assert "스펙 검증 실패" in seen["intent"][1] and "'4.0.0'" in seen["intent"][1]
+    assert "스펙 검증 실패" not in seen["edit"][0], "3a's finding is not 3b's to answer"
+    assert result.commit_paths == [DOC] and result.unapplied == []
+    ledger = (_round_dir(tmp_path) / "ledger.md").read_text(encoding="utf-8")
+    assert "reinject 1/2 -> intent (스펙 검증 실패" in ledger
+
+
+def test_a_spec_reinjection_is_not_counted_as_an_edit_attempt(monkeypatch, tmp_path):
+    """After a re-spec, 3c's first miss is still 3b's first miss → edit."""
+
+    workspace = _workspace(tmp_path)
+    _fake_git(monkeypatch, workspace, tmp_path)
+    calls: list[str] = []
+    _script(
+        monkeypatch,
+        workspace,
+        calls=calls,
+        replies={
+            "intent": [
+                schema.render_intent(_intent_with(수정방향="3.2 → 4.0.0")),
+                schema.render_intent(_intent()),
+            ],
+            "edit": schema.render_edit(_receipt()),
+            "verify": schema.render_verify(_verify("unapplied")),
+        },
+    )
+
+    result = runner.StagedRunner(_settings(tmp_path)).run(workspace, OPINIONS, SESSION, 900)
+
+    assert result.kind == "ok"
+    ledger = (_round_dir(tmp_path) / "ledger.md").read_text(encoding="utf-8")
+    marks = [line for line in ledger.splitlines() if line.startswith("reinject ")]
+    assert "-> intent (스펙 검증 실패" in marks[0]
+    assert "-> edit (3c 미반영 판정" in marks[1]
+    assert "budget spent" in marks[2]
+    assert calls == ["intent", "intent", "edit", "verify", "edit", "verify"]
+
+
+def test_the_code_resolved_a_is_what_3b_and_the_gate_work_with(monkeypatch, tmp_path):
+    workspace = _workspace(tmp_path)
+    _fake_git(monkeypatch, workspace, tmp_path)
+    calls: list[str] = []
+    seen: dict[str, list[str]] = {}
+    body = "설치 절차의 버전 표기를 4.0으로 고쳐 주세요."  # no current value named
+    opinions = [{"id": 41, "body": body, "question_refs": None}]
+    _script(
+        monkeypatch,
+        workspace,
+        calls=calls,
+        seen=seen,
+        replies={
+            "intent": schema.render_intent(_intent_with(수정방향="3.1 → 4.0")),
+            "edit": schema.render_edit(_receipt()),
+            "verify": schema.render_verify(_verify()),
+        },
+    )
+
+    result = runner.StagedRunner(_settings(tmp_path)).run(workspace, opinions, SESSION, 900)
+
+    assert calls == ["intent", "edit", "verify"]
+    edit_prompt = seen["edit"][0]
+    assert "'3.2' → '4.0'" in edit_prompt and "수정방향: 3.2 → 4.0" in edit_prompt
+    assert "3.1 → 4.0" not in edit_prompt
+    gate = schema.parse_gate((_round_dir(tmp_path) / "35-gate.md").read_text("utf-8"))
+    assert [(check.from_value, check.result) for check in gate.literals] == [("3.2", "pass")]
+    assert result.commit_paths == [DOC]
+
+
+def test_an_opinion_the_spec_gate_held_back_never_reaches_3c(monkeypatch, tmp_path):
+    workspace = _workspace(tmp_path)
+    _fake_git(monkeypatch, workspace, tmp_path)
+    calls: list[str] = []
+    seen: dict[str, list[str]] = {}
+    intent = _intent()
+    lost = replace(intent.opinions[0], opinion_id=42, search_terms=("이 문장은 문서에 없다",))
+    opinions = [*OPINIONS, {"id": 42, "body": "없는 절을 고쳐 주세요.", "question_refs": None}]
+    _script(
+        monkeypatch,
+        workspace,
+        calls=calls,
+        seen=seen,
+        replies={
+            "intent": schema.render_intent(replace(intent, opinions=(*intent.opinions, lost))),
+            "edit": schema.render_edit(_receipt()),
+            "verify": schema.render_verify(_verify()),
+        },
+    )
+
+    result = runner.StagedRunner(_settings(tmp_path)).run(workspace, opinions, SESSION, 900)
+
+    assert calls == ["intent", "edit", "verify"]
+    assert OPINIONS[0]["body"] in seen["verify"][0]
+    assert "없는 절을 고쳐 주세요." not in seen["verify"][0]
+    assert [row["opinion_id"] for row in result.unapplied] == [42]
+    assert "대상 미확인" in result.unapplied[0]["reason"]
+    assert [row["opinion_id"] for row in result.clarify] == [42]
+    assert result.commit_paths == [DOC]

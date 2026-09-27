@@ -32,13 +32,24 @@ from .levelcheck import LevelCheck
 from .literals import ChangedValue, Literals
 from .structure import Structure
 from .themes import Theme, parse_themes
-from .verifier import parse_verifier, verify_summary
+from .verifier import (
+    Verifier,
+    audit_units,
+    normalize_targets,
+    parse_verifier,
+    verify_summary,
+)
 
 #: What a prose field says when the analyzer produced nothing usable for it.
 #: The design's words, not a paraphrase — the report prints them as-is and
 #: the 리포트 신뢰도 block counts them.
 EXPLANATION_FAILED = "설명 생성 실패"
 SUMMARY_FAILED = "FILE_SUMMARY 생성 실패"
+#: CollectedUnit.audit for a 설명 no usable verifier block judged.
+AUDIT_UNAUDITED = "unaudited"
+#: ... and for one only a FIX named, whose reason carried no fidelity.
+AUDIT_FLAGGED = "flagged"
+_FIX_VERDICTS = {"fidelity_invented": "invented", "fidelity_omitted": "omitted"}
 
 #: ChangeUnit.kind speaks the diff's vocabulary; the artifact speaks the
 #: design's.
@@ -71,6 +82,11 @@ class CollectedUnit:
     textual: tuple[tuple[str, str], ...] = ()
     prose_added: tuple[str, ...] = ()
     prose_removed: tuple[str, ...] = ()
+    #: The final audit's verdict on this unit's 설명 — ok | invented |
+    #: omitted, AUDIT_UNAUDITED when no usable UNIT block names it, '' when
+    #: there was no 설명 to audit. audit_why is the verifier's one line.
+    audit: str = ""
+    audit_why: str = ""
 
 
 @dataclass(frozen=True)
@@ -148,12 +164,23 @@ def build_collect(
 ) -> Collect:
     """Run the design's six steps over parsed artifacts — no LLM anywhere."""
 
-    # verifier의 FIX 블록에서 fix 대상을 잰다 — verify_summary와 같은 degrade
-    # 규칙: 파싱 실패는 "없음"이지 죽음이 아니다.
+    # verifier의 FIX 블록과 fidelity 판정에서 지적 대상을 잰다 — verify_summary와
+    # 같은 degrade 규칙: 파싱 실패는 "없음"이지 죽음이 아니다. 대신 그 유닛들은
+    # 아래에서 미검증으로 표시되고 verify.status 가 failed 가 된다.
     try:
-        fix_targets = parse_verifier(verifier_text).fix_targets()
+        report: Verifier | None = parse_verifier(verifier_text)
     except ValueError:
-        fix_targets = ()
+        report = None
+    file_ids = [entry.fid for entry in changeset.files]
+    fix_targets = (
+        normalize_targets(report.flagged_targets(), file_ids) if report else ()
+    )
+    audits = audit_units(report) if report and not report.is_stub else {}
+    # a FIX with no UNIT block still carries its verdict in the reason
+    fix_verdict = {
+        fix.target: _FIX_VERDICTS.get(fix.reason, AUDIT_FLAGGED)
+        for fix in (report.fixes if report else ())
+    }
 
     # 1. parse — the caller did it; failed_files is what could not be read.
     known = {unit.unit_id for unit in structure.changed}
@@ -182,6 +209,15 @@ def build_collect(
         lit = lit_by_unit.get(unit.unit_id)
         excerpt = excerpt_by_unit.get(unit.unit_id)
         verified = levelcheck.verified_level(unit.unit_id) or ""
+        audit, audit_why = "", ""
+        if unit.unit_id in explanation:
+            block = audits.get(unit.unit_id)
+            if block:
+                audit, audit_why = block.fidelity, block.why
+            elif unit.unit_id in fix_verdict:
+                audit = fix_verdict[unit.unit_id]
+            else:
+                audit = AUDIT_UNAUDITED
         units.append(
             CollectedUnit(
                 unit_id=unit.unit_id,
@@ -203,6 +239,8 @@ def build_collect(
                 textual=lit.textual if lit else (),
                 prose_added=lit.prose_added if lit else (),
                 prose_removed=lit.prose_removed if lit else (),
+                audit=audit,
+                audit_why=audit_why,
             )
         )
 
@@ -281,7 +319,12 @@ def build_collect(
         classes=inventory.axis_counts,
         ops=inventory.op_counts,
         value_changes=inventory.value_changes,
-        verify=verify_summary(verifier_text),
+        # auditable = every unit that had a 설명 — the set coverage is owed on
+        verify=verify_summary(
+            verifier_text,
+            [unit.unit_id for unit in structure.changed if unit.unit_id in explanation],
+            file_ids,
+        ),
         confidence_dist=confidence_dist,
         uncertain=tuple(
             analysis.uncertain
@@ -361,6 +404,10 @@ def render_collect(collect: Collect) -> str:
             }
             if unit.vocab_violation:
                 fields["vocab_violation"] = list(unit.vocab_violation)
+            if unit.audit:
+                fields["audit"] = unit.audit
+            if unit.audit_why:
+                fields["audit_why"] = unit.audit_why
             parts.append("")
             parts.append(render_section("UNIT", unit.unit_id, fields))
             parts.append("**설명** " + unit.explanation)
@@ -465,6 +512,8 @@ def parse_collect(text: str) -> Collect:
                     vocab_violation=tuple(
                         str(v) for v in fields.get("vocab_violation") or []
                     ),
+                    audit=str(fields.get("audit") or ""),
+                    audit_why=str(fields.get("audit_why") or ""),
                 )
             )
         elif header[0] == "THEME":

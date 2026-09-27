@@ -1,11 +1,14 @@
-"""The four deterministic nodes — anchor / impact / gate / summary-extract.
+"""The five deterministic nodes — anchor / spec / impact / gate / summary-extract.
 
 docs/revise-workflow.html moves the original steps 2, 3 and 6 off the LLM
 entirely: existence checking, companion-change discovery and comparison all
 reduce to string work this repo already has as pure functions
 (markdown_tree / literals / ids). The LLM is left with the two things that
 are not comparisons — which strings to look for (3a) and which of the found
-candidates are real (3b).
+candidates are real (3b). The spec node sits between them: 3a writes its
+spec without seeing a document body, so before 3b is paid to act on it the
+spec is checked against the opinion text and the anchor section, and the
+one thing 3a can only guess — the current value A — is computed instead.
 
 Nothing here spawns a process. `build_gate` in particular never calls git:
 `changed_paths`, `changed_lines` and `untracked` arrive as arguments, so the
@@ -29,7 +32,7 @@ import difflib
 import posixpath
 import re
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from app.mrdoc.ids import section_id as make_section_id
 from app.mrdoc.ids import unit_id as make_unit_id
@@ -57,8 +60,12 @@ from .schema import (
     LiteralCheck,
     LiteralSets,
     LiteralText,
+    Opinion,
     Required,
+    Spec,
+    SpecEntry,
     Summary,
+    Verdict,
     Verify,
     join_ids,
     render_key_change,
@@ -275,6 +282,477 @@ def build_anchor(intent: Intent, head_tree: dict[str, str]) -> Anchor:
             CONFIDENCE="high — parse_sections 섹션 인덱스의 문자열 검색만 사용",
         ),
     )
+
+
+# --------------------------------------------------------------------------
+# 2b · spec — does 3a's spec agree with the opinion and the section?
+# --------------------------------------------------------------------------
+
+#: The note a non-substitution opinion carries — nothing the machine could
+#: compare, so it is not a thing to watch either.
+NOTE_NOT_A_SWAP = "치환 형태가 아니다 — 기계 대조 없이 편집으로 넘긴다"
+
+_LEFT_DIGIT = r"(?<![0-9.])"
+_RIGHT_DIGIT = r"(?!\.?[0-9])"
+
+
+def _count(surface: str, text: str) -> int:
+    """Occurrences of `surface` in `text`; a digit edge must not sit inside a
+    longer number ('3.2' is not in '13.2' or '3.2.1')."""
+
+    if not surface:
+        return 0
+    left = _LEFT_DIGIT if surface[0].isdigit() else ""
+    right = _RIGHT_DIGIT if surface[-1].isdigit() else ""
+    return len(re.findall(left + re.escape(surface) + right, text))
+
+
+def _same_literal(a: Literal, b: Literal) -> bool:
+    """One value regardless of the line around it — the key of a version or
+    kv depends on its neighbours, a unit's key is the unit itself."""
+
+    return a.kind == b.kind and a.value == b.value and (a.kind != "unit" or a.key == b.key)
+
+
+def _compatible(literal: Literal, targets: Sequence[Literal]) -> bool:
+    """Could `literal` be the value one of `targets` replaces?"""
+
+    return any(
+        literal.kind == target.kind
+        and (literal.kind not in ("unit", "kv") or literal.key == target.key)
+        for target in targets
+    )
+
+
+def _surface(literal: Literal, text: str) -> str:
+    """How `literal` is spelled in `text` — a unit's value alone is not."""
+
+    if literal.kind == "unit":
+        found = re.search(re.escape(literal.value) + r"\s*" + re.escape(literal.key), text)
+        return found.group(0) if found else f"{literal.value}{literal.key}"
+    if literal.kind == "bool":
+        found = re.search(r"\b" + re.escape(literal.value) + r"\b", text, re.IGNORECASE)
+        return found.group(0) if found else literal.value
+    return literal.value
+
+
+def _locate(value: str, text: str) -> str | None:
+    """`value` as `text` spells it, or None when `text` does not carry it."""
+
+    if not value.strip():
+        return None
+    if _count(value, text):
+        return value
+    own = extract_literals(value)
+    if len(own) != 1:
+        return None
+    for literal in extract_literals(text):
+        if _same_literal(literal, own[0]):
+            return _surface(literal, text)
+    return None
+
+
+def _mentions(value: str, text: str) -> bool:
+    needle = _norm(value)
+    return _locate(value, text) is not None or bool(needle and needle in _norm(text))
+
+
+def _unique(values: Sequence[str]) -> tuple[str, ...]:
+    return tuple(dict.fromkeys(value for value in values if value))
+
+
+def _resolve_a(
+    spec_a: str, b: str, opinion_text: str, section: str
+) -> tuple[str, str, tuple[str, ...]]:
+    """(A, source, candidates) — A as the section spells it, '' when undecided.
+
+    The human outranks 3a, and 3a outranks inference: a current value the
+    opinion itself names wins, then 3a's A if the section holds it, then the
+    one value in the section that B could replace (same kind — and same unit
+    or key). More than one such value is ambiguous and comes back as
+    candidates; none leaves A undecided. Inference never overrides the
+    human: once the opinion names a current value, a section that does not
+    hold it is not given a look-alike ('3.2' is not '13.2').
+    """
+
+    b_literals = extract_literals(b)
+    replaceable: list[Literal] = []
+    named: list[Literal] = []
+    stated: tuple[str, ...] = ()
+    if b_literals:
+        replaceable = [
+            literal
+            for literal in extract_literals(section)
+            if _compatible(literal, b_literals)
+            and not any(_same_literal(literal, target) for target in b_literals)
+        ]
+        named = [
+            literal
+            for literal in extract_literals(opinion_text)
+            if _compatible(literal, b_literals)
+            and not any(_same_literal(literal, target) for target in b_literals)
+        ]
+        stated = _unique(
+            [
+                _surface(literal, section)
+                for literal in replaceable
+                if any(_same_literal(literal, own) for own in named)
+            ]
+        )
+        if len(stated) == 1:
+            return stated[0], "opinion", ()
+    located = _locate(spec_a, section)
+    if located and (not stated or located in stated):
+        return located, "spec", ()
+    if len(stated) > 1:
+        return "", "", stated
+    if named:
+        return "", "", ()
+    surfaces = _unique([_surface(literal, section) for literal in replaceable])
+    if len(surfaces) == 1:
+        return surfaces[0], "code", ()
+    return "", "", surfaces if len(surfaces) > 1 else ()
+
+
+def _tier(terms: Sequence[str], unit: _Unit) -> str:
+    """The best tier any search term reached inside the anchor unit."""
+
+    best = "partial"
+    for term in terms:
+        if not term.strip():
+            continue
+        if term in unit.text:
+            return "exact"
+        if _norm(term) in _norm(unit.text):
+            best = "normalized"
+    return best
+
+
+def _rivals(terms: Sequence[str], scope: Sequence[_Unit], chosen: _Unit) -> tuple[str, ...]:
+    """Sections the search terms fit at least as well as the chosen one.
+
+    build_anchor counts only the first unit each term matched and breaks a
+    tie by file order, so a second section just as plausible disappears
+    without a trace. Counting every match surfaces it.
+    """
+
+    counts: dict[str, int] = {}
+    for term in terms:
+        for unit in _match_term(term, scope):
+            counts[unit.unit_id] = counts.get(unit.unit_id, 0) + 1
+    mine = counts.get(chosen.unit_id, 0)
+    return tuple(
+        f"{unit.file} § {unit.section.heading}"
+        for unit in scope
+        if unit.unit_id != chosen.unit_id and mine and counts.get(unit.unit_id, 0) >= mine
+    )
+
+
+def _judge(
+    opinion: Opinion,
+    entry: AnchorEntry | None,
+    opinion_text: str,
+    units: Sequence[_Unit],
+    by_unit: Mapping[str, _Unit],
+    *,
+    duplicated: bool,
+) -> SpecEntry:
+    """One opinion's decision — every check reads the opinion or the section."""
+
+    base = {"opinion_id": opinion.opinion_id, "op": opinion.op}
+    if duplicated:
+        return SpecEntry(
+            **base, decision="spec_error", notes=("같은 opinion_id 의 OPINION 블록이 둘 이상이다",)
+        )
+    unit = by_unit.get(entry.unit_id) if entry is not None and entry.status == "FOUND" else None
+    if unit is None:
+        return SpecEntry(**base, decision="missing", notes=("대상 미확인 — 앵커 0건",))
+
+    targets = {_posix(path) for path in opinion.대상문서}
+    scope = [candidate for candidate in units if candidate.file in targets] if targets else units
+    tier = _tier(opinion.search_terms, unit)
+    rivals = _rivals(opinion.search_terms, scope, unit)
+    common = {**base, "anchor_tier": tier, "alternatives": rivals}
+
+    swap = parse_replacement(opinion.수정방향)
+    if swap is None:
+        return SpecEntry(**common, decision="ok", notes=(NOTE_NOT_A_SWAP,))
+    spec_a, b = swap
+    pair = {"from_value": spec_a, "to_value": b}
+    if opinion.op == "create":
+        return SpecEntry(
+            **common, **pair, decision="spec_error",
+            notes=("op 가 create 인데 수정방향이 치환(A → B)이다",),
+        )
+    if spec_a == b:
+        return SpecEntry(
+            **common, **pair, decision="spec_error", notes=("현재 값과 목표 값이 같다",)
+        )
+    if not _mentions(b, opinion_text):
+        return SpecEntry(
+            **common, **pair, decision="spec_error",
+            notes=(f"목표 값 {b!r} 이 의견 원문에 없다 — 3a 가 만든 값",),
+        )
+
+    section = unit.text
+    a, source, candidates = _resolve_a(spec_a, b, opinion_text, section)
+    if candidates:
+        return SpecEntry(
+            **common, **pair, decision="clarify", a_candidates=candidates,
+            notes=(f"대상 절에 바꿀 수 있는 현재 값이 여럿이다: {', '.join(candidates)}",),
+        )
+    if not a:
+        if _locate(b, section) is None:
+            return SpecEntry(
+                **common, **pair, decision="spec_error",
+                notes=(f"현재 값 {spec_a!r} 이 대상 절에 없다",),
+            )
+        if tier == "partial" or rivals:
+            return SpecEntry(
+                **common, **pair, decision="spec_error",
+                notes=("목표 값은 절에 있지만 앵커가 약해 이미 반영으로 단정하지 않는다",),
+            )
+        return SpecEntry(
+            **common, **pair, decision="already_applied",
+            notes=("대상 절에 목표 값이 이미 있고 현재 값은 없다",),
+        )
+
+    notes: list[str] = []
+    if a != spec_a:
+        origin = "의견 원문" if source == "opinion" else "절의 같은 종류 값"
+        notes.append(f"스펙의 현재 값 {spec_a!r} 을 {origin} {a!r} 로 교정했다")
+    occurrences = max(_count(a, section), 1)
+    if occurrences > 1:
+        notes.append(f"현재 값이 절 안에 {occurrences}곳 — 전부 바꾼다")
+    if _locate(b, section) is not None:
+        notes.append("목표 값이 이미 절에 있다 — 남은 현재 값만 바꾼다")
+    return SpecEntry(
+        **common,
+        decision="ok",
+        from_value=a,
+        to_value=b,
+        a_source=source,
+        occurrences=occurrences,
+        notes=tuple(notes),
+    )
+
+
+def build_spec(
+    intent: Intent,
+    anchor: Anchor,
+    opinions: Sequence[Mapping[str, object]],
+    head_tree: dict[str, str],
+) -> Spec:
+    """Check 3a's spec against the opinion text and the anchor section.
+
+    3a writes the spec from the table of contents alone, so every claim it
+    makes about the document body is a guess. This node checks the guesses
+    that can be checked and fixes the one that can be computed — the
+    current value A — before 3b is paid to act on them:
+
+    - coverage: one spec block per input opinion (통합 counts as covered);
+      a missing, duplicated or invented id is a spec error;
+    - B, the target, has to come from the human's text;
+    - A is resolved inside the anchor section (`_resolve_a`), never taken on
+      faith; a section that already reads B and no A is already applied;
+    - how well the anchor matched is measured and handed on as a note — a
+      weak or tied anchor still goes to 3b, flagged (a human decision).
+
+    Opinions are the executor's rows (`id`, `body`); the output has exactly
+    one entry per input opinion, in input order, plus any invented id.
+    """
+
+    units = _index(head_tree)
+    by_unit = {unit.unit_id: unit for unit in units}
+    bodies = {int(str(row.get("id"))): str(row.get("body") or "") for row in opinions}
+
+    blocks: dict[int, Opinion] = {}
+    duplicated: set[int] = set()
+    for opinion in intent.opinions:
+        if opinion.opinion_id in blocks:
+            duplicated.add(opinion.opinion_id)
+        else:
+            blocks[opinion.opinion_id] = opinion
+    hosts: dict[int, int] = {}
+    for opinion in blocks.values():
+        for raw in opinion.통합:
+            for digits in re.findall(r"\d+", raw):
+                merged = int(digits)
+                if merged != opinion.opinion_id and merged not in blocks:
+                    hosts.setdefault(merged, opinion.opinion_id)
+    anchors: dict[int, AnchorEntry] = {}
+    for entry in anchor.entries:
+        anchors.setdefault(entry.opinion_id, entry)
+
+    judged: dict[int, SpecEntry] = {}
+    for opinion_id, opinion in blocks.items():
+        group = [opinion_id, *(merged for merged, host in hosts.items() if host == opinion_id)]
+        judged[opinion_id] = _judge(
+            opinion,
+            anchors.get(opinion_id),
+            "\n".join(bodies.get(member, "") for member in group),
+            units,
+            by_unit,
+            duplicated=opinion_id in duplicated,
+        )
+
+    entries: list[SpecEntry] = []
+    for opinion_id in bodies:
+        if opinion_id in judged:
+            entries.append(judged[opinion_id])
+        elif opinion_id in hosts:
+            host = judged[hosts[opinion_id]]
+            entries.append(
+                SpecEntry(
+                    opinion_id=opinion_id,
+                    decision=host.decision,
+                    op=host.op,
+                    host=host.opinion_id,
+                    notes=(f"의견 {host.opinion_id} 에 통합",),
+                )
+            )
+        else:
+            entries.append(
+                SpecEntry(
+                    opinion_id=opinion_id,
+                    decision="spec_error",
+                    notes=("3a 스펙에 이 의견의 블록이 없다",),
+                )
+            )
+    for opinion_id, entry in judged.items():
+        if opinion_id not in bodies:
+            entries.append(
+                replace(
+                    entry,
+                    decision="spec_error",
+                    notes=("입력에 없는 opinion_id — 3a 가 만든 블록", *entry.notes),
+                )
+            )
+
+    spec = Spec(
+        mr_iid=intent.mr_iid,
+        round=intent.round,
+        entries=tuple(entries),
+        required=Required(STATUS="OK", UNCOVERED="none", UNCERTAIN="none", CONFIDENCE="-"),
+    )
+    blocked = [
+        entry.opinion_id
+        for entry in entries
+        if entry.decision in ("spec_error", "clarify", "missing")
+    ]
+    weak = [
+        entry.opinion_id
+        for entry in entries
+        if entry.decision == "ok" and (entry.anchor_tier == "partial" or entry.alternatives)
+    ]
+    counts = spec.counts()
+    if not entries:
+        status = "EMPTY"
+    elif blocked:
+        status = "PARTIAL — " + " · ".join(
+            f"{decision} {counts[decision]}"
+            for decision in ("spec_error", "clarify", "missing")
+            if counts[decision]
+        )
+    else:
+        status = "OK"
+    return replace(
+        spec,
+        required=Required(
+            STATUS=status,
+            UNCOVERED=join_ids(blocked),
+            UNCERTAIN=(
+                "none"
+                if not weak
+                else f"약하거나 동점인 앵커 {len(weak)}건 — 편집은 진행하고 주의 항목에 싣는다"
+            ),
+            CONFIDENCE="high — 의견 원문과 앵커 절의 문자열·리터럴 대조만 사용",
+        ),
+    )
+
+
+def effective_view(intent: Intent, anchor: Anchor, spec: Spec) -> tuple[Intent, Anchor]:
+    """The intent and anchor 3b, the gate and 3c act on: `ok` opinions only,
+    each substitution rewritten to the code-resolved A → B."""
+
+    ok = {entry.opinion_id: entry for entry in spec.entries if entry.decision == "ok"}
+    opinions = []
+    for opinion in intent.opinions:
+        entry = ok.get(opinion.opinion_id)
+        if entry is None or entry.host:
+            continue
+        if entry.from_value and entry.to_value:
+            opinion = replace(opinion, 수정방향=f"{entry.from_value} → {entry.to_value}")
+        opinions.append(opinion)
+    kept = {opinion.opinion_id for opinion in opinions}
+    seen: set[int] = set()
+    entries = []
+    for entry in anchor.entries:
+        if entry.opinion_id in kept and entry.opinion_id not in seen:
+            seen.add(entry.opinion_id)
+            entries.append(entry)
+    return replace(intent, opinions=tuple(opinions)), replace(anchor, entries=tuple(entries))
+
+
+def spec_verdict(entry: SpecEntry, spec: Spec) -> Verdict:
+    """The verdict an opinion the spec gate kept away from 3c receives."""
+
+    host = spec.entry(entry.host) if entry.host else None
+    source = host or entry
+    prefix = f"의견 {entry.host} 에 통합 — " if entry.host else ""
+    reason = source.notes[0] if source.notes else "사유 없음"
+    if source.decision == "already_applied":
+        return Verdict(
+            opinion_id=entry.opinion_id,
+            verdict="applied",
+            evidence=(),
+            판정문=(
+                f"{prefix}이미 반영 — 대상 절에 목표 값 {source.to_value!r} 이 있고 "
+                "현재 값이 없어 편집하지 않았다"
+            ),
+        )
+    if source.decision == "clarify":
+        text = f"{prefix}현재 값 후보가 여럿이라 되묻는다 — {', '.join(source.a_candidates)}"
+    elif source.decision == "missing":
+        text = f"{prefix}대상 미확인 — 앵커 0건"
+    elif source.decision == "spec_error":
+        text = f"{prefix}스펙 검증 실패 — {reason}"
+    else:
+        text = f"{prefix}변경분 없음 — 대조할 diff 가 없다"
+    return Verdict(opinion_id=entry.opinion_id, verdict="unapplied", evidence=(), 판정문=text)
+
+
+def spec_watch(spec: Spec) -> list[str]:
+    """points_to_watch lines the spec gate owes the reviewer.
+
+    Rejected opinions already surface through their verdict's 판정문; what is
+    left is what went through with a caveat — a weak or tied anchor, an A the
+    code corrected, a value replaced in several places — and the opinions
+    closed as already applied without an edit.
+    """
+
+    lines: list[str] = []
+    for entry in spec.entries:
+        if entry.host:
+            continue
+        if entry.decision == "already_applied":
+            lines.append(f"의견 {entry.opinion_id} 이미 반영 — 편집 없이 반영 완료로 처리했다")
+            continue
+        if entry.decision != "ok":
+            continue
+        if entry.anchor_tier == "partial":
+            lines.append(
+                f"약한 앵커 — 의견 {entry.opinion_id}: 검색어가 토큰 일부로만 잡힌 절을 편집했다"
+            )
+        if entry.alternatives:
+            lines.append(
+                f"모호한 앵커 — 의견 {entry.opinion_id}: 같은 수준으로 잡힌 절 "
+                + ", ".join(entry.alternatives)
+            )
+        lines.extend(
+            f"의견 {entry.opinion_id} — {note}" for note in entry.notes if note != NOTE_NOT_A_SWAP
+        )
+    return lines
 
 
 # --------------------------------------------------------------------------
@@ -506,9 +984,14 @@ def build_gate(
             else None
         )
         text = LiteralText(
-            a_in_head_text=before in head_text, b_in_head_text=after in head_text
+            a_in_head_text=before in head_text,
+            b_in_head_text=after in head_text,
+            a_in_base_text=before in base_text,
         )
-        passed = text.b_in_head_text and not text.a_in_head_text
+        # An A the base section never held proves nothing by being absent
+        # from head: the spec gate resolves A inside the section, so this is
+        # the backstop for an artifact that bypassed it.
+        passed = text.a_in_base_text and text.b_in_head_text and not text.a_in_head_text
         if sets is not None:
             passed = passed and sets.a_not_in_head and sets.b_in_head
         checks.append(
@@ -539,6 +1022,7 @@ def build_gate(
 
     failed = tuple(sorted({check.opinion_id for check in checks if check.result == "fail"}))
     text_only = [check.opinion_id for check in checks if check.sets is None]
+    absent = [check.opinion_id for check in checks if not check.text.a_in_base_text]
     notes: list[str] = []
     if over_size:
         notes.append(
@@ -549,6 +1033,8 @@ def build_gate(
         notes.append(f"허용 밖 파일 {len(path_reverted)}건 되돌림")
     if failed:
         notes.append(f"리터럴 미치환 {len(failed)}건 — 구현 누락")
+    if absent:
+        notes.append(f"치환 전 값이 base 절에 없음 {len(absent)}건")
     if residue_paths:
         notes.append(f"untracked 잔여물 {len(residue_paths)}건")
     if not notes:

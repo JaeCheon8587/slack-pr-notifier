@@ -4,7 +4,7 @@ app/ingest.handle_mr_open's non-blocking follow-up: once the normal Slack
 notification is posted, an MR whose changes are md-dominant
 (mrdoc_doc_ratio_threshold, default 0.8) gets the full pipeline run against
 it in a daemon thread: the deterministic tool chain in-process plus the
-two LLM satellites (analyzer/verifier) as headless codex calls.
+three LLM satellites (analyzer/verifier/themes) as headless codex calls.
 Trees are fetched through the GitLab API -- this host has no clone of the
 company GitLab -- materialized to base/ and snapshot/ so satellites can
 Read the sources, artifacts land under .mrdoc-ws/.work/<iid>-<sha8>, and a
@@ -222,8 +222,8 @@ _SUMMARY_KEYS = {
 def _summarize(directory: Path, exit_code: int, mr_iid: Any) -> str:
     """One Slack-sized summary block — slack-summary.txt when the run made it.
 
-    The render node writes that file from the same overview the report's
-    section 1 prints, so Slack and the page cannot drift apart. The
+    The render node writes that file from the same 50-collect the report
+    renders, so Slack and the page's counts cannot drift apart. The
     frontmatter fallback below is for a run that aborted before render: a
     partial count is still better than silence, and it carries no document
     text either.

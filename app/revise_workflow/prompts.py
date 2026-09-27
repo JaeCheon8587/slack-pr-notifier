@@ -32,6 +32,7 @@ from .schema import (
     Anchor,
     Impact,
     Intent,
+    Spec,
     edit_template,
     intent_template,
     verify_template,
@@ -57,7 +58,9 @@ INTENT_SYSTEM = (
     "3. 의견에 없는 개선을 만들지 않는다. 수정방향은 사람이 요청한 것만 옮긴다 — "
     "「겸사겸사」가 붙는 순간 검증할 근거가 사라진다.\n"
     "4. 치환 요청은 「A → B」 형태로 정확히 적는다. 기계가 이 형태만 리터럴 "
-    "검증으로 내린다. A 와 B 는 원문에 나타날 문자열 그대로 쓴다.\n"
+    "검증으로 내린다. A 와 B 는 원문에 나타날 문자열 그대로 쓴다. B 는 의견 원문에 "
+    "있는 값이어야 한다 — 기계가 대조하고, 없으면 스펙이 반려된다. 의견이 목표 값을 "
+    "말하지 않았으면 치환 형태로 쓰지 않는다. A 는 기계가 문서에서 다시 확정한다.\n"
     "5. 범위는 local(문서 하나 안) 또는 cross-doc(문서 경계를 넘음) 둘 중 하나다. "
     "애매하면 local 로 둔다 — 동반 변경은 기계가 따로 찾는다.\n"
     "6. 같은 것을 말하는 의견이 여럿이면 통합에 그 opinion_id 들을 적는다. "
@@ -92,15 +95,24 @@ def intent_prompt(
     repo_slug: str,
     opinions: Sequence[Mapping[str, object]],
     toc: Mapping[str, Sequence[str]],
+    retry_note: str = "",
 ) -> str:
     """3a's user prompt: opinions + headings. No document bodies.
 
     ``toc`` maps a posix document path to its heading paths, which is the
-    whole of what this stage learns about the repository.
+    whole of what this stage learns about the repository. ``retry_note`` is
+    the spec gate's finding when a rejected spec re-injects this stage — it
+    quotes the opinion and the spec, never a document body.
     """
 
-    lines = [
-        _INTENT_TASK,
+    lines = [_INTENT_TASK]
+    if retry_note:
+        lines += [
+            "",
+            "[재투입 — 이전 스펙이 기계 대조에서 반려됐다. 아래 지적을 해소한다]",
+            retry_note,
+        ]
+    lines += [
         "",
         f"[맥락] 저장소 {repo_slug} · MR !{mr_iid} · project {project_id} · "
         f"라운드 {round_number} · base {base_sha}",
@@ -176,12 +188,15 @@ def edit_prompt(
     allowed_files: Sequence[str],
     workspace_posix: str,
     retry_note: str = "",
+    spec: Spec | None = None,
 ) -> str:
     """3b's user prompt: the spec, the resolved anchors, the ±20-line windows.
 
     ``windows`` maps ``"<path>:<start>-<end>"`` to that slice's text — the
     only document content this stage sees. ``retry_note`` carries the gate's
     or 3c's evidence when the orchestrator re-injects this stage (구현 누락).
+    ``spec`` adds the substitutions the spec gate resolved in the section —
+    the A → B the gate will hold the edit to, with its occurrence count.
     """
 
     lines = [_EDIT_TASK]
@@ -200,6 +215,13 @@ def edit_prompt(
         lines.append("- (없음)")
 
     lines += ["", "[스펙] 00-intent.md", _fence(_render_intent_digest(intent))]
+    digest = _render_spec_digest(spec, {opinion.opinion_id for opinion in intent.opinions})
+    if digest:
+        lines += [
+            "",
+            "[확정 치환] 15-spec.md — 기계가 대상 절에서 확정한 값. 게이트가 이 값으로 검증한다",
+            _fence(digest),
+        ]
     lines += ["", "[앵커] 10-anchor.md — 확정된 위치", _fence(_render_anchor_digest(anchor))]
     lines += [
         "",
@@ -304,6 +326,20 @@ def _render_intent_digest(intent: Intent) -> str:
             lines.append(f"  근거: {opinion.근거}")
         if opinion.충돌해소:
             lines.append(f"  충돌해소: {opinion.충돌해소}")
+    return "\n".join(lines)
+
+
+def _render_spec_digest(spec: Spec | None, kept: set[int]) -> str:
+    if spec is None:
+        return ""
+    lines: list[str] = []
+    for entry in spec.entries:
+        if entry.opinion_id not in kept or not (entry.from_value and entry.to_value):
+            continue
+        lines.append(
+            f"opinion_id={entry.opinion_id} {entry.from_value!r} → {entry.to_value!r} "
+            f"· 절 안 {entry.occurrences}곳 — 전부 바꾼다"
+        )
     return "\n".join(lines)
 
 

@@ -127,21 +127,85 @@ def test_receipt_block_is_accepted_and_ignored() -> None:
 
 
 def test_verify_summary_reads_rounds_and_outstanding() -> None:
-    assert verify_summary(render_verifier(_verifier())) == {
+    owed = ("u-7f21bc", "u-2c81de", "u-9a03ff", "u-notseen")
+    assert verify_summary(render_verifier(_verifier()), owed) == {
+        "status": "ok",
         "rounds": 1,
         "outstanding": 2,
         "counts_mismatch": 1,
+        "audited": 3,
+        "unaudited": 1,  # owed a verdict, no block names it
     }
 
 
 def test_verify_summary_degrades_instead_of_raising() -> None:
-    """A missing or broken audit must still let the report render."""
+    """A broken audit still lets the report render — as failed, not as clean."""
 
-    assert verify_summary("no frontmatter at all\n") == {
+    assert verify_summary("no frontmatter at all\n", ("u-a", "u-b")) == {
+        "status": "failed",
         "rounds": 1,
         "outstanding": 0,
         "counts_mismatch": 0,
+        "audited": 0,
+        "unaudited": 2,
     }
+
+
+def test_audit_that_judged_nothing_is_failed_not_clean() -> None:
+    """Frontmatter only, no UNIT block: 0 findings from 0 checks is no check."""
+
+    empty = render_verifier(Verifier(mr_iid=1, round=1, checked=5))
+    assert verify_summary(empty, ("u-a",))["status"] == "failed"
+    stub = render_verifier(Verifier(mr_iid=1, status="FAILED — satellite wrote nothing"))
+    assert parse_verifier(stub).is_stub
+    assert verify_summary(stub, ("u-a",))["status"] == "failed"
+
+
+def test_non_verdict_fidelity_audits_nothing() -> None:
+    """'OK' / 'pass' are not verdicts — such a block leaves its unit 미검증."""
+
+    text = render_verifier(
+        Verifier(
+            mr_iid=1,
+            units=(
+                VerifierUnit("u-a", "ok", "", "agree"),
+                VerifierUnit("u-b", "pass", "", "agree"),
+            ),
+        )
+    )
+    summary = verify_summary(text, ("u-a", "u-b"))
+    assert (summary["status"], summary["audited"], summary["unaudited"]) == ("ok", 1, 1)
+
+
+def test_fidelity_verdict_counts_even_without_its_fix_block() -> None:
+    verifier = Verifier(
+        mr_iid=1,
+        units=(VerifierUnit("u-a", "invented", "", "agree", why="없는 범위"),),
+    )
+    assert verifier.required_fixes == 0  # the copy is missing
+    assert verifier.flagged_targets() == ("u-a",)  # the verdict is not
+    assert verify_summary(render_verifier(verifier), ("u-a",))["outstanding"] == 1
+
+
+def test_fix_only_unit_is_audited_and_a_prefixed_file_counts_once() -> None:
+    verifier = Verifier(
+        mr_iid=1,
+        fixes=(
+            Fix("r-01", "u-a", "설명", "fidelity_omitted"),  # no UNIT block for u-a
+            Fix("r-02", "f-fid1", "FILE_SUMMARY", "counts_mismatch"),
+            Fix("r-03", "fid1", "FILE_SUMMARY", "counts_mismatch"),
+        ),
+    )
+    summary = verify_summary(render_verifier(verifier), ("u-a", "u-b"), ("fid1",))
+    assert (summary["audited"], summary["unaudited"]) == (1, 1)  # a FIX means it looked
+    assert summary["outstanding"] == 2  # u-a · fid1 — not three
+
+
+def test_status_is_not_part_of_a_real_audit() -> None:
+    """The stub-only field stays out of every rendered audit — and the template."""
+
+    assert "status" not in parse_frontmatter(render_verifier(_verifier()))
+    assert "status" not in parse_frontmatter(satellites._VERIFIER_TEMPLATE)
 
 
 def test_prompt_template_is_what_the_parser_reads() -> None:

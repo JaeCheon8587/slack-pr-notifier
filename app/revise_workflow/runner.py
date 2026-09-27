@@ -13,8 +13,8 @@ paying for the two LLM calls before it. There is no place in this module
 where a model decides what runs next; the DAG is a fixed chain and the only
 branches are counters (`REINJECT_LIMIT`) and emptiness checks.
 
-Three of the seven nodes spawn a `codex exec` call (`intent` / `edit` /
-`verify`); the other four are pure functions in `nodes.py`. Each LLM stage's
+Three of the eight nodes spawn a `codex exec` call (`intent` / `edit` /
+`verify`); the other five are pure functions in `nodes.py`. Each LLM stage's
 last message is captured via `--output-last-message` and this module parses
 it with the matching `schema.parse_*` before writing the canonical re-render
 to disk — **the parse is the validation**. A stage that answers with prose
@@ -23,17 +23,20 @@ fails its node instead of poisoning the next one, which is mrdoc's "산출물이
 
 Two stages are short-circuited deterministically rather than called:
 
-- every opinion `MISSING` at `anchor` → nothing to edit, so `edit` and
-  `verify` are synthesized (all unprocessed / all unapplied) and the round
-  ends as a 되물음 with no commit. Two calls saved on the commonest failure.
+- no opinion left `ok` by the spec gate (all `MISSING` at `anchor`, already
+  applied, rejected or ambiguous) → nothing to edit, so `edit` and `verify`
+  are synthesized and the round ends with no commit. Two calls saved on the
+  commonest failure.
 - an empty `git diff` after `edit` → `verify` is synthesized (all unapplied).
-  Judging "nothing changed" needs no model.
+  Judging "nothing changed" needs no model. Opinions the spec gate kept away
+  from 3b never reach 3c either; their verdict comes from `nodes.spec_verdict`.
 
-Re-injection (구현 누락 → 3b, 스펙 모호 → 3a) is budgeted at
-`REINJECT_LIMIT` per round and counted **from the ledger**, not memory, so a
-resumed round cannot silently double its budget. Cause classification is
-deterministic: an opinion's first failure re-injects `edit`, its second
-re-injects `intent`; there is no model asked to classify it.
+Re-injection is budgeted at `REINJECT_LIMIT` per round and counted **from the
+ledger**, not memory, so a resumed round cannot silently double its budget.
+Cause classification is deterministic and follows the check that failed: a
+spec-gate rejection re-injects `intent`, a gate literal failure (the spec's
+A → B was already verified) re-injects `edit`, and a 3c verdict — which no
+code can attribute — escalates: first `edit`, then `intent`.
 """
 
 from __future__ import annotations
@@ -74,6 +77,10 @@ REINJECT_LIMIT = 2
 #: Ledger marker the re-injection budget is counted from. Counting the ledger
 #: rather than an in-memory tally is what makes the budget survive a resume.
 _REINJECT_MARK = "reinject"
+
+#: The cause a spec-gate rejection records — the one re-injection whose
+#: evidence is addressed to 3a, not to 3b.
+_SPEC_CAUSE = "스펙 검증 실패"
 
 _FENCE = re.compile(r"^```[a-zA-Z]*\n|\n?```$")
 
@@ -118,7 +125,7 @@ class _Round:
 # Public entry point
 # ---------------------------------------------------------------------------
 class StagedRunner:
-    """`AIRunner` for `AI_RUNNER=staged` — drives the fixed 7-node DAG.
+    """`AIRunner` for `AI_RUNNER=staged` — drives the fixed 8-node DAG.
 
     Every failure mode is returned as `ReviseResult(kind="failed", ...)`,
     never raised: `app.revise_executor` folds that into its `revise_attempts`
@@ -175,6 +182,7 @@ def _drive(round_: _Round) -> None:
     handlers = {
         "intent": _node_intent,
         "anchor": _node_anchor,
+        "spec": _node_spec,
         "impact": _node_impact,
         "edit": _node_edit,
         "gate": _node_gate,
@@ -258,6 +266,7 @@ def _node_intent(round_: _Round) -> None:
             repo_slug=round_.repo_slug,
             opinions=round_.opinions,
             toc=toc,
+            retry_note=_intent_retry_note(round_),
         ),
         edit=False,
     )
@@ -267,8 +276,8 @@ def _node_intent(round_: _Round) -> None:
 
 
 def _node_edit(round_: _Round) -> None:
-    intent = schema.parse_intent(_read(round_, "intent"))
-    anchor = schema.parse_anchor(_read(round_, "anchor"))
+    spec = schema.parse_spec(_read(round_, "spec"))
+    intent, anchor = _effective(round_)
     impact = schema.parse_impact(_read(round_, "impact"))
 
     # The pre-edit tree is the gate's `base_tree`. Materialize before 3b runs,
@@ -276,24 +285,29 @@ def _node_edit(round_: _Round) -> None:
     _materialize_base(round_)
 
     if anchor.resolved == 0:
-        # Nothing was located, so there is nothing to edit. Synthesize the
-        # receipt instead of paying for a call that can only report failure.
+        # Nothing the spec gate let through, so there is nothing to edit.
+        # Synthesize the receipt instead of paying for a call that can only
+        # report failure.
+        held = [entry for entry in spec.entries if entry.decision != "ok"]
         receipt = schema.EditReceipt(
             mr_iid=round_.mr_iid,
             round=round_.round_number,
             processed=(),
             unprocessed=tuple(
-                schema.Unprocessed(opinion_id=entry.opinion_id, reason="대상 미확인 — 앵커 0건")
-                for entry in anchor.entries
+                schema.Unprocessed(
+                    opinion_id=entry.opinion_id,
+                    reason=nodes.spec_verdict(entry, spec).판정문,
+                )
+                for entry in held
             ),
             files_touched=(),
             entries=(),
             required=_required(
-                "OK", uncovered=schema.join_ids(e.opinion_id for e in anchor.entries)
+                "OK", uncovered=schema.join_ids(entry.opinion_id for entry in held)
             ),
         )
         _write(round_, "edit", schema.render_edit(receipt))
-        append_ledger(round_.directory, ["edit skipped (anchor resolved=0)"])
+        append_ledger(round_.directory, ["edit skipped (no opinion passed the spec gate)"])
         return
 
     allowed = tuple(sorted(set(anchor.files) | set(impact.files)))
@@ -309,6 +323,7 @@ def _node_edit(round_: _Round) -> None:
             allowed_files=allowed,
             workspace_posix=round_.workspace.as_posix(),
             retry_note=_retry_note(round_),
+            spec=spec,
         ),
         edit=True,
     )
@@ -321,27 +336,62 @@ def _node_edit(round_: _Round) -> None:
 
 
 def _node_verify(round_: _Round) -> None:
-    intent = schema.parse_intent(_read(round_, "intent"))
+    """3c judges the opinions 3b was sent; the spec gate's verdict covers the rest.
+
+    An opinion the spec gate held back has no edit for 3c to find, so showing
+    it to 3c could only produce an `unapplied` that re-injects an edit nobody
+    was asked to make — or, for an already-applied one, bury the fact that
+    the document already says what the human asked for.
+    """
+
+    spec = schema.parse_spec(_read(round_, "spec"))
+    intent, _anchor = _effective(round_)
+    decisions = {entry.opinion_id: entry for entry in spec.entries}
+    order = [int(opinion["id"]) for opinion in round_.opinions]
+    asked_ids = {
+        opinion_id
+        for opinion_id in order
+        if opinion_id in decisions and decisions[opinion_id].decision == "ok"
+    }
+    asked = [opinion for opinion in round_.opinions if int(opinion["id"]) in asked_ids]
+    held = {
+        opinion_id: (
+            nodes.spec_verdict(decisions[opinion_id], spec)
+            if opinion_id in decisions
+            else schema.Verdict(
+                opinion_id=opinion_id,
+                verdict="unapplied",
+                evidence=(),
+                판정문="스펙 게이트 판정 없음",
+            )
+        )
+        for opinion_id in order
+        if opinion_id not in asked_ids
+    }
     diff_text = _diff(round_)
 
-    if not diff_text.strip():
-        verify = schema.Verify(
-            mr_iid=round_.mr_iid,
-            round=round_.round_number,
-            verdicts=tuple(
-                schema.Verdict(
+    if not asked or not diff_text.strip():
+        verdicts = {
+            **{
+                int(opinion["id"]): schema.Verdict(
                     opinion_id=int(opinion["id"]),
                     verdict="unapplied",
                     evidence=(),
                     판정문="변경분 없음 — 대조할 diff 가 없다",
                 )
-                for opinion in round_.opinions
-            ),
+                for opinion in asked
+            },
+            **held,
+        }
+        verify = schema.Verify(
+            mr_iid=round_.mr_iid,
+            round=round_.round_number,
+            verdicts=tuple(verdicts[opinion_id] for opinion_id in order),
             summary="이 라운드는 문서를 바꾸지 않았다",
             required=_required("OK"),
         )
         _write(round_, "verify", schema.render_verify(verify))
-        append_ledger(round_.directory, ["verify skipped (empty diff)"])
+        append_ledger(round_.directory, ["verify skipped (empty diff or nothing sent to 3b)"])
         return
 
     body = _stage(
@@ -350,12 +400,18 @@ def _node_verify(round_: _Round) -> None:
         system=prompts.VERIFY_SYSTEM,
         prompt=prompts.verify_prompt(
             intent=intent,
-            opinions=round_.opinions,
+            opinions=asked,
             diff_text=diff_text,
         ),
         edit=False,
     )
     verify = _stamp_identity(round_, _parse_or_fail("verify", schema.parse_verify, body))
+    judged = {row.opinion_id: row for row in verify.verdicts if row.opinion_id in asked_ids}
+    merged = {**judged, **held}
+    verify = replace(
+        verify,
+        verdicts=tuple(merged[opinion_id] for opinion_id in order if opinion_id in merged),
+    )
     _write(round_, "verify", schema.render_verify(verify))
     counts = verify.counts()
     append_ledger(
@@ -379,9 +435,41 @@ def _node_anchor(round_: _Round) -> None:
     )
 
 
-def _node_impact(round_: _Round) -> None:
+def _node_spec(round_: _Round) -> None:
+    """Check 3a's spec before anything is built on it; a rejection re-injects 3a.
+
+    The finding rides the re-injection mark into the next 3a prompt — the
+    same opinion and table of contents would otherwise produce the same
+    guess. When the budget is spent the rejected opinions simply go no
+    further: `spec_verdict` gives them an unapplied verdict with the reason.
+    """
+
     intent = schema.parse_intent(_read(round_, "intent"))
     anchor = schema.parse_anchor(_read(round_, "anchor"))
+    spec = nodes.build_spec(intent, anchor, round_.opinions, _read_md_tree(round_.workspace))
+    _write(round_, "spec", schema.render_spec(spec))
+    counts = spec.counts()
+    append_ledger(
+        round_.directory,
+        ["spec done (" + " ".join(f"{key}={value}" for key, value in counts.items()) + ")"],
+    )
+
+    rejected = [entry for entry in spec.entries if entry.decision == "spec_error"]
+    if rejected:
+        detail = " / ".join(
+            f"{entry.opinion_id}: {entry.notes[0] if entry.notes else '사유 없음'}"
+            for entry in rejected
+        )
+        _reinject(
+            round_,
+            [entry.opinion_id for entry in rejected],
+            cause=f"{_SPEC_CAUSE} — {detail}",
+            target="intent",
+        )
+
+
+def _node_impact(round_: _Round) -> None:
+    intent, anchor = _effective(round_)
     impact = nodes.build_impact(intent, anchor, _read_md_tree(round_.workspace))
     _write(round_, "impact", schema.render_impact(impact))
     append_ledger(round_.directory, [f"impact done (candidates={impact.candidate_count})"])
@@ -397,8 +485,7 @@ def _node_gate(round_: _Round) -> None:
     """
 
     settings = round_.settings
-    intent = schema.parse_intent(_read(round_, "intent"))
-    anchor = schema.parse_anchor(_read(round_, "anchor"))
+    intent, anchor = _effective(round_)
     impact = schema.parse_impact(_read(round_, "impact"))
 
     changed = git_workspace.changed_paths(settings, round_.workspace)
@@ -429,7 +516,9 @@ def _node_gate(round_: _Round) -> None:
     )
 
     if gate.failed_opinion_ids:
-        _reinject(round_, gate.failed_opinion_ids, cause="게이트 리터럴 검증 실패")
+        # The spec gate already verified this A → B against the section, so a
+        # literal that did not move is 3b's miss — never a reason to re-spec.
+        _reinject(round_, gate.failed_opinion_ids, cause="게이트 리터럴 검증 실패", target="edit")
 
 
 def _node_summary(round_: _Round) -> None:
@@ -450,13 +539,14 @@ def _node_summary(round_: _Round) -> None:
     verify = schema.parse_verify(_read(round_, "verify"))
     gate = schema.parse_gate(_read(round_, "gate"))
     receipt = schema.parse_edit(_read(round_, "edit"))
-    anchor = schema.parse_anchor(_read(round_, "anchor"))
+    spec = schema.parse_spec(_read(round_, "spec"))
+    intent, anchor = _effective(round_)
     impact = schema.parse_impact(_read(round_, "impact"))
-    intent = schema.parse_intent(_read(round_, "intent"))
 
-    # Only an opinion whose target was actually located can be a 구현 누락.
-    # One that never anchored is a 되물음 — re-injecting it would spend the
-    # round's budget re-asking a model to edit something nobody can point at.
+    # Only an opinion 3b was actually sent can be a 구현 누락. One that never
+    # anchored is a 되물음, one the spec gate held back already has its
+    # verdict — re-injecting either would spend the round's budget re-asking
+    # a model to edit something it was never given.
     anchored = {entry.opinion_id for entry in anchor.entries if entry.status == "FOUND"}
     open_ids = tuple(
         row.opinion_id
@@ -491,6 +581,7 @@ def _node_summary(round_: _Round) -> None:
     )
     committable = tuple(sorted(set(live) & kept_files))
     watch = list(summary.points_to_watch)
+    watch.extend(nodes.spec_watch(spec))
     if dropped:
         watch.append(f"3c 미반영 판정으로 되돌린 편집: {', '.join(dropped)}")
     unverified_related = sorted(
@@ -527,24 +618,33 @@ def _node_summary(round_: _Round) -> None:
 # ---------------------------------------------------------------------------
 # Re-injection — deterministic cause classification, ledger-counted budget
 # ---------------------------------------------------------------------------
-def _reinject(round_: _Round, opinion_ids: Sequence[int], *, cause: str) -> bool:
+def _reinject(
+    round_: _Round, opinion_ids: Sequence[int], *, cause: str, target: str | None = None
+) -> bool:
     """Roll the DAG back to `edit` (or `intent`) for another attempt.
 
     Returns True when a re-injection was actually started, False when the
     budget is spent and the round must go forward with an honest 표기 —
     "모든 경로가 성공 또는 표기 후 진행으로 끝나 무한 루프가 없다".
 
-    Classification carries no judgment: an opinion failing for the first time
-    is 구현 누락 (re-inject `edit`); failing again is 스펙 모호 (re-inject
-    `intent`, which re-runs everything downstream with a fresh spec).
+    Classification carries no judgment. A caller whose check names the cause
+    passes `target` (the spec gate → `intent`, the gate's literal check →
+    `edit`). Without one — a 3c verdict, which no code can attribute — the
+    first failure is 구현 누락 (`edit`) and the next is 스펙 모호 (`intent`,
+    which re-runs everything downstream with a fresh spec).
     """
 
+    cause = " ".join(cause.split())  # one ledger line, whatever the notes held
     spent = _reinject_count(round_)
     if spent >= REINJECT_LIMIT:
         append_ledger(round_.directory, [f"{_REINJECT_MARK} budget spent — 표기 후 진행 ({cause})"])
         return False
 
-    target = "intent" if spent >= 1 else "edit"
+    if target is None:
+        # A spec re-injection re-ran 3a, not 3b, so it is no earlier edit
+        # attempt for the escalation to count.
+        edits_tried = sum(1 for line in _reinject_marks(round_) if _SPEC_CAUSE not in line)
+        target = "intent" if edits_tried >= 1 else "edit"
     ids = schema.join_ids(opinion_ids)
     append_ledger(
         round_.directory,
@@ -572,32 +672,48 @@ def _rollback(round_: _Round, node: str) -> None:
 
 
 def _reinject_count(round_: _Round) -> int:
+    return len(_reinject_marks(round_))
+
+
+def _reinject_marks(round_: _Round) -> list[str]:
     ledger = round_.paths["ledger"]
     if not ledger.exists():
-        return 0
-    text = ledger.read_text(encoding="utf-8")
-    return sum(
-        1
-        for line in text.splitlines()
-        if line.startswith(f"{_REINJECT_MARK} ") and "budget spent" not in line
-    )
-
-
-def _retry_note(round_: _Round) -> str:
-    """The evidence a re-injected 3b is answering — the gate's, never 3b's own."""
-
-    gate_path = round_.paths["gate"]
-    if gate_path.exists():
-        return ""
-    ledger = round_.paths["ledger"]
-    if not ledger.exists():
-        return ""
-    marks = [
+        return []
+    return [
         line
         for line in ledger.read_text(encoding="utf-8").splitlines()
         if line.startswith(f"{_REINJECT_MARK} ") and "budget spent" not in line
     ]
+
+
+def _retry_note(round_: _Round) -> str:
+    """The evidence a re-injected 3b is answering — the gate's, never 3b's own.
+
+    A spec-gate mark is addressed to 3a: by the time 3b runs, the spec it
+    complained about has been rewritten, so it is not 3b's to answer.
+    """
+
+    if round_.paths["gate"].exists():
+        return ""
+    marks = [line for line in _reinject_marks(round_) if _SPEC_CAUSE not in line]
     return marks[-1] if marks else ""
+
+
+def _intent_retry_note(round_: _Round) -> str:
+    """The finding a re-injected 3a is answering — the latest mark aimed at it."""
+
+    marks = [line for line in _reinject_marks(round_) if "-> intent" in line]
+    return marks[-1] if marks else ""
+
+
+def _effective(round_: _Round) -> tuple[schema.Intent, schema.Anchor]:
+    """Intent and anchor as the spec gate left them — see `nodes.effective_view`."""
+
+    return nodes.effective_view(
+        schema.parse_intent(_read(round_, "intent")),
+        schema.parse_anchor(_read(round_, "anchor")),
+        schema.parse_spec(_read(round_, "spec")),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -635,6 +751,20 @@ def _assemble(round_: _Round) -> ReviseResult:
                 "candidates": [
                     f"{candidate.file} § {candidate.heading}" for candidate in entry.candidates
                 ],
+            }
+        )
+    spec = schema.parse_spec(_read(round_, "spec"))
+    for entry in spec.entries:
+        if entry.decision != "clarify" or entry.host:
+            continue
+        clarify.append(
+            {
+                "opinion_id": entry.opinion_id,
+                "question": (
+                    f"{entry.to_value!r}(으)로 바꿀 현재 값이 대상 절에 여럿입니다. "
+                    "어느 값인가요?"
+                ),
+                "candidates": list(entry.a_candidates),
             }
         )
 

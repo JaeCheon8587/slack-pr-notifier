@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import subprocess
 from collections.abc import Callable
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 from app.config import get_settings
-from app.mrdoc import satellites, vocab
+from app.mrdoc import dispatch, satellites, vocab
 from app.mrdoc.analysis import (
     AnalysisUnit,
     FileAnalysis,
@@ -18,11 +19,16 @@ from app.mrdoc.analysis import (
     render_analysis,
 )
 from app.mrdoc.changeset import build_changeset, render_changeset
-from app.mrdoc.dispatch import SpecBlock
-from app.mrdoc.literals import build_literals, render_literals
+from app.mrdoc.dispatch import (
+    REASON_EXPLANATION_MISSING,
+    REASON_SUMMARY_MISSING,
+    REASON_SUMMARY_UNKNOWN_REFS,
+    SpecBlock,
+)
 from app.mrdoc.frontmatter import parse_sections
+from app.mrdoc.literals import build_literals, render_literals
 from app.mrdoc.satellites import Mission, parse_spec
-from app.mrdoc.structure import build_structure, render_structure
+from app.mrdoc.structure import build_structure, parse_structure, render_structure
 from app.mrdoc.verifier import (
     CountMismatch,
     CountsCheck,
@@ -457,6 +463,132 @@ def test_fix_scope_pointing_at_nothing_is_refused(tmp_path) -> None:
     )
     with pytest.raises(ValueError):
         satellites._analyzer_mission(mission, tmp_path)
+
+
+_TYPO = "u-typo0000"
+
+
+def _write_typo_analysis(work: Path, fid: str, units: list[str]) -> None:
+    """The second unit's block went out under a typo, and the summary cites it."""
+
+    analysis = FileAnalysis(
+        file_id=fid,
+        path="docs/a.md",
+        units=(
+            AnalysisUnit(
+                unit_id=units[0], section_id="s-a", klass="", explanation="값이 바뀌었다."
+            ),
+            AnalysisUnit(
+                unit_id=_TYPO, section_id="s-b", klass="", explanation="값이 바뀌었다."
+            ),
+        ),
+        summary_refs=(units[0], _TYPO),
+        summary="값이 바뀐 절 2곳.",
+    )
+    (work / "20-analysis" / f"{fid}.md").write_text(
+        render_analysis(analysis), encoding="utf-8"
+    )
+
+
+def test_fix_targets_add_missing_prose_and_drop_orphans(tmp_path) -> None:
+    """The typo'd block is never re-mapped; the real unit it left bare is asked for."""
+
+    fid, units = _two_unit_workspace(tmp_path)
+    _write_typo_analysis(tmp_path, fid, units)
+    (tmp_path / "40-verifier.md").write_text(
+        render_verifier(
+            Verifier(
+                mr_iid=17,
+                units=(VerifierUnit(_TYPO, "invented", "", "agree"),),
+                fixes=(Fix("r-01", _TYPO, "설명", "fidelity_invented"),),
+            )
+        ),
+        encoding="utf-8",
+    )
+    assert dispatch.missing_prose(tmp_path) == {
+        units[1]: REASON_EXPLANATION_MISSING,
+        fid: REASON_SUMMARY_UNKNOWN_REFS,
+    }
+    assert dispatch.fix_targets(tmp_path) == (units[1], fid)
+
+
+def test_fix_round_accepts_correcting_a_typo_id(tmp_path, monkeypatch) -> None:
+    """Renaming the orphan to the id it meant is the fix — not a lost unit."""
+
+    fid, units = _two_unit_workspace(tmp_path)
+    _write_typo_analysis(tmp_path, fid, units)
+    _rewriter(monkeypatch, lambda fid, ids: _analysis_of(fid, units))
+    executor = satellites.satellite_executor(_settings(monkeypatch, tmp_path), tmp_path)
+    spec = _spec("analyzer", tmp_path / "20-analysis", scope=f"units {units[1]},{fid}")
+    assert executor(spec) is True
+
+
+def test_fix_round_rewrites_an_unparseable_file_whole(tmp_path, monkeypatch) -> None:
+    """A broken 20-analysis file: every unit is missing, so the file is redone."""
+
+    fid, units = _two_unit_workspace(tmp_path)
+    (tmp_path / "20-analysis" / f"{fid}.md").write_text(
+        "written by a crashed satellite", encoding="utf-8"
+    )
+    assert dispatch.missing_prose(tmp_path) == {
+        units[0]: REASON_EXPLANATION_MISSING,
+        units[1]: REASON_EXPLANATION_MISSING,
+        fid: REASON_SUMMARY_MISSING,
+    }
+    scope = "units " + ",".join(dispatch.fix_targets(tmp_path))
+    mission = parse_spec(_spec("analyzer", tmp_path / "20-analysis", scope=scope))
+    plan = satellites._analyzer_mission(mission, tmp_path)
+    structure = parse_structure((tmp_path / "05-structure.md").read_text(encoding="utf-8"))
+    for unit in structure.changed:  # a block written from scratch needs both ids
+        assert f"{unit.unit_id} (section_id {unit.section_id})" in plan.prompt
+    assert REASON_EXPLANATION_MISSING in plan.prompt
+
+    def fake_run(cmd, **kwargs):
+        out = Path(str(kwargs.get("cwd"))) / "20-analysis"
+        (out / f"{fid}.md").write_text(
+            render_analysis(_analysis_of(fid, units)), encoding="utf-8"
+        )
+        return _proc()
+
+    monkeypatch.setattr(satellites.subprocess, "run", fake_run)
+    executor = satellites.satellite_executor(_settings(monkeypatch, tmp_path), tmp_path)
+    assert executor(_spec("analyzer", tmp_path / "20-analysis", scope=scope)) is True
+
+
+def test_verifier_prompt_lists_the_units_owed_a_verdict(tmp_path) -> None:
+    """Named ids, not 'read 20-analysis' — and only units that have a 설명."""
+
+    fid, units = _two_unit_workspace(tmp_path)
+    mission = parse_spec(_spec("verifier", tmp_path / "40-verifier.md"))
+    prompt = satellites._verifier_mission(mission, tmp_path).prompt
+    assert "[감사 대상] 아래 2개 unit_id" in prompt
+    assert all(f"- {unit} · docs/a.md § " in prompt for unit in units)
+
+    bare = _analysis_of(fid, units)
+    bare = replace(
+        bare, units=(bare.units[0], replace(bare.units[1], explanation=""))
+    )
+    (tmp_path / "20-analysis" / f"{fid}.md").write_text(
+        render_analysis(bare), encoding="utf-8"
+    )
+    prompt = satellites._verifier_mission(mission, tmp_path).prompt
+    assert "[감사 대상] 아래 1개 unit_id" in prompt
+    assert f"- {units[1]} ·" not in prompt
+
+
+def test_fix_reason_comes_from_a_verdict_without_its_fix_block(tmp_path) -> None:
+    fid, units = _two_unit_workspace(tmp_path)
+    (tmp_path / "40-verifier.md").write_text(
+        render_verifier(
+            Verifier(mr_iid=17, units=(VerifierUnit(units[0], "invented", "", "agree"),))
+        ),
+        encoding="utf-8",
+    )
+    assert dispatch.fix_targets(tmp_path) == (units[0],)
+    mission = parse_spec(
+        _spec("analyzer", tmp_path / "20-analysis", scope=f"units {units[0]}")
+    )
+    assert "fidelity_invented" in satellites._analyzer_mission(mission, tmp_path).prompt
 
 
 def test_executor_missing_artifact_returns_false(tmp_path, monkeypatch) -> None:

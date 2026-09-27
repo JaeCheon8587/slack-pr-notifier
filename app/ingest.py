@@ -554,7 +554,8 @@ async def handle_external_close(
 
     A no-op (``transitioned: False``) if the edge is not a currently valid
     transition (already resolved -- e.g. raced with an approve click, or a
-    terminal state) per §③ 651: whichever transition landed first wins.
+    terminal state) per the §③ external merge/close note (docs/
+    mr-review-pipeline.html): whichever transition landed first wins.
     """
 
     session = _find_session(conn, project_id, mr_iid)
@@ -581,7 +582,8 @@ async def handle_external_close(
     edge = (from_status, to_status)
     if edge not in ALLOWED_TRANSITIONS or reason not in ALLOWED_TRANSITIONS[edge]:
         # Already resolved (e.g. raced with an approve click, or terminal state) —
-        # per §③ 651, whichever transition landed first wins; this is a no-op.
+        # per the §③ external merge/close note, whichever transition landed
+        # first wins; this is a no-op.
         logger.info(
             "External transition skipped (invalid/already resolved): "
             "session=%s %s->%s reason=%s source=%s",

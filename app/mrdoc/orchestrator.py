@@ -26,7 +26,8 @@ from .literals import build_literals, parse_literals, render_literals
 from .report_render import render_report_html, render_slack_summary
 from .structure import build_structure, parse_structure, render_structure
 from .themes import Themes, render_themes
-from .workspace import artifact_paths
+from .verifier import Verifier, render_verifier
+from .workspace import artifact_paths, fix_rounds_used
 
 AgentExecutor = Callable[[str], bool]
 
@@ -139,8 +140,9 @@ def _run_tool_node(
             diff_url=inputs.diff_url,
         )
         paths["render"].write_text(page, encoding="utf-8")
-        # Both outputs are this one node's: the overview must be the same
-        # text in the page and in Slack, so it is rendered once.
+        # Both outputs are this one node's and read the same 50-collect, so
+        # the Slack overview and the page's counts cannot drift apart. The
+        # overview text itself is Slack-only; the page shows hero + stats.
         paths["slack_summary"].write_text(
             render_slack_summary(
                 collect,
@@ -206,6 +208,11 @@ def _run_fix_round(
     a failure costs the retry instead of buying an unbounded supply of them:
     재시도를 모두 소진한 검증(3회차)에 남은 지적은 verify.outstanding 으로
     리포트에 실리고, 분석기로 돌아가지 않는다.
+
+    A failed re-call degrades instead of aborting. Before it the run already
+    had everything a report needs; aborting threw that away over prose that
+    was merely not improved. The snapshot is taken before the satellite can
+    touch 20-analysis and put back on failure, with this round's gates.
     """
 
     targets = dispatch.fix_round_due(work_dir)
@@ -215,24 +222,31 @@ def _run_fix_round(
     spec = dispatch.fix_spec(
         work_dir, wave=wave, budget_usd=budget_usd, targets=targets
     )
+    snapshot = dispatch.snapshot_analysis(work_dir)
     dispatch.close_fix_round(work_dir)
     lines = [f"fix round {round_no}: {', '.join(targets)}"]
-    if not agent_executor(spec.render()):
-        raise RuntimeError("agent failed: analyzer (fix round)")
-    lines.append(f"analyzer done (fix round, {len(targets)} units)")
+    try:
+        accepted = agent_executor(spec.render())
+    except Exception as error:  # noqa: BLE001 — same degrade as a False
+        lines.append(f"analyzer raised (fix round): {error}")
+        accepted = False
+    if not accepted:
+        dispatch.revert_fix_round(work_dir, snapshot)
+        lines.append("analyzer failed (fix round) — 20-analysis restored, gates reinstated")
+        return lines
+    lines.append(f"analyzer done (fix round, {len(targets)} targets)")
     return lines
 
 
 def _degrade_themes(work_dir: Path, mr_iid: int) -> None:
     """Leave themes 'done but failed' so the report renders without it.
 
-    Themes is the one supplementary satellite: an analyzer or verifier
-    failure aborts because sections 4-5 would lie without them, but a lost
-    section 2 is survivable — collect flags themes_failed and the report
-    prints '주제 생성 실패'. A rejected artifact stays exactly as written
-    (collect degrades on the parse error); the FAILED stub only covers a
-    satellite that wrote nothing at all, which would otherwise pend forever
-    and die as a no-progress abort.
+    Themes is supplementary: a lost section 2 is survivable — collect flags
+    themes_failed and the report prints '주제 생성 실패'. An analyzer
+    failure still aborts, because without it there is nothing to report.
+    A rejected artifact stays exactly as written (collect degrades on the
+    parse error); the FAILED stub only covers a satellite that wrote nothing
+    at all, which would otherwise pend forever and die as a no-progress abort.
     """
 
     paths = artifact_paths(work_dir)
@@ -241,6 +255,34 @@ def _degrade_themes(work_dir: Path, mr_iid: int) -> None:
     paths["themes"].write_text(
         render_themes(
             Themes(mr_iid=mr_iid, status="FAILED — satellite wrote nothing")
+        ),
+        encoding="utf-8",
+    )
+
+
+def _degrade_verifier(work_dir: Path, mr_iid: int) -> None:
+    """Leave the audit 'done but failed' — the report says 검증 실패, not 0.
+
+    This used to abort, on the grounds that sections 4-5 would lie without
+    an audit. They no longer can: collect measures coverage from the blocks
+    and a stub reads as verify.status 'failed', which the report prints as
+    '—' instead of a zero. The tool facts and the 설명 are still worth a
+    page. As with themes, a written-but-rejected file stays as written; the
+    stub only fills the hole a silent satellite leaves. A fix round owed for
+    other reasons (vocab, missing prose) archives the stub and re-runs the
+    verifier, which is the only retry this gets.
+    """
+
+    paths = artifact_paths(work_dir)
+    if paths["verifier"].is_file():
+        return
+    paths["verifier"].write_text(
+        render_verifier(
+            Verifier(
+                mr_iid=mr_iid,
+                round=1 + fix_rounds_used(work_dir),
+                status="FAILED — satellite wrote nothing",
+            )
         ),
         encoding="utf-8",
     )
@@ -272,6 +314,10 @@ def run_wave(
                 if spec.agent == "themes":
                     _degrade_themes(work_dir, inputs.mr_iid)
                     ledger.append("themes degraded (satellite failed)")
+                    continue
+                if spec.agent == "verifier":
+                    _degrade_verifier(work_dir, inputs.mr_iid)
+                    ledger.append("verifier degraded (satellite failed)")
                     continue
                 raise RuntimeError(f"agent failed: {spec.agent}")
             ledger.append(f"{spec.agent} done ({spec.return_path.name})")

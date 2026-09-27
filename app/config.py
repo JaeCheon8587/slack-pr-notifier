@@ -178,9 +178,10 @@ class Settings(BaseSettings):
     # "stub" so nothing about the current rail changes by adding "staged".
     ai_runner: str = "stub"
 
-    # mrdoc pipeline (app/mrdoc/ — deterministic doc-MR review, Phase 1):
-    # disabled until the satellite agents land; doc_ratio routes an MR into
-    # the mrdoc pipeline when >=80% of changed files are md/mdx.
+    # mrdoc pipeline (app/mrdoc/ — deterministic doc-MR review): opt-in —
+    # both mrdoc_enabled and mrdoc_satellite_enabled must be true (the
+    # satellites are `codex exec` calls); doc_ratio routes an MR into the
+    # mrdoc pipeline when >=80% of changed files are md/mdx.
     mrdoc_enabled: bool = False
     mrdoc_doc_ratio_threshold: float = 0.8
     mrdoc_satellite_model: str = ""  # empty → the Codex CLI default model

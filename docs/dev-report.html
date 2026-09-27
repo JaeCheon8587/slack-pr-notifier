@@ -196,14 +196,15 @@ table.r td .pill.now{background:var(--ok-soft);color:var(--ok);border:1px solid 
 <header class="report-head">
   <div class="kicker">Engineering Report · Internal</div>
   <h1>Slack MR Review Pipeline — 개발 보고서</h1>
-  <p class="sub">GitLab MR을 Slack에서 리뷰하고, 의견을 AI 재생성 루프의 입력으로 사용하는 승인 게이트 미들웨어. 인프라 중심으로 구축했으며, AI 영역은 후속 고도화를 남겨둔 상태다.</p>
+  <p class="sub">GitLab MR을 Slack에서 리뷰하고, 의견을 AI 재생성 루프의 입력으로 사용하는 승인 게이트 미들웨어. 인프라를 먼저 확정한 뒤, 문서 MR 전용 결정론 파이프라인(<b>mrdoc</b>)과 단계형 revise 러너(<b>StagedRunner</b>)를 붙였다. 둘 다 옵트인이고 코드 기본값은 꺼져 있다.</p>
   <div class="meta-row">
-   <span class="m">스택 <b>FastAPI · SQLite · claude CLI</b></span>
+   <span class="m">스택 <b>FastAPI · SQLite · claude CLI · codex CLI</b></span>
    <span class="m">배포 <b>uvicorn --workers 1</b></span>
     <span class="m">수집 <b>GitLab 폴링(옵트인) · 웹훅 병행</b></span>
-   <span class="m ok">테스트 <b>201 passed</b></span>
-    <span class="m work">AI 영역 <b>고도화 필요</b></span>
+   <span class="m ok">테스트 <b>586 passed</b></span>
+    <span class="m work">AI 영역 <b>옵트인 · 실호출 검증 남음</b></span>
   </div>
+  <div class="lead-note" style="margin-top:12px">상세 설계 — <code>docs/mr-review-pipeline.html</code>(전체 파이프라인) · <code>docs/mrdoc-pipeline.html</code>(문서 MR 리뷰) · <code>docs/revise-workflow.html</code>(revise 단계형 러너)</div>
   <nav class="toc">
     <a href="#wf"><span class="n">1</span>워크플로우</a>
     <a href="#ch"><span class="n">2</span>변경된 부분</a>
@@ -217,7 +218,7 @@ table.r td .pill.now{background:var(--ok-soft);color:var(--ok);border:1px solid 
     <div class="legend">
       <span class="lg"><span class="dot" style="background:var(--gitlab)"></span>GitLab</span>
       <span class="lg"><span class="dot" style="background:var(--slack)"></span>Slack</span>
-      <span class="lg"><span class="dot" style="background:var(--ai)"></span>claude (AI)</span>
+      <span class="lg"><span class="dot" style="background:var(--ai)"></span>AI (claude · codex)</span>
       <span class="lg"><span class="dot" style="background:var(--mid)"></span>미들웨어</span>
     </div>
     <h4>주 파이프라인 — MR open → 리뷰 알림 → 승인/의견 분기</h4>
@@ -240,6 +241,16 @@ table.r td .pill.now{background:var(--ok-soft);color:var(--ok);border:1px solid 
       <div class="fnode slack"><div class="rail"></div><div class="body">
         <div class="top"><span class="actor">Slack</span><span class="tt">리뷰 알림 발송</span></div>
         <div class="ss">담당자 멘션 + AI 요약 + <code>[승인]</code>/<code>[의견]</code> 버튼 (HMAC 서명 토큰: <code>project_id·iid·sha</code> + MR 메타 바인딩, TTL 24h — 세션은 <code>project_id+iid</code>로 역조회)</div>
+      </div></div>
+      <div class="fconn"><svg width="14" height="18" viewBox="0 0 14 18"><path d="M7 0v14M2 10l5 6 5-6" stroke="currentColor" stroke-width="1.6" fill="none"/></svg></div>
+      <div class="fnode slack"><div class="rail"></div><div class="body">
+        <div class="top"><span class="actor">Slack</span><span class="tt">리뷰 리포트 스레드 첨부 — report.html</span></div>
+        <div class="ss"><code>render_review_report</code>로 AI 요약 + diff 를 HTML 로 렌더 → <code>reports/</code>에 보관 → 알림 스레드에 파일 업로드(<code>files.getUploadURLExternal</code> → <code>files.completeUploadExternal</code>, <code>thread_ts</code>, <code>files:write</code> 스코프) · <code>REPORT_HTML_ENABLED</code>(기본 on) · best-effort — 실패해도 알림은 유효 · <b>mrdoc 이 맡는 md 위주 MR 은 건너뛴다</b></div>
+      </div></div>
+      <div class="fconn"><svg width="14" height="18" viewBox="0 0 14 18"><path d="M7 0v14M2 10l5 6 5-6" stroke="currentColor" stroke-width="1.6" fill="none"/></svg></div>
+      <div class="fnode ai"><div class="rail"></div><div class="body">
+        <div class="top"><span class="actor">codex</span><span class="tt">[C] mrdoc 레일 — 문서 MR 결정론 리뷰 (옵트인)</span></div>
+        <div class="ss"><code>MRDOC_ENABLED</code> + <code>MRDOC_SATELLITE_ENABLED</code>(둘 다 기본 off) · 변경 파일 중 md/mdx 비율 ≥ 0.8 · 데몬 스레드로 fire-and-forget → GitLab API 로 base/head md 트리 수집 → 결정론 노드(changeset · structure · literals · excerpt · levelcheck · collect · render) + <code>codex exec</code> 위성(analysis · verifier · themes) → fix round 최대 2 → exit 0/4/2 → <b>요약 + <code>mrdoc-report.html</code> 을 한 메시지로</b> 알림 스레드에 회신. 변경을 구조 · 의미(맥락) · 의미(값) · 표현 · 미분류로 분류한 매트릭스 리포트 — <code>docs/mrdoc-pipeline.html</code></div>
       </div></div>
     </div>
     <h4>분기 — 버튼 클릭 후</h4>
@@ -278,13 +289,13 @@ table.r td .pill.now{background:var(--ok-soft);color:var(--ok);border:1px solid 
       </div></div>
       <div class="fconn"><svg width="14" height="18" viewBox="0 0 14 18"><path d="M7 0v14M2 10l5 6 5-6" stroke="currentColor" stroke-width="1.6" fill="none"/></svg></div>
       <div class="fnode ai"><div class="rail"></div><div class="body">
-        <div class="top"><span class="actor">claude</span><span class="tt">[B] revise 러너 — 문서 재생성</span></div>
-        <div class="ss">단일 claude CLI 호출 → <code>{applied, unapplied, summary}</code> · 벽시계 상한 900s</div>
+        <div class="top"><span class="actor">AI</span><span class="tt">[B] revise 러너 — 문서 재생성 (<code>AI_RUNNER</code>로 선택)</span></div>
+        <div class="ss"><code>stub</code>(기본 — 파일 변경 0, 전부 미반영) · <code>claude</code>(단일 claude CLI 호출) · <code>staged</code>(StagedRunner — <code>codex exec</code> 3단 3a 구조화 / 3b 편집 / 3c 검증 사이에 결정론 노드 anchor · spec · impact · gate · summary, 8노드 DAG, 재투입 라운드당 2회 — <code>docs/revise-workflow.html</code>) → <code>ReviseResult{kind, unapplied, detail, commit_paths, clarify}</code> · 벽시계 상한 2400s</div>
       </div></div>
       <div class="fconn"><svg width="14" height="18" viewBox="0 0 14 18"><path d="M7 0v14M2 10l5 6 5-6" stroke="currentColor" stroke-width="1.6" fill="none"/></svg></div>
       <div class="fnode mid"><div class="rail"></div><div class="body">
         <div class="top"><span class="actor">미들웨어</span><span class="tt">commit/push → reviewing 복귀 → 재알림</span></div>
-        <div class="ss">CAS <code>revising → reviewing</code>가 <b>선행 조건</b> — 거부되면 라운드·의견 기록을 일절 건드리지 않고 종료 · 수용 시에만 반영 의견 <code>applied_round</code> 기록 · <code>round+1</code> · 새 메시지 발송</div>
+        <div class="ss">커밋은 러너가 <code>commit_paths</code>를 주면 그 경로만(staged), 아니면 전체 · CAS <code>revising → reviewing</code>가 <b>선행 조건</b> — 거부되면 라운드·의견 기록을 일절 건드리지 않고 종료 · 수용 시에만 반영 의견 <code>applied_round</code> 기록 · <code>round+1</code> — 단 <b>되물음(clarify)만 있고 커밋이 없으면 round 유지</b>(세션당 <code>REVISE_CLARIFY_LIMIT=2</code>회, 초과 시 그 의견은 「대상 미확인 — 재질문 한도 소진」으로 마감) · 새 메시지 발송 + 라운드 <code>report-…-rN-….html</code> 스레드 첨부</div>
       </div></div>
     </div>
   </div>
@@ -309,9 +320,9 @@ table.r td .pill.now{background:var(--ok-soft);color:var(--ok);border:1px solid 
         </div>
       </div>
       <div class="state revising"><div class="sn"><span class="sw"></span>revising</div>
-        <div class="sd">완전 동결 · revise 실행기 진행 중 (<code>revising_since</code> 타임아웃 1200s)</div>
+        <div class="sd">완전 동결 · revise 실행기 진행 중 (<code>revising_since</code> 타임아웃 3000s)</div>
         <div class="edges">
-          <span class="e">→ <code>reviewing</code> revise 성공 (round+1, attempts 리셋)</span>
+          <span class="e">→ <code>reviewing</code> revise 성공 (round+1, attempts 리셋 · 되물음만 있고 커밋 없으면 round 유지)</span>
           <span class="e">→ <code>manual</code> 사람 push · 타임아웃 · attempts≥2 · 외부 닫힘</span>
           <span class="e">→ <code>merged</code> 외부 머지</span>
         </div>
@@ -334,7 +345,7 @@ table.r td .pill.now{background:var(--ok-soft);color:var(--ok);border:1px solid 
     <div class="lead-note">앱 기동(<code>lifespan</code>)에서 <code>start_*</code> 4개를 무조건 호출하지만, 실제로 항상 뜨는 데몬 스레드는 <b>스위퍼·notify 큐 2개</b>다. 폴러와 Socket Mode는 각자의 설정 게이트가 꺼져 있으면 <code>start_*</code>가 그대로 no-op으로 반환한다.</div>
     <ul>
       <li><b>타임아웃 스위퍼</b> — <code>merging</code>/<code>revising</code> 세션이 <code>*_since</code> 임계 초과 시 <code>manual</code>로 CAS 수렴 (60s 주기, 상시 기동)</li>
-      <li><b>notify 재시도 큐</b> — 선형 백오프(<code>30s × attempts</code>, 최대 5회)로 재시도하고 <code>event_log.send_state</code>(pending/sent/failed)로 추적 · 프로세스 재시작 시 <code>pending</code> 행을 다시 적재 (상시 기동). 단 <b>현재 사용처는 스위퍼의 manual 전환 통지 한 곳뿐</b>이며, 나머지 Slack 발송(최초 알림·버튼 회수·라운드 재알림)은 이 큐를 거치지 않고 직접 호출한다</li>
+      <li><b>notify 재시도 큐</b> — 선형 백오프(<code>30s × attempts</code>, 최대 5회)로 재시도하고 <code>event_log.send_state</code>(pending/sent/failed)로 추적 · 프로세스 재시작 시 <code>pending</code> 행을 다시 적재 (상시 기동). 단 <b>현재 사용처는 스위퍼의 manual 전환 통지 한 곳뿐</b>이며, 나머지 Slack 발송(최초 알림·버튼 회수·라운드 재알림·report.html 업로드·mrdoc 스레드 회신)은 이 큐를 거치지 않고 직접 호출한다 — 실패는 로그만 남는다</li>
       <li><b>GitLab 폴러</b> — 방화벽 차단 환경을 위한 <b>주 수집경로</b>로 구현된 옵트인 워커(<code>POLL_ENABLED</code>와 <code>POLL_PROJECT_IDS</code>가 모두 있어야 기동, 주기 기본 60s). opened MR 신규 감지·사람 push·외부 머지/닫힘·외부 닫힘 후 재오픈(<code>mr_reopened</code>)까지 모두 폴링으로 감지하고 동일한 ingest 핸들러로 분기</li>
       <li><b>Slack Socket Mode</b> — 인바운드 HTTP가 막힌 환경의 아웃바운드 전용 WebSocket 폴백. <code>SLACK_SOCKET_MODE</code> + <code>SLACK_APP_TOKEN</code>이 있어야 연결하며, 스레드는 자체 루프가 아니라 <code>slack_sdk</code> 클라이언트가 관리한다 (HTTP 라우트와 동일한 <code>dispatch_interaction</code> 재사용)</li>
     </ul>
@@ -356,8 +367,8 @@ table.r td .pill.now{background:var(--ok-soft);color:var(--ok);border:1px solid 
       <tr>
         <td class="k">리뷰 산출물</td>
         <td><span class="pill orig">설계</span>claude가 <code>report.html</code> 생성 → Slack 스레드에 파일 다운로드 링크</td>
-        <td><span class="pill now">구현</span>AI 요약을 인라인 Slack 블록으로 직접 렌더</td>
-        <td>별도 파일 생성·Slack 파일 업로드 의존성 제거. 메시지 자체로 충분</td>
+        <td><span class="pill now">구현</span>AI 요약 인라인 Slack 블록 <b>+</b> 미들웨어가 <code>report.html</code>(AI 요약 + diff)을 렌더해 <code>reports/</code>에 보관하고 알림 스레드에 파일 첨부. md 위주 MR 은 mrdoc 이 <code>mrdoc-report.html</code>로 대신한다</td>
+        <td>생성 주체를 claude 에서 결정론 렌더러로 옮겼다. 인라인 블록은 길이 상한에 잘리므로 전문은 파일로 — 업로드는 best-effort 라 실패해도 알림은 유효</td>
       </tr>
       <tr>
         <td class="k">GitLab 라벨</td>
@@ -374,8 +385,20 @@ table.r td .pill.now{background:var(--ok-soft);color:var(--ok);border:1px solid 
       <tr>
         <td class="k">AI 리뷰 성격</td>
         <td><span class="pill orig">설계</span>문서 특화 등급(🔴주장변경/🟡보강/🟢표현만) + 확인질문 리스트</td>
-        <td><span class="pill now">구현</span>범용 코드 리뷰(<code>summary/key_changes/points_to_watch</code>)</td>
-        <td>인프라 우선. 문서 특화 분석은 고도화 영역으로 이월(§3)</td>
+        <td><span class="pill now">구현</span>범용 코드 리뷰(<code>summary/key_changes/points_to_watch</code>) + 옵트인 <b>mrdoc</b> — 문서 MR 변경을 구조 · 의미(맥락) · 의미(값) · 표현 · 미분류로 분류한 매트릭스 리포트. 확인질문은 없음</td>
+        <td>등급을 LLM 판단 대신 <b>도구가 증명하는 사실</b>(구조 diff · 리터럴 차집합)과 검증된 분류로 세웠다 — 축이 설계의 3등급과 다르다(<code>docs/mrdoc-pipeline.html</code>)</td>
+      </tr>
+      <tr>
+        <td class="k">revise 실행 구조</td>
+        <td><span class="pill orig">설계</span>claude 단일 세션(호출 1회) 안에서 3a · 3b · 3c 서브에이전트 오케스트레이션, 단계별 별도 CLI 호출 금지</td>
+        <td><span class="pill now">구현</span><code>AI_RUNNER=staged</code> — 단계마다 별도 <code>codex exec</code> 호출 3회 + Python 결정론 노드 5개, 진행은 산출물 파일 존재로 판정(옵트인, 기본은 <code>stub</code>)</td>
+        <td>headless 서브에이전트 결과 회수가 종료 코드 0인 채 조용히 실패(실측) → 실패가 보이는 구조로. mrdoc 과 같은 방식(<code>docs/revise-workflow.html</code>)</td>
+      </tr>
+      <tr>
+        <td class="k">되물음</td>
+        <td><span class="pill orig">설계</span>없음 — 모든 라운드가 round 를 소모</td>
+        <td><span class="pill now">구현</span>대상을 못 찾거나 바꿀 현재 값이 여럿이면 질문 + 후보를 재알림에 싣고, 커밋이 없으면 <code>round</code> 유지(세션당 2회)</td>
+        <td>사람이 가리킨 곳이 문서에 없을 때 지어내서 고치는 대신 되묻는다. 새 상태 없이 기존 레일을 탄다</td>
       </tr>
       <tr>
         <td class="k">의견 모달</td>
@@ -392,7 +415,7 @@ table.r td .pill.now{background:var(--ok-soft);color:var(--ok);border:1px solid 
       <tr>
         <td class="k">재알림 내용</td>
         <td><span class="pill orig">설계</span>라운드 번호·SHA·미반영 의견</td>
-        <td><span class="pill now">구현</span>+ 변경 파일 통계 · AI 요약 · GitLab compare 링크 (추가)</td>
+        <td><span class="pill now">구현</span>+ 변경 파일 통계 · AI 요약 · GitLab compare 링크 · 되물음 질문 + 후보 · 라운드 report.html 첨부 (추가)</td>
         <td>승인 판단을 메시지만으로 가능하게 (실환경 검증 완료)</td>
       </tr>
       <tr>
@@ -404,43 +427,45 @@ table.r td .pill.now{background:var(--ok-soft);color:var(--ok);border:1px solid 
     </tbody>
   </table>
   </div>
-  <div class="lead-note" style="margin-top:14px">이 표의 "변경 배경"은 어느 쪽이 맞다는 뜻이 아니라, 인프라 구축 단계에서 내린 취사선택이다. 문서 특화 영역(등급·확인질문·report.html)은 §3 고도화 항목에서 다시 다룬다.</div>
+  <div class="lead-note" style="margin-top:14px">이 표의 "변경 배경"은 어느 쪽이 맞다는 뜻이 아니라, 구현 과정에서 내린 취사선택이다. 남은 문서 특화 영역(확인질문 · mrdoc 기본 활성화)은 §3 고도화 항목에서 다시 다룬다.</div>
 </section>
 <section class="report" id="adv">
   <div class="sec-title"><span class="num">03</span><h2>고도화 필요 부분</h2></div>
-  <p class="sec-lead">인프라(상태기계·CAS·머지·직렬화·회복 계층)를 먼저 확정하느라 AI 영역은 최소 동작으로 넘겼다. 아래는 실서비스 전에 다뤄야 할 항목이다.</p>
+  <p class="sec-lead">인프라(상태기계·CAS·머지·직렬화·회복 계층)를 먼저 확정한 뒤 AI 영역을 두 레일(mrdoc · StagedRunner)로 채웠다. 둘 다 옵트인이고 실호출 검증이 남아 있다. 아래는 실서비스 전에 다뤄야 할 항목이다.</p>
   <div class="work-grid">
     <div class="wcard">
-      <h3>AI 리뷰어 — 문서 특화 분석 <span class="tag">AI</span></h3>
-      <div class="where">app/ai_reviewer.py · review-prep [A]</div>
-      <p class="now">현재 <b>범용 코드 리뷰</b>(summary / key_changes / points_to_watch — "버그·부작용·테스트 누락" 관점)만 한다. 문서 MR 관점의 분석이 빠져 있다.</p>
+      <h3>AI 리뷰어 — 문서 특화 분석 <span class="tag">AI · 부분 구현</span></h3>
+      <div class="where">app/ai_reviewer.py · review-prep [A] · app/mrdoc/ · mrdoc 레일 [C]</div>
+      <p class="now">범용 리뷰어 [A]는 여전히 <b>범용 코드 리뷰</b>(summary / key_changes / points_to_watch)만 한다. 문서 MR 은 옵트인 <b>mrdoc 레일</b>이 결정론 도구 + <code>codex exec</code> 위성 3개(analysis · verifier · themes)로 변경을 구조 · 의미(맥락) · 의미(값) · 표현 · 미분류로 분류하고, 주요 주제 · 확인이 필요한 항목 · 파일별 상세를 담은 매트릭스 리포트를 스레드에 올린다.</p>
       <ul>
-        <li>문서별 변경 등급 판정 (주장 변경 / 보강 / 표현만) — 리뷰어가 어디를 깊이 볼지 가이드</li>
-        <li>확인질문 자동 생성 — 현재 모달 체크박스와 연결된 <code>question_refs</code>가 항상 NULL</li>
-        <li>변경 동인·서술 이동·독자 영향 분석 (설계가 묘사하던 리뷰 자료의 본질)</li>
+        <li><b>mrdoc 기본 활성화</b> — <code>MRDOC_ENABLED</code> · <code>MRDOC_SATELLITE_ENABLED</code> 모두 기본 false. 켜려면 호스트에 <code>codex</code> CLI 가 필요하다</li>
+        <li><b>revise 뒤 mrdoc 재실행 없음</b> — 라운드 재알림은 범용 3슬롯 리포트이고, 문서 MR 의 매트릭스 리포트는 첫 리뷰 것 그대로다</li>
+        <li><b>확인질문 자동 생성</b> — 미구현. 모달 체크박스와 연결될 <code>question_refs</code>가 항상 NULL</li>
+        <li><b>등급 축</b> — mrdoc 의 성질 분류는 설계의 주장 변경 / 보강 / 표현만 3등급과 축이 다르다. 어느 쪽을 리뷰어 가이드로 쓸지 정하지 않았다</li>
       </ul>
     </div>
     <div class="wcard">
-      <h3>AI 러너 — revise 체인 고도화 <span class="tag">AI</span></h3>
-      <div class="where">app/ai_runner.py · revise 러너 [B]</div>
-      <p class="now">현재 기본값이 <b>StubRunner</b>(파일 변경 0, 모든 의견 "AI 체인(P5) 미구현"으로 미반영). <code>AI_RUNNER=claude</code> 설정 시 <code>ClaudeCliRunner</code>(단일 CLI 호출)가 동작하지만, 설계가 묘사한 다단 체인은 아니다.</p>
+      <h3>AI 러너 — revise 체인 <span class="tag">AI · 구현 · 실검증 남음</span></h3>
+      <div class="where">app/ai_runner.py · app/revise_workflow/ · revise 러너 [B]</div>
+      <p class="now">기본값은 여전히 <b>StubRunner</b>(파일 변경 0, 모든 의견 미반영). <code>AI_RUNNER=claude</code>는 단일 CLI 호출, <code>AI_RUNNER=staged</code>는 <b>StagedRunner</b> — 설계의 3단 체인을 단계별 <code>codex exec</code> 호출로 구현했다(<code>docs/revise-workflow.html</code>).</p>
       <ul>
-        <li><b>기본 러너 전환</b> — 프로덕션에선 claude 러너가 기본이 되어야 revise가 실제로 일어남</li>
-        <li><b>3단 오케스트레이터 체인</b> — 메타프롬프팅(3a) → 재생성(3b) → 대조검증(3c) 서브에이전트 분리 미구현. 현재는 단일 호출 1회</li>
-        <li><b>자기 채점 방지</b> — 3c 검증을 fresh-context 서브에이전트로 분리(현재 없음)</li>
-        <li><b>원인 분류 재시도 라우팅</b> — 미반영 시 구현 누락→3b / 스펙 모호→3a 재투입 (라운드당 2회 한정). 현재 없음</li>
-        <li><b>cross-doc 정합성 워커</b> — 문서 경계를 넘는 의견 처리 분기 미구현</li>
+        <li><b>기본 러너 전환</b> — 프로덕션에선 staged(또는 claude) 러너가 기본이 되어야 revise 가 실제로 일어남</li>
+        <li><b>실호출 스모크</b> — codex 경로와 편집 전 스펙 게이트는 단위 테스트로만 덮여 있다. v1(claude) 스모크만 3/3 통과</li>
+        <li><s>3단 오케스트레이터 체인</s> — 구현: 3a 구조화 → 3b 편집 → 3c 대조검증, 각각 별도 호출</li>
+        <li><s>자기 채점 방지</s> — 구현: 3c 는 3b 영수증을 받지 않는 별도 호출이고, 결정론 게이트가 리터럴 치환을 기계로 증명한다</li>
+        <li><s>원인 분류 재시도 라우팅</s> — 구현: 스펙 반려 → 3a, 리터럴 미치환 → 3b, 3c 미반영 → 3b 다음 3a (라운드당 2회)</li>
+        <li><s>cross-doc 정합성 워커</s> — 구현 방식 변경: 워커 대신 impact 노드가 리터럴 역검색 · 링크 추적으로 동반 변경 후보를 찾고 3b 가 선별한다</li>
+        <li><b>codex 샌드박스 한계</b> — 도구별 차단이 없어 「3a 는 목차만 · 3c 는 diff 만」이 프롬프트 규칙에만 기댄다</li>
       </ul>
     </div>
-    <div class="wcard" style="border-left-color:var(--mid)">
-      <h3>리뷰 산출물 — report.html + 스레드 파일 링크 <span class="tag" style="color:var(--mid);background:color-mix(in srgb,var(--mid) 12%,transparent);border-color:color-mix(in srgb,var(--mid) 25%,transparent)">설계 미구현</span></h3>
-      <div class="where">app/ai_reviewer.py · app/slack_client.py (ai_review_blocks · _revise_result_payload)</div>
-      <p class="now">설계 원안은 <b>claude가 <code>report.html</code>을 생성하고 Slack 스레드에 파일 다운로드 링크를 붙이는 것</b>이었다. 현재는 AI 요약을 <b>Slack 인라인 블록으로만</b> 렌더하며, 파일 업로드 API(<code>files.*</code>)도 스레드 회신(<code>thread_ts</code>)도 코드 어디에서도 호출하지 않는다 — 양쪽 다 미구현이다.</p>
+    <div class="wcard" style="border-left-color:var(--ok)">
+      <h3>리뷰 산출물 — report.html 스레드 첨부 <span class="tag" style="color:var(--ok);background:var(--ok-soft);border-color:color-mix(in srgb,var(--ok) 25%,transparent)">구현</span></h3>
+      <div class="where">app/report_html.py · app/ingest.py (_deliver_review_report) · app/slack_client.py (upload_report_file) · app/mrdoc/report_render.py</div>
+      <p class="now">설계 원안(claude 가 생성)과 달리 <b>결정론 렌더러</b>가 만든다. 최초 알림은 <code>render_review_report</code>(AI 요약 + diff)를, 라운드 재알림은 <code>report-…-rN-….html</code>을 <code>files.getUploadURLExternal</code> → <code>files.completeUploadExternal</code>(<code>thread_ts</code>)로 알림 스레드에 붙인다. md 위주 MR 은 mrdoc 이 요약을 <code>initial_comment</code> 로 단 <code>mrdoc-report.html</code> <b>한 메시지</b>로 대신한다.</p>
       <ul>
-        <li><b>길이 상한에 걸린다</b> — AI 요약 블록은 2900자에서 절단되고(Slack section 3000자 제한), 라운드 재알림은 요약 700자·diff stat 12줄/900자로 잘린다. MR이 클수록 근거가 사라진 요약만 남는다</li>
-        <li><b>산출물 생성 경로 부재</b> — review-prep [A]는 구조화 JSON(<code>summary/key_changes/points_to_watch</code>)만 반환한다. HTML 문서를 만드는 단계 자체가 없다</li>
-        <li><b>Slack 업로드 배선</b> — <code>files.getUploadURLExternal</code> → <code>files.completeUploadExternal</code> 2단계 호출과 <code>thread_ts</code> 스레드 회신을 새로 붙여야 한다. 봇에 <code>files:write</code> 스코프 추가 필요</li>
-        <li><b>보관·노출 정책</b> — 생성한 report.html을 어디에 얼마나 보관할지, 채널 밖으로 새지 않게 할지 결정 필요 (compare 링크에 적용한 자격증명 살균과 같은 급의 검토)</li>
+        <li><b>인라인 블록 길이 상한은 그대로</b> — AI 요약 블록 2900자, 라운드 재알림 요약 700자 · diff stat 12줄/900자. 전문은 첨부 파일로 본다</li>
+        <li><b>보관·노출 정책</b> — <code>REPORT_HTML_DIR</code>(기본 <code>reports/</code>)에 쌓이기만 하고 정리 정책이 없다. 채널 밖 유출 검토(compare 링크 자격증명 살균과 같은 급)도 남음</li>
+        <li><b>봇 스코프</b> — 업로드에 <code>files:write</code> 가 필요하다. 없으면 업로드만 실패하고 알림은 나간다</li>
       </ul>
     </div>
     <div class="wcard" style="border-left-color:var(--warn)">
@@ -464,7 +489,7 @@ table.r td .pill.now{background:var(--ok-soft);color:var(--ok);border:1px solid 
 </section>
 <footer class="report-foot">
   <span>SLACK MR REVIEW PIPELINE · DEV REPORT</span>
-  <span>REV 2026-08-13 · CODE-VERIFIED · INFRA STABLE / AI PENDING</span>
+  <span>REV 2026-09-27 · CODE-VERIFIED · INFRA STABLE / AI OPT-IN</span>
 </footer>
 </div>
 </body>

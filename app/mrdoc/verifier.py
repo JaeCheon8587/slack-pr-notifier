@@ -17,6 +17,7 @@ would silently skip the round the design promises.
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 
 from .frontmatter import (
@@ -27,7 +28,12 @@ from .frontmatter import (
 )
 
 FIDELITY_VALUES = ("ok", "invented", "omitted")
+#: The two verdicts that owe a rewrite — with or without a FIX block.
+FLAGGED_FIDELITY = ("invented", "omitted")
 CLASS_OPINIONS = ("agree", "dispute")
+#: 50-collect verify.status — 'failed' means nobody checked, never "0 found".
+VERIFY_OK = "ok"
+VERIFY_FAILED = "failed"
 #: FIX.reason vocabulary — one per audit failure, nothing else. The third
 #: is the prose-vs-inventory gate: a FILE_SUMMARY that contradicts the
 #: counts the tools measured.
@@ -88,6 +94,10 @@ class Verifier:
     units: tuple[VerifierUnit, ...] = ()
     counts: tuple[CountsCheck, ...] = ()
     fixes: tuple[Fix, ...] = field(default_factory=tuple)
+    #: 'OK' unless the orchestrator wrote this file as a FAILED stub for a
+    #: satellite that produced nothing — rendered only when it is not OK, so
+    #: the prompt's template (and every real audit) carries no such field.
+    status: str = "OK"
 
     @property
     def fidelity(self) -> dict[str, int]:
@@ -111,6 +121,34 @@ class Verifier:
 
     def fix_targets(self) -> tuple[str, ...]:
         return tuple(dict.fromkeys(fix.target for fix in self.fixes if fix.target))
+
+    def flagged_targets(self) -> tuple[str, ...]:
+        """FIX targets plus every unit judged invented/omitted.
+
+        fidelity is the verdict; a FIX block is its copy. A verifier that
+        wrote 'invented' and forgot the FIX used to get no rewrite and count
+        as zero outstanding — the copy going missing must not erase the
+        verdict it copies.
+        """
+
+        return tuple(
+            dict.fromkeys(
+                [
+                    *self.fix_targets(),
+                    *(
+                        unit.unit_id
+                        for unit in self.units
+                        if unit.fidelity in FLAGGED_FIDELITY
+                    ),
+                ]
+            )
+        )
+
+    @property
+    def is_stub(self) -> bool:
+        """True for the orchestrator's FAILED/BLOCKED placeholder."""
+
+        return self.status.strip().upper().startswith(("FAILED", "BLOCKED"))
 
     @property
     def counts_mismatches(self) -> int:
@@ -169,25 +207,24 @@ def _why_line(lines: list[str]) -> str:
 def render_verifier(verifier: Verifier) -> str:
     """Render 40-verifier.md — and the verifier prompt's own template."""
 
-    parts = [
-        render_frontmatter(
-            {
-                "mr_iid": verifier.mr_iid,
-                "round": verifier.round,
-                "checked": verifier.checked,
-                "fidelity": verifier.fidelity,
-                "class_opinion": verifier.class_opinion,
-                "counts": {
-                    "checked": len(verifier.counts),
-                    "mismatch": verifier.counts_mismatches,
-                },
-                "required_fixes": verifier.required_fixes,
-                "uncovered": verifier.uncovered,
-                "uncertain": verifier.uncertain,
-                "confidence": verifier.confidence,
-            }
-        )
-    ]
+    meta: dict[str, object] = {
+        "mr_iid": verifier.mr_iid,
+        "round": verifier.round,
+        "checked": verifier.checked,
+        "fidelity": verifier.fidelity,
+        "class_opinion": verifier.class_opinion,
+        "counts": {
+            "checked": len(verifier.counts),
+            "mismatch": verifier.counts_mismatches,
+        },
+        "required_fixes": verifier.required_fixes,
+        "uncovered": verifier.uncovered,
+        "uncertain": verifier.uncertain,
+        "confidence": verifier.confidence,
+    }
+    if verifier.status != "OK":
+        meta["status"] = verifier.status
+    parts = [render_frontmatter(meta)]
     for unit in verifier.units:
         parts.append("")
         parts.append(
@@ -290,23 +327,84 @@ def parse_verifier(text: str) -> Verifier:
         units=tuple(units),
         counts=tuple(counts),
         fixes=tuple(fixes),
+        status=_text(meta.get("status")) or "OK",
     )
 
 
-def verify_summary(text: str) -> dict[str, object]:
-    """The 50-collect 'verify' block — read from the file, never from a return.
+def normalize_targets(targets: Iterable[str], files: Iterable[str] = ()) -> tuple[str, ...]:
+    """Targets with the f- prefix dropped where it names a real file, deduped.
 
-    An unparseable report degrades to round 1 / nothing outstanding rather
-    than aborting: collect's job is to render what exists, and a missing
-    audit is already visible as an empty fidelity census.
+    doc-verifier's template once showed file ids that way; counted raw, one
+    FILE_SUMMARY finding written as both 'f-X' and 'X' was two findings.
     """
 
-    try:
-        verifier = parse_verifier(text)
-    except ValueError:
-        return {"rounds": 1, "outstanding": 0, "counts_mismatch": 0}
+    known = set(files)
+    return tuple(
+        dict.fromkeys(
+            target[2:] if target.startswith("f-") and target[2:] in known else target
+            for target in targets
+        )
+    )
+
+
+def audit_units(verifier: Verifier | None) -> dict[str, VerifierUnit]:
+    """unit_id -> its UNIT block, for blocks whose fidelity is a real verdict.
+
+    'OK', 'pass' or an empty fidelity is not a verdict the pipeline can act
+    on, so such a block audits nothing — the unit reads as 미검증.
+    """
+
+    if verifier is None:
+        return {}
     return {
+        unit.unit_id: unit for unit in verifier.units if unit.fidelity in FIDELITY_VALUES
+    }
+
+
+def verify_summary(
+    text: str, auditable: Iterable[str] = (), files: Iterable[str] = ()
+) -> dict[str, object]:
+    """The 50-collect 'verify' block — read from the file, never from a return.
+
+    Coverage is measured, not reported: `auditable` is every unit that had a
+    설명 to audit, and a unit counts as audited when a UNIT block with a real
+    fidelity names it — or a FIX does, since a unit the verifier asked to
+    rewrite is one it looked at. The satellite's own 'checked' is never read.
+    `files` lets an f-prefixed FIX target count once, as the file it names.
+
+    An audit that cannot be read — unparseable, the orchestrator's FAILED
+    stub, or one that judged nothing it was owed and found nothing either —
+    is status 'failed', not zero findings. Collect still renders; the report
+    prints '—' where a number would claim a check that never happened.
+    """
+
+    owed = tuple(dict.fromkeys(auditable))
+    try:
+        verifier: Verifier | None = parse_verifier(text)
+    except ValueError:
+        verifier = None
+    flagged = normalize_targets(verifier.flagged_targets(), files) if verifier else ()
+    audited = (set(audit_units(verifier)) | set(flagged)) & set(owed)
+    failed = (
+        verifier is None
+        or verifier.is_stub
+        or (bool(owed) and not audited and not flagged and not verifier.counts_mismatches)
+    )
+    if failed:
+        return {
+            "status": VERIFY_FAILED,
+            "rounds": verifier.round if verifier else 1,
+            "outstanding": 0,
+            "counts_mismatch": 0,
+            "audited": 0,
+            "unaudited": len(owed),
+        }
+    assert verifier is not None
+    return {
+        "status": VERIFY_OK,
         "rounds": verifier.round,
-        "outstanding": verifier.required_fixes,
+        "outstanding": len(flagged),
         "counts_mismatch": verifier.counts_mismatches,
+        "audited": len(audited),
+        "unaudited": len(owed) - len(audited),
     }
