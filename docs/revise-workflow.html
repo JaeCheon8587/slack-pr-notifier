@@ -259,7 +259,7 @@ footer{border-top:1px solid var(--line);padding-top:20px;font-family:"IBM Plex M
     <span><b>LLM 호출</b> 최대 3 (<code>codex exec</code>) + Python 오케스트레이터</span>
     <span><b>재투입 예산</b> 라운드당 2</span>
     <span><b>대상</b> .md / .mdx 전용</span>
-    <span><b>상태</b> 구현 · 단위 586 · 스모크 3/3(v1)</span>
+    <span><b>상태</b> 구현 · 단위 597 · 스모크 3/3(v1)</span>
   </div>
 </div>
 
@@ -282,7 +282,7 @@ footer{border-top:1px solid var(--line);padding-top:20px;font-family:"IBM Plex M
     <dt>대상 못 찾음</dt><dd><b>라운드를 소모하지 않고 슬랙으로 되물음</b></dd>
     <dt>LLM 호출 수</dt><dd><b>최대 3회</b> — 구조화(3a) / 편집(3b) / 검증(3c). 스펙 게이트를 통과한 의견이 없으면 3b · 3c 는 부르지 않는다</dd>
     <dt>부분 실패</dt><dd><b>성공분만 커밋</b>, 실패분은 3c 판정문(또는 스펙 게이트 사유)을 사유로 남김</dd>
-    <dt>현재 값 A</dt><dd><b>코드가 결정</b> — 원문 명시 &gt; 3a 의 A &gt; 절 안 같은 종류 유일 값. 여럿이면 되물음</dd>
+    <dt>현재 값 A</dt><dd><b>코드가 결정</b> — 원문 명시 &gt; 3a 의 A &gt; 절 안 같은 종류 유일 값. 여럿이면 되물음. 「유지」라고 한 값은 A 가 아니고, B 가 이미 절에 있으면 추론하지 않고 되물음</dd>
     <dt>약한 앵커</dt><dd><b>진행 + 주의 표기</b> — 편집은 하고 리포트 주의 항목에 싣는다</dd>
     <dt>다중 출현</dt><dd><b>절 안 전부 치환</b> — 스펙 게이트가 센 개수를 3b 에게 알린다</dd>
     <dt>이미 반영</dt><dd><b>반영 완료 처리</b> — 편집 없이 applied. 단 앵커가 강할 때만</dd>
@@ -293,6 +293,7 @@ footer{border-top:1px solid var(--line);padding-top:20px;font-family:"IBM Plex M
     <dt>v1 · 09-04</dt><dd>3a/3b/3c 3단 + 결정론 4노드, headless <code>claude</code>. 스모크 3/3 (<code>.orchestration/reports/smoke-staged-runner.md</code>)</dd>
     <dt>v1.1 · 09-23</dt><dd>단계 호출을 <b><code>codex exec</code></b> 로 전환. 3a 스펙에 <code>op</code>(create|modify|delete) · <code>연관문서</code> 추가, impact 가 연관문서를 기계 검증해 <code>related_unverified</code> 로 보고 (<code>abe95b0</code>)</dd>
     <dt>v1.2 · 09-27</dt><dd><b>편집 전 스펙 게이트</b> <code>15-spec.md</code> 추가, 원인별 재투입, 게이트에 <code>a_in_base_text</code> (<code>ed11c90</code>)</dd>
+    <dt>v1.2.1 · 09-28</dt><dd>A 확정 오편집 2건 수정 — 「유지」한 값을 A 로 잡던 것, B 가 이미 있는 절에서 남은 값을 추론하던 것. 조사 붙은 단위를 원문에서 읽음. 스펙 필드의 줄바꿈 escape. 라운드 후 mrdoc 레일이 push 한 head 를 기다림</dd>
   </dl>
 </div>
 
@@ -515,7 +516,7 @@ footer{border-top:1px solid var(--line);padding-top:20px;font-family:"IBM Plex M
       <tr><td class="num">2</td><td><b>앵커</b></td><td><code>10-anchor.md</code> 에서 <code>FOUND</code> 인가</td><td><code>missing</code> — 기존 되물음 경로</td></tr>
       <tr><td class="num">3</td><td><b>op 모순</b></td><td><code>op: create</code> 인데 수정방향이 치환인가</td><td><code>spec_error</code></td></tr>
       <tr><td class="num">4</td><td><b>목표 값 B 의 출처</b></td><td>B 가 의견 <b>원문</b>에 있는가 (리터럴 동치 포함). A == B 인가</td><td><code>spec_error</code> — 「3a 가 만든 값」</td></tr>
-      <tr><td class="num">5</td><td><b>현재 값 A 확정</b></td><td>① 원문이 명시한 값 ② 절에 있고 원문과 모순 없는 3a 의 A ③ 절 안에서 B 와 같은 종류(unit · kv 는 키까지)인 유일한 값 — 순서대로</td><td>후보 여럿 → <code>clarify</code>. A 도 B 도 절에 없으면 <code>spec_error</code></td></tr>
+      <tr><td class="num">5</td><td><b>현재 값 A 확정</b></td><td>① 원문이 명시한 값 — 「유지 · 그대로 · 건드리지」가 붙은 값은 빼고, B 와 같은 문장에서 B 앞에 쓴 값(「3.2 에서 3.3 으로」)이 있으면 그것만 ② 절에 있고 원문과 모순 없는 3a 의 A ③ 절 안에서 B 와 같은 종류(unit · kv 는 키까지)인 유일한 값 — 단 B 가 이미 절에 없을 때만 — 순서대로</td><td>후보 여럿 → <code>clarify</code>. B 가 이미 있는데 다른 같은 종류 값이 남음 → 그 값을 후보로 <code>clarify</code>. 3a 의 A 가 원문이 바꿀 값으로 쓰지 않은 값 → <code>spec_error</code>. A 도 B 도 절에 없으면 <code>spec_error</code></td></tr>
       <tr><td class="num">6</td><td><b>이미 반영</b></td><td>A 는 절에 없고 B 는 있는가</td><td>강한 앵커면 <code>already_applied</code>, 약하거나 동점이면 <code>spec_error</code></td></tr>
       <tr><td class="num">7</td><td><b>앵커 강도</b></td><td><code>search_terms</code> 가 절에 <code>exact</code> · <code>normalized</code> · <code>partial</code> 중 어디까지 맞나, 같은 수준으로 맞는 다른 절(<code>alternatives</code>)이 있나</td><td>통과 — <code>partial</code> 이나 동점이면 <b>주의 표기</b></td></tr>
       <tr><td class="num">8</td><td><b>출현 횟수</b></td><td>절 안의 A 개수. 숫자 경계를 지킨다 — <code>3.2</code> 는 <code>13.2</code> · <code>3.2.1</code> 안에 없다</td><td>통과 — 2곳 이상이면 「전부 바꾼다」를 3b 에 전달</td></tr>
@@ -529,7 +530,7 @@ footer{border-top:1px solid var(--line);padding-top:20px;font-family:"IBM Plex M
       <tr><td><code>ok</code></td><td>유효 뷰에 남아 확정 A → B 로 편집 · 게이트 · 검증</td><td>보냄</td><td>보냄</td></tr>
       <tr><td><code>already_applied</code></td><td>편집 없이 <code>applied</code> 판정(근거 없음) → <code>applied_round</code> 기록. 리포트에 「이미 반영」</td><td>—</td><td>—</td></tr>
       <tr><td><code>spec_error</code></td><td>반려 사유를 붙여 <b>3a 재투입</b>(예산 안). 소진되면 <code>unapplied</code> + 사유</td><td>—</td><td>—</td></tr>
-      <tr><td><code>clarify</code></td><td><b>되물음</b> — 「'4.0'(으)로 바꿀 현재 값이 대상 절에 여럿입니다. 어느 값인가요?」 + 후보 A 값</td><td>—</td><td>—</td></tr>
+      <tr><td><code>clarify</code></td><td><b>되물음</b> — 「'4.0'(으)로 바꿀 현재 값이 대상 절에 여럿입니다. 어느 값인가요?」 + 후보 A 값. 후보가 하나(B 가 이미 절에 있음)면 「대상 절에 '4.0' 이 이미 있습니다. 아래 값도 '4.0'(으)로 바꿀까요, 아니면 이미 반영된 건가요?」</td><td>—</td><td>—</td></tr>
       <tr><td><code>missing</code></td><td>기존 되물음 — 근접 후보 3개</td><td>—</td><td>—</td></tr>
     </tbody>
   </table>
@@ -545,6 +546,8 @@ footer{border-top:1px solid var(--line);padding-top:20px;font-family:"IBM Plex M
   <ul class="plain">
     <li><b>이미 반영은 강한 앵커일 때만</b> — 약한 앵커에서 「B 가 있다」는 엉뚱한 절을 본 결과일 수 있다. 확신 없는 applied 는 거짓 영수증이다</li>
     <li><b>원문이 명시한 값은 유사값으로 대체하지 않는다</b> — 사람이 <code>3.2</code> 라고 썼는데 절에 <code>13.2</code> 만 있으면 A 는 미정이다. 사람의 말이 추론보다 위다</li>
+    <li><b>원문에 있다고 다 A 는 아니다</b> — 「3.2 에서 3.3 으로 올려 주세요. 4.0 은 유지.」의 <code>4.0</code> 은 지킬 값이다. 유지 표현이 붙은 값은 빼고, B 앞에 쓴 치환의 출발 값이 있으면 그 밖의 언급은 맥락으로 본다. 조사가 붙은 단위(<code>30초를</code> · <code>10초는</code>)도 원문에서는 떼어 읽는다 (<code>app/mrdoc/literals.py</code> 는 건드리지 않음)</li>
+    <li><b>B 가 이미 절에 있으면 추론하지 않는다</b> — 「타임아웃 60초, 재시도 간격 10초」에서 60초로 바꾸라는 의견의 남은 같은 종류 값(<code>10초</code>)은 건드리면 안 될 값일 수 있다. 확신 없는 편집 대신 그 값을 후보로 되묻는다</li>
     <li><b><code>create</code> + 치환은 모순</b> — 새로 만드는 내용에는 바꿀 현재 값이 없다</li>
     <li><b>막힌 의견은 3c 에 보내지 않는다</b> — 판정은 코드가 낸다(<a class="inline" href="#agents">3c 카드</a>)</li>
     <li><b>스펙 반려와 게이트 · 3c 재투입은 예산 2 를 공유하되, 에스컬레이션은 스펙 반려를 세지 않는다</b> — <a class="inline" href="#reinject">재투입 예산</a></li>
@@ -1021,9 +1024,9 @@ pipeline complete</pre>
   <p class="lede"><b>3회 별도 호출은 이 문장을 정면으로 뒤집는다.</b> 뒤집을 근거는 둘 있다.</p>
   <ol class="hl">
     <li><b>실측</b> — headless <code>claude -p</code> 에서 <code>--safe-mode</code> 가 <code>--agents</code> 를 무력화하고, <code>run_in_background</code> 기본값 탓에 서브에이전트 결과 회수가 <b>종료 코드 0인 채 조용히 실패</b>한다 (스파이크 3회 + 격리 프로브 4조합, 실호출 $2 소요).<span class="alt">단일 세션 오케스트레이션은 <b>실패가 관측되지 않는 구조</b>다</span></li>
-    <li><b>선례</b> — 나중에 설계된 mrdoc 이 이미 노드별 개별 <code>codex exec</code> 호출 + 산출물 파일 존재 검증으로 갔고(<code>app/mrdoc/satellites.py</code>), 그 판단이 <code>docs/mrdoc-pipeline.html</code> 에 문서화돼 있다.<span class="alt"><code>docs/mrdoc-migration-plan.md</code> §3-A2 도 「멀티턴이 불안정하면 <b>컨텍스트를 파일로 주입하는 단발 호출로 강등 가능</b>」이라고 이미 열어 뒀다</span></li>
+    <li><b>선례</b> — 나중에 설계된 mrdoc 이 이미 노드별 개별 <code>codex exec</code> 호출 + 산출물 파일 존재 검증으로 갔고(<code>app/mrdoc/satellites.py</code>), 그 판단이 <code>docs/mrdoc-pipeline.html</code> 에 문서화돼 있다.<span class="alt"><code>docs/archive/mrdoc-migration-plan.md</code> §3-A2 도 「멀티턴이 불안정하면 <b>컨텍스트를 파일로 주입하는 단발 호출로 강등 가능</b>」이라고 이미 열어 뒀다</span></li>
   </ol>
-  <div class="note">또한 <code>docs/mrdoc-migration-plan.md</code> §2 가 revise 루프를 <b>「변경 없이 유지」</b> 대상으로 명시했으므로 이 역시 뒤집어야 한다.</div>
+  <div class="note">또한 <code>docs/archive/mrdoc-migration-plan.md</code> §2 가 revise 루프를 <b>「변경 없이 유지」</b> 대상으로 명시했으므로 이 역시 뒤집어야 한다.</div>
   <div class="note"><b>판단: 뒤집는 것이 맞다.</b> 다만 이 저장소는 개정 이력(<code>[n] ... v4.x 개정</code>)과 <code>.orchestration/reports/</code> 영수증을 남기는 관행이 확립돼 있으므로, <b>v4.3 개정 + 영수증</b>을 착수와 같은 단위로 묶는다. 스모크 영수증은 <code>.orchestration/reports/smoke-staged-runner.md</code> 에 있다.</div>
 
   <h3 id="scope">코드 변경 범위</h3>
@@ -1100,7 +1103,7 @@ revise_clarify_limit             2</pre>
   </ul>
 
   <h4>회귀</h4>
-  <div class="note"><code>pytest</code> 전체 — <b>586 passed</b> (Python 3.13, 2026-09-27). v1 시점은 489 passed, 명시된 기준선은 <code>192 passed</code>(2026-08-11)였고, 증가분은 mrdoc · revise_workflow 스위트다. <code>tests/test_git_workspace.py</code> 는 <code>Path.read_text(newline=)</code> 때문에 <b>3.13 이상</b>에서만 돈다. <code>AI_RUNNER</code> 기본값이 그대로이므로 <code>stub</code> / <code>claude</code> 경로는 무영향이다.</div>
+  <div class="note"><code>pytest</code> 전체 — <b>597 passed</b> (Python 3.13, 2026-09-28). v1 시점은 489 passed, 명시된 기준선은 <code>192 passed</code>(2026-08-11)였고, 증가분은 mrdoc · revise_workflow 스위트다. <code>tests/test_git_workspace.py</code> 는 <code>Path.read_text(newline=)</code> 때문에 <b>3.13 이상</b>에서만 돈다. <code>AI_RUNNER</code> 기본값이 그대로이므로 <code>stub</code> / <code>claude</code> 경로는 무영향이다.</div>
 
   <h4>스모크 (v1 완료 · v1.1/v1.2 미실시)</h4>
   <div class="note"><b>3/3 통과 <span class="gate p">v1 · claude</span></b> — 원격 없는 스크래치 저장소에서 실 CLI · 실 git 으로 러너만 구동했다. 시나리오 1(앵커 있음) CLI 3회 · 아티팩트 8개 · 커밋 대상 2파일, 시나리오 2(대상 없음) CLI 1회 · 되물음 · 커밋 없음, 시나리오 3(재개) <b>CLI 0회</b>. 이 과정에서 프로덕션 결함 6건을 찾아 고쳤다 — <code>.orchestration/reports/smoke-staged-runner.md</code>.</div>
@@ -1124,9 +1127,9 @@ revise_clarify_limit             2</pre>
 </section>
 
 <footer>
-  <span>상태 v1.2 · 스펙 게이트 · codex exec — 2026-09-27 · 단위 586 passed · codex 실호출 스모크 미실시</span>
-  <span>원천 docs/revise-workflow-proposal.md · 영수증 .orchestration/reports/smoke-staged-runner.md</span>
-  <span>개정 필요 문서 2 — docs/mr-review-pipeline.html (:554 단일 세션 결정 → v4.3) · docs/mrdoc-migration-plan.md (§2 revise 「변경 없이 유지」)</span>
+  <span>상태 v1.2.1 · 스펙 게이트 · codex exec — 2026-09-28 · 단위 597 passed · codex 실호출 스모크 미실시</span>
+  <span>원천 docs/archive/revise-workflow-proposal.md · 영수증 .orchestration/reports/smoke-staged-runner.md</span>
+  <span>개정 필요 문서 2 — docs/mr-review-pipeline.html (:554 단일 세션 결정 → v4.3) · docs/archive/mrdoc-migration-plan.md (§2 revise 「변경 없이 유지」)</span>
 </footer>
 </main>
 </div>
