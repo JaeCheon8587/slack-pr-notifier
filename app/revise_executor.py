@@ -51,6 +51,7 @@ from app.config import Settings, get_settings, secret_value
 from app.db import get_connection, init_db, unapplied_opinions
 from app.gitlab_client import GitLabClient
 from app.ingest import _deliver_review_report
+from app.mrdoc import rail as mrdoc_rail
 from app.slack_client import SlackClient
 from app.state_machine import (
     MANUAL,
@@ -556,6 +557,7 @@ def _handle_ok(
                 diff_stat=stat_text,
                 compare_url=compare,
                 clarify=clarify,
+                head_moved=bool(new_sha and new_sha != old_sha),
             )
         )
     except Exception:
@@ -604,6 +606,7 @@ async def _notify_revise_success(
     diff_stat: str | None = None,
     compare_url: str | None = None,
     clarify: list[dict[str, Any]] | None = None,
+    head_moved: bool = False,
 ) -> None:
     """Re-notify a completed revise round with a brand-new Slack message.
 
@@ -640,51 +643,69 @@ async def _notify_revise_success(
     if new_ts:
         _update_slack_coordinates(conn, session_id, channel, new_ts)
 
-    # Same delivery experience as the open notification: a best-effort HTML
-    # report attached to the new round message's thread (report-...-rN-....html).
-    # The round summary/diff stat/unapplied reasons ride in the report's
-    # summary/key-changes/points-to-watch slots; the file context is fetched
-    # fresh from GitLab at the new head sha. Every failure is swallowed --
-    # the round notification itself is already final at this point.
-    if settings.report_html_enabled and new_ts:
-        try:
-            context = None
-            if settings.gitlab_token:
-                try:
-                    context = await GitLabClient(
-                        settings.gitlab_url,
-                        secret_value(settings.gitlab_token),
-                        verify_ssl=settings.gitlab_verify_ssl,
-                    ).fetch_mr_context(mr["project_id"], mr["iid"], mr["sha"])
-                except Exception:
-                    logger.warning(
-                        "Revise executor: round report context fetch failed (session=%s)",
-                        session_id,
-                        exc_info=True,
-                    )
-            review_like = SimpleNamespace(
-                summary=f"라운드 {round_number} 개선 완료 — {summary or '수정 요약 없음'}",
-                key_changes=diff_stat.splitlines() if diff_stat else [],
-                points_to_watch=[
-                    item.get("reason") or "(사유 없음)" for item in unapplied
-                ],
-            )
-            await _deliver_review_report(
-                settings,
-                mr,
-                review_like,
-                context,
-                {"channel": channel, "ts": new_ts},
-                session_id,
-                round_number=round_number,
-                client=client,
-            )
-        except Exception:
-            logger.warning(
-                "Revise executor: round report delivery failed (session=%s)",
-                session_id,
-                exc_info=True,
-            )
+    # Same delivery experience as the open notification — but md-dominant
+    # MRs must report through the mrdoc rail, exactly like ingest. The
+    # poller ignores our own bot commits (bot-actor echo), so the rail is
+    # started directly here when the round actually moved the head: its
+    # summary + report.html land in this round message's thread. MRs the
+    # mrdoc gate rejects (and rounds that changed nothing) keep the legacy
+    # round report. Every failure is swallowed -- the round notification
+    # itself is already final at this point.
+    if new_ts:
+        context: dict[str, Any] | None = None
+        if settings.gitlab_token:
+            try:
+                context = await GitLabClient(
+                    settings.gitlab_url,
+                    secret_value(settings.gitlab_token),
+                    verify_ssl=settings.gitlab_verify_ssl,
+                ).fetch_mr_context(mr["project_id"], mr["iid"], mr["sha"])
+            except Exception:
+                logger.warning(
+                    "Revise executor: round report context fetch failed (session=%s)",
+                    session_id,
+                    exc_info=True,
+                )
+        mrdoc_owned = head_moved and mrdoc_rail.handles_mr(settings, context)
+        if settings.report_html_enabled and not mrdoc_owned:
+            try:
+                review_like = SimpleNamespace(
+                    summary=f"라운드 {round_number} 개선 완료 — {summary or '수정 요약 없음'}",
+                    key_changes=diff_stat.splitlines() if diff_stat else [],
+                    points_to_watch=[
+                        item.get("reason") or "(사유 없음)" for item in unapplied
+                    ],
+                )
+                await _deliver_review_report(
+                    settings,
+                    mr,
+                    review_like,
+                    context,
+                    {"channel": channel, "ts": new_ts},
+                    session_id,
+                    round_number=round_number,
+                    client=client,
+                )
+            except Exception:
+                logger.warning(
+                    "Revise executor: round report delivery failed (session=%s)",
+                    session_id,
+                    exc_info=True,
+                )
+        if head_moved:
+            try:
+                mrdoc_rail.start_mrdoc_review(
+                    settings,
+                    mr,
+                    {"channel": channel, "ts": new_ts},
+                    context=context,
+                )
+            except Exception:
+                logger.warning(
+                    "Revise executor: mrdoc rail start failed (session=%s)",
+                    session_id,
+                    exc_info=True,
+                )
 
     if not old_ts or old_ts == new_ts:
         return
