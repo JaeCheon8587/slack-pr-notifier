@@ -86,8 +86,15 @@ OCCURRENCES_UNAVAILABLE = "unavailable"
 # --------------------------------------------------------------------------
 
 
+#: yaml's double-quoted escapes this subset speaks. A line break has to be
+#: one: the block parser reads a field per line, so a raw one splits the
+#: field and fails the whole artifact on read-back.
+_ESCAPES = {"\\": "\\\\", '"': '\\"', "\n": "\\n", "\r": "\\r"}
+_UNESCAPE = re.compile(r'\\(["\\nr])')
+
+
 def _quote(value: str) -> str:
-    escaped = value.replace("\\", "\\\\").replace('"', '\\"')
+    escaped = "".join(_ESCAPES.get(char, char) for char in value)
     return f'"{escaped}"'
 
 
@@ -99,7 +106,7 @@ def _render_scalar(value: object) -> str:
     if isinstance(value, int):
         return str(value)
     text = str(value)
-    return text if _SCALAR_SAFE.match(text) else _quote(text)
+    return text if _SCALAR_SAFE.fullmatch(text) else _quote(text)
 
 
 def _parse_scalar(text: str) -> object:
@@ -113,7 +120,10 @@ def _parse_scalar(text: str) -> object:
     if _INT.match(text):
         return int(text)
     if len(text) >= 2 and text[0] == '"' and text[-1] == '"':
-        return text[1:-1].replace('\\"', '"').replace("\\\\", "\\")
+        return _UNESCAPE.sub(
+            lambda found: {"n": "\n", "r": "\r"}.get(found.group(1), found.group(1)),
+            text[1:-1],
+        )
     return text
 
 

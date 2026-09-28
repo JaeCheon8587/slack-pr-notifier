@@ -576,6 +576,77 @@ def test_a_unit_value_is_resolved_to_the_sections_own_spelling() -> None:
     assert (entry.decision, entry.from_value) == ("ok", "30 초")
 
 
+def test_a_value_the_human_said_to_keep_is_never_a() -> None:
+    """'4.0 은 유지' — the one version the section still holds is not A."""
+
+    body = "3.2 에서 3.3 으로 올려 주세요. 4.0 은 유지."
+    tree = _section_tree("지원 버전: 3.3, 4.0")
+    spec, _, _ = _spec(
+        intent=_intent(수정방향="3.2 → 3.3", search_terms=("2. 설치 절차",)),
+        tree=tree,
+        body=body,
+    )
+    (entry,) = spec.entries
+    assert entry.decision == "already_applied"
+
+    # 3a picking the kept value itself is a spec error, not a swap of 4.0.
+    spec, _, _ = _spec(
+        intent=_intent(수정방향="4.0 → 3.3", search_terms=("2. 설치 절차",)),
+        tree=tree,
+        body=body,
+    )
+    (entry,) = spec.entries
+    assert entry.decision == "spec_error"
+    assert "'4.0'" in entry.notes[0]
+
+
+def test_a_kept_unit_glued_to_its_particle_is_never_a() -> None:
+    """'10초는 그대로' — glued to its particle, and still held back."""
+
+    spec, _, _ = _spec(
+        intent=_intent(수정방향="30초 → 60초", search_terms=("2. 설치 절차",)),
+        tree=_section_tree("타임아웃 60초, 재시도 간격 10초"),
+        body="타임아웃 30초를 60초로. 재시도 간격 10초는 그대로.",
+    )
+    (entry,) = spec.entries
+    assert entry.decision == "already_applied"
+
+
+def test_a_section_that_already_reads_b_asks_instead_of_inferring() -> None:
+    """B is there; the lone other value may be one the edit must not touch."""
+
+    spec, _, _ = _spec(
+        intent=_intent(수정방향="30초 → 60초", search_terms=("2. 설치 절차",)),
+        tree=_section_tree("타임아웃 60초, 재시도 간격 10초"),
+        body="타임아웃을 60초로 늘려 주세요.",
+    )
+    (entry,) = spec.entries
+    assert entry.decision == "clarify"
+    assert entry.a_candidates == ("10초",)
+    verdict = spec_verdict(entry, spec)
+    assert verdict.verdict == "unapplied" and "이미" in verdict.판정문
+
+
+def test_the_swaps_from_side_outranks_a_value_mentioned_elsewhere() -> None:
+    spec, _, _ = _spec(
+        intent=_intent(수정방향="3.1 → 3.3", search_terms=("2. 설치 절차",)),
+        tree=_section_tree("지원 버전: 3.2, 4.0"),
+        body="3.2 에서 3.3 으로 올려 주세요. 4.0 도 문서에 있습니다.",
+    )
+    (entry,) = spec.entries
+    assert (entry.decision, entry.from_value, entry.a_source) == ("ok", "3.2", "opinion")
+
+
+def test_a_current_value_in_its_own_sentence_is_still_the_humans() -> None:
+    spec, _, _ = _spec(
+        intent=_intent(수정방향="3.1 → 4.0", search_terms=("2. 설치 절차",)),
+        tree=_section_tree("요구 버전: 3.2"),
+        body="요구 버전이 3.2 로 되어 있네요. 4.0 으로 바꿔 주세요.",
+    )
+    (entry,) = spec.entries
+    assert (entry.decision, entry.from_value, entry.a_source) == ("ok", "3.2", "opinion")
+
+
 def test_a_non_swap_opinion_goes_through_unchecked() -> None:
     spec, _, _ = _spec(intent=_intent(수정방향="문장을 더 친절하게 다듬어라"))
     (entry,) = spec.entries

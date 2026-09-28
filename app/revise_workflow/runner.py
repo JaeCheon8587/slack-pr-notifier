@@ -757,13 +757,18 @@ def _assemble(round_: _Round) -> ReviseResult:
     for entry in spec.entries:
         if entry.decision != "clarify" or entry.host:
             continue
+        question = (
+            f"{entry.to_value!r}(으)로 바꿀 현재 값이 대상 절에 여럿입니다. 어느 값인가요?"
+            if len(entry.a_candidates) > 1
+            else (
+                f"대상 절에 {entry.to_value!r} 이 이미 있습니다. 아래 값도 "
+                f"{entry.to_value!r}(으)로 바꿀까요, 아니면 이미 반영된 건가요?"
+            )
+        )
         clarify.append(
             {
                 "opinion_id": entry.opinion_id,
-                "question": (
-                    f"{entry.to_value!r}(으)로 바꿀 현재 값이 대상 절에 여럿입니다. "
-                    "어느 값인가요?"
-                ),
+                "question": question,
                 "candidates": list(entry.a_candidates),
             }
         )

@@ -650,10 +650,12 @@ async def _notify_revise_success(
     # summary + report.html land in this round message's thread. MRs the
     # mrdoc gate rejects (and rounds that changed nothing) keep the legacy
     # round report. Every failure is swallowed -- the round notification
-    # itself is already final at this point.
+    # itself is already final at this point. The context is read only for
+    # the legacy report and its gate: the rail re-reads the file list itself
+    # once GitLab's MR head has caught up with the pushed sha.
     if new_ts:
         context: dict[str, Any] | None = None
-        if settings.gitlab_token:
+        if settings.gitlab_token and settings.report_html_enabled:
             try:
                 context = await GitLabClient(
                     settings.gitlab_url,
@@ -667,7 +669,8 @@ async def _notify_revise_success(
                     exc_info=True,
                 )
         mrdoc_owned = head_moved and mrdoc_rail.handles_mr(settings, context)
-        if settings.report_html_enabled and not mrdoc_owned:
+        legacy = settings.report_html_enabled and not mrdoc_owned
+        if legacy:
             try:
                 review_like = SimpleNamespace(
                     summary=f"라운드 {round_number} 개선 완료 — {summary or '수정 요약 없음'}",
@@ -692,13 +695,16 @@ async def _notify_revise_success(
                     session_id,
                     exc_info=True,
                 )
-        if head_moved:
+        # A failed context fetch already fell back to the legacy report; the
+        # rail's own gate would add a second report for the same round.
+        if head_moved and not (legacy and context is None):
             try:
                 mrdoc_rail.start_mrdoc_review(
                     settings,
                     mr,
                     {"channel": channel, "ts": new_ts},
                     context=context,
+                    expected_sha=mr["sha"],
                 )
             except Exception:
                 logger.warning(
