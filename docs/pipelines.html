@@ -1,0 +1,695 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>*,*::before,*::after{box-sizing:border-box}body{margin:0}img{max-width:100%}</style>
+<title>MR 리뷰 봇 파이프라인</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@500;600&family=IBM+Plex+Sans+KR:wght@400;500;700&display=swap">
+<style>
+:root {
+  --ground: #f2f4f3;
+  --paper: #ffffff;
+  --ink: #17201e;
+  --ink-2: #48534f;
+  --ink-3: #7b8683;
+  --rule: #d9dfdc;
+  --edge: #8d9895;
+  --tool-edge: #9aa5a2;
+  --llm: #6a4cc4;
+  --llm-soft: #efeafd;
+  --mw: #2f5b7c;
+  --mw-soft: #e6eef4;
+  --bot: #1d7a62;
+  --bot-soft: #e2f3ed;
+  --review: #b05e12;
+  --review-soft: #f8ecde;
+  --revise: #8c3a61;
+  --revise-soft: #f6e6ee;
+  --warn: #b3261e;
+  --warn-soft: #fbe9e7;
+  --good: #2e7d4f;
+  --good-soft: #e5f3ea;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --ground: #121615;
+    --paper: #1a201e;
+    --ink: #e5eae8;
+    --ink-2: #b1bbb8;
+    --ink-3: #83908c;
+    --rule: #2c3431;
+    --edge: #6d7a76;
+    --tool-edge: #5f6c68;
+    --llm: #a88ff5;
+    --llm-soft: #28213d;
+    --mw: #86aecb;
+    --mw-soft: #1b2833;
+    --bot: #5cc4a7;
+    --bot-soft: #16302a;
+    --review: #e6a063;
+    --review-soft: #33261a;
+    --revise: #dc8ab0;
+    --revise-soft: #33202a;
+    --warn: #ff8f85;
+    --warn-soft: #3a1f1c;
+    --good: #72c995;
+    --good-soft: #17301f;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --ground: #121615;
+  --paper: #1a201e;
+  --ink: #e5eae8;
+  --ink-2: #b1bbb8;
+  --ink-3: #83908c;
+  --rule: #2c3431;
+  --edge: #6d7a76;
+  --tool-edge: #5f6c68;
+  --llm: #a88ff5;
+  --llm-soft: #28213d;
+  --mw: #86aecb;
+  --mw-soft: #1b2833;
+  --bot: #5cc4a7;
+  --bot-soft: #16302a;
+  --review: #e6a063;
+  --review-soft: #33261a;
+  --revise: #dc8ab0;
+  --revise-soft: #33202a;
+  --warn: #ff8f85;
+  --warn-soft: #3a1f1c;
+  --good: #72c995;
+  --good-soft: #17301f;
+}
+
+body {
+  background: var(--ground);
+  color: var(--ink);
+  font: 16px/1.7 "IBM Plex Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", "Noto Sans KR", sans-serif;
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+  padding-inline: 16px;
+  padding-block: 0 64px;
+}
+.page { max-width: 1000px; margin: 0 auto; }
+code, .mono { font-family: "IBM Plex Mono", ui-monospace, Consolas, monospace; font-size: .9em; }
+:focus-visible { outline: 2px solid var(--mw); outline-offset: 2px; }
+
+/* ---------- header ---------- */
+header { padding-block: 48px 28px; display: grid; gap: 14px; }
+.eyebrow { margin: 0; font-size: 12.5px; letter-spacing: .08em; color: var(--ink-3); }
+h1 { margin: 0; font-size: clamp(30px, 5vw, 40px); line-height: 1.2; letter-spacing: -.01em; text-wrap: balance; }
+.lead { margin: 0; color: var(--ink-2); font-size: 17px; max-width: 42em; }
+.lead b { color: var(--ink); }
+.legend { display: flex; flex-wrap: wrap; gap: 8px 20px; margin: 4px 0 0; padding: 0; list-style: none; font-size: 13.5px; color: var(--ink-2); }
+.legend li { display: flex; align-items: center; gap: 8px; }
+.sw { width: 22px; height: 14px; border-radius: 4px; background: var(--paper); border: 1.5px solid var(--tool-edge); }
+.sw.llm { background: var(--llm-soft); border: 2px solid var(--llm); }
+.sw.back { width: 26px; height: 0; border: 0; border-top: 2px dashed var(--ink-3); border-radius: 0; }
+
+nav.agenda { border-block: 1px solid var(--rule); }
+nav.agenda ol { display: flex; flex-wrap: wrap; gap: 4px 6px; margin: 0; padding: 10px 0; list-style: none; }
+nav.agenda a { display: inline-flex; gap: 6px; align-items: baseline; padding: 3px 10px; border-radius: 6px; color: var(--ink-2); text-decoration: none; font-size: 14px; }
+nav.agenda a:hover { background: var(--paper); color: var(--ink); }
+nav.agenda b { font: 600 12px/1 "IBM Plex Mono", ui-monospace, monospace; color: var(--ink-3); }
+
+/* ---------- sections ---------- */
+section { padding-block: 52px 0; display: grid; gap: 18px; }
+.sh { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 4px 14px; align-items: baseline; }
+.no { font: 600 13px/1 "IBM Plex Mono", ui-monospace, monospace; color: var(--c, var(--ink-3)); padding-top: 4px; }
+h2 { margin: 0; font-size: clamp(22px, 3.4vw, 27px); line-height: 1.3; text-wrap: balance; }
+.sh .role { grid-column: 2; margin: 0; color: var(--ink-2); max-width: 46em; }
+.sh .role b { color: var(--ink); }
+.flag { display: inline-block; margin-left: 10px; vertical-align: 3px; font-size: 12.5px; font-weight: 700; padding: 2px 10px; border-radius: 999px; background: var(--warn-soft); color: var(--warn); }
+#s3 { --c: var(--mw); }
+#s4 { --c: var(--bot); }
+#s5 { --c: var(--review); }
+#s6 { --c: var(--revise); }
+
+/* ---------- figure / svg ---------- */
+.fig { background: var(--paper); border: 1px solid var(--rule); border-radius: 12px; padding: 18px 16px 14px; overflow-x: auto; }
+.fig svg { display: block; width: 100%; min-width: 720px; height: auto; }
+.fig .cap { margin: 10px 2px 0; font-size: 13.5px; color: var(--ink-3); }
+svg text { font-family: "IBM Plex Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif; }
+svg .nid { font-family: "IBM Plex Mono", ui-monospace, Consolas, monospace; font-size: 13.5px; font-weight: 600; fill: var(--ink); }
+svg .nsub { font-size: 11.5px; fill: var(--ink-3); }
+svg .title { font-size: 15px; font-weight: 700; }
+svg .lbl { font-size: 11.5px; fill: var(--ink-2); }
+svg .grp { font-size: 11.5px; font-weight: 600; letter-spacing: .06em; fill: var(--ink-3); }
+svg .ltag { font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 9.5px; font-weight: 600; fill: var(--llm); letter-spacing: .06em; }
+svg .tool { fill: var(--paper); stroke: var(--tool-edge); stroke-width: 1.5; }
+svg .llm { fill: var(--llm-soft); stroke: var(--llm); stroke-width: 2; }
+svg .ext { fill: var(--ground); stroke: var(--tool-edge); stroke-width: 1.5; }
+svg .ext-line { fill: none; stroke: var(--tool-edge); stroke-width: 1.5; }
+svg .mw-box { fill: var(--mw-soft); stroke: var(--mw); stroke-width: 2; }
+svg .mw-chip { fill: var(--paper); stroke: var(--mw); stroke-width: 1; stroke-opacity: .5; }
+svg .bot-box { fill: var(--bot-soft); stroke: var(--bot); stroke-width: 2; }
+svg .mr-box { fill: var(--review-soft); stroke: var(--review); stroke-width: 2; }
+svg .rv-box { fill: var(--revise-soft); stroke: var(--revise); stroke-width: 2; }
+svg .out-mr { fill: var(--review-soft); stroke: var(--review); stroke-width: 1.5; }
+svg .out-rv { fill: var(--revise-soft); stroke: var(--revise); stroke-width: 1.5; }
+svg .dash { stroke-dasharray: 5 4; }
+svg .c-mw { fill: var(--mw); }
+svg .c-bot { fill: var(--bot); }
+svg .c-mr { fill: var(--review); }
+svg .c-rv { fill: var(--revise); }
+svg .e { fill: none; stroke: var(--edge); stroke-width: 1.6; }
+svg .e-mr { fill: none; stroke: var(--review); stroke-width: 1.6; }
+svg .e-rv { fill: none; stroke: var(--revise); stroke-width: 1.6; }
+svg .bracket { stroke: var(--rule); stroke-width: 1.5; }
+.ah { fill: var(--edge); }
+.ah-mr { fill: var(--review); }
+.ah-rv { fill: var(--revise); }
+
+/* ---------- cards ---------- */
+.nodes { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+@media (max-width: 720px) { .nodes { grid-template-columns: minmax(0, 1fr); } }
+.node { background: var(--paper); border: 1px solid var(--rule); border-radius: 10px; padding: 12px 14px; display: grid; gap: 4px; }
+.node.is-llm { border-color: color-mix(in srgb, var(--llm) 45%, var(--rule)); background: color-mix(in srgb, var(--llm-soft) 55%, var(--paper)); }
+.node .top { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; }
+.node .id { font: 600 14px/1.3 "IBM Plex Mono", ui-monospace, monospace; }
+.node .art { margin-left: auto; font: 500 12px/1.3 "IBM Plex Mono", ui-monospace, monospace; color: var(--ink-3); }
+.node p { margin: 0; font-size: 14.5px; color: var(--ink-2); }
+.k { font-size: 11.5px; font-weight: 700; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--tool-edge); color: var(--ink-2); }
+.k.llm { border-color: var(--llm); color: var(--llm); }
+
+/* ---------- 01 overview ---------- */
+.facts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+@media (max-width: 760px) { .facts { grid-template-columns: minmax(0, 1fr); } }
+.fact { background: var(--paper); border: 1px solid var(--rule); border-radius: 10px; padding: 14px 16px; display: grid; gap: 6px; align-content: start; }
+.fact h3 { margin: 0; font-size: 13px; letter-spacing: .06em; color: var(--ink-3); font-weight: 600; }
+.fact p { margin: 0; font-size: 15px; color: var(--ink-2); }
+.fact ul { margin: 0; padding: 0; list-style: none; display: grid; gap: 4px; font-size: 14.5px; color: var(--ink-2); }
+.fact li { display: flex; gap: 8px; align-items: baseline; }
+.st { font-size: 11.5px; font-weight: 700; padding: 0 7px; border-radius: 999px; white-space: nowrap; }
+.st.on { background: var(--good-soft); color: var(--good); }
+.st.off { background: var(--warn-soft); color: var(--warn); }
+
+/* ---------- 02 steps ---------- */
+.steps { margin: 0; padding: 0; list-style: none; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+@media (max-width: 760px) { .steps { grid-template-columns: minmax(0, 1fr); } }
+.steps li { display: grid; grid-template-columns: 28px minmax(0, 1fr); gap: 10px; align-items: start; font-size: 15px; color: var(--ink-2); }
+.steps .n { font: 600 13px/28px "IBM Plex Mono", ui-monospace, monospace; text-align: center; width: 28px; height: 28px; border-radius: 50%; background: var(--ink); color: var(--ground); }
+.steps b { color: var(--ink); }
+
+/* ---------- 03 states ---------- */
+.states { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 14px; color: var(--ink-2); }
+.states code { background: var(--paper); border: 1px solid var(--rule); border-radius: 6px; padding: 1px 8px; font-size: 13px; color: var(--ink); }
+.states .lab { color: var(--ink-3); margin-right: 4px; }
+
+/* ---------- 04 slack bot ---------- */
+.msgs { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+@media (max-width: 860px) { .msgs { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 480px) { .msgs { grid-template-columns: minmax(0, 1fr); } }
+.msg { background: var(--paper); border: 1px solid var(--rule); border-top: 3px solid var(--bot); border-radius: 10px; padding: 12px 14px; display: grid; gap: 4px; align-content: start; }
+.msg h3 { margin: 0; font-size: 15px; }
+.msg p { margin: 0; font-size: 14px; color: var(--ink-2); }
+.chain { background: var(--paper); border: 1px solid var(--rule); border-radius: 10px; padding: 14px 16px; display: grid; gap: 10px; }
+.chain h3 { margin: 0; font-size: 14px; color: var(--ink-3); font-weight: 600; letter-spacing: .04em; }
+.chain ol { margin: 0; padding: 0; list-style: none; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.chain li { font-size: 14px; padding: 4px 10px; border-radius: 8px; background: var(--ground); border: 1px solid var(--rule); color: var(--ink); }
+.chain li.btn { background: var(--bot-soft); border-color: var(--bot); color: var(--bot); font-weight: 700; }
+.chain li.end { background: var(--ink); border-color: var(--ink); color: var(--ground); font-weight: 600; }
+.chain .ar { border: 0; background: none; padding: 0; color: var(--ink-3); }
+
+.note { margin: 0; font-size: 14px; color: var(--ink-2); border-left: 3px solid var(--c, var(--rule)); padding: 2px 0 2px 12px; }
+.note b { color: var(--ink); }
+
+/* ---------- 07 retro ---------- */
+.retro { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+@media (max-width: 860px) { .retro { grid-template-columns: minmax(0, 1fr); } }
+.col { background: var(--paper); border: 1px solid var(--rule); border-radius: 10px; padding: 16px 18px; display: grid; gap: 10px; align-content: start; }
+.col h3 { margin: 0; font-size: 16px; display: flex; align-items: center; gap: 8px; }
+.col h3::before { content: ""; width: 10px; height: 10px; border-radius: 3px; background: var(--dot); }
+.col.good { --dot: var(--good); }
+.col.hard { --dot: var(--review); }
+.col.todo { --dot: var(--warn); }
+.col ul { margin: 0; padding-left: 18px; display: grid; gap: 7px; font-size: 14.5px; color: var(--ink-2); }
+.col li b { color: var(--ink); font-weight: 600; }
+
+footer { margin-top: 56px; padding-top: 16px; border-top: 1px solid var(--rule); font-size: 13px; color: var(--ink-3); }
+</style>
+</head>
+<body>
+
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+  <defs>
+    <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="ah"/></marker>
+    <marker id="ah-mr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="ah-mr"/></marker>
+    <marker id="ah-rv" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="ah-rv"/></marker>
+  </defs>
+</svg>
+
+<div class="page">
+
+<header>
+  <p class="eyebrow">개발자 공유 · 코드 기준 2026-09-28 · feature/python-middleware</p>
+  <h1>MR 리뷰 봇 파이프라인</h1>
+  <p class="lead">GitLab MR의 문서 변경을 <b>Slack에서 리뷰하고, 의견대로 고치고, 승인까지</b> 처리하는 서버입니다. 미들웨어 위에 파이프라인 두 개가 올라가 있습니다.</p>
+  <ul class="legend" aria-label="그림 읽는 법">
+    <li><span class="sw"></span>도구 노드 · 결정적 코드</li>
+    <li><span class="sw llm"></span>LLM 노드 · codex 호출</li>
+    <li><span class="sw back"></span>되돌림 경로</li>
+  </ul>
+</header>
+
+<nav class="agenda" aria-label="목차">
+  <ol>
+    <li><a href="#s1"><b>01</b>개요</a></li>
+    <li><a href="#s2"><b>02</b>전체 흐름</a></li>
+    <li><a href="#s3"><b>03</b>미들웨어</a></li>
+    <li><a href="#s4"><b>04</b>슬랙 봇</a></li>
+    <li><a href="#s5"><b>05</b>MR 리뷰 파이프라인</a></li>
+    <li><a href="#s6"><b>06</b>리바이스 파이프라인</a></li>
+    <li><a href="#s7"><b>07</b>회고</a></li>
+  </ol>
+</nav>
+
+<!-- 01 개요 -->
+<section id="s1">
+  <div class="sh">
+    <span class="no">01</span><h2>개요</h2>
+  </div>
+  <div class="facts">
+    <div class="fact">
+      <h3>하는 일</h3>
+      <p>MR이 올라오면 문서 변경을 섹션 단위로 분석한 리포트를 Slack에 붙이고, 리뷰어 의견대로 문서를 고쳐 다시 올리고, 버튼으로 승인 · 머지합니다.</p>
+    </div>
+    <div class="fact">
+      <h3>만든 이유</h3>
+      <p>줄 단위 diff로는 문서가 무엇이 바뀌었는지 보이지 않고, 리뷰와 수정 요청 왕복을 사람이 매번 GitLab과 메신저를 오가며 합니다.</p>
+    </div>
+    <div class="fact">
+      <h3>지금 구성</h3>
+      <ul>
+        <li><span class="st on">사용</span>GitLab 폴러 + Slack Socket Mode</li>
+        <li><span class="st on">켜짐</span>AI 요약 · MR 리뷰(mrdoc)</li>
+        <li><span class="st off">꺼짐</span>리바이스 (<code>AI_RUNNER=stub</code>)</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- 02 전체 흐름 -->
+<section id="s2">
+  <div class="sh">
+    <span class="no">02</span><h2>전체 흐름</h2>
+    <p class="role">모든 연결은 서버가 먼저 엽니다. GitLab은 주기적으로 조회하고, Slack에는 소켓으로 붙습니다.</p>
+  </div>
+  <figure class="fig" style="margin:0">
+    <svg viewBox="0 0 1000 380" role="img" aria-labelledby="f2t">
+      <title id="f2t">GitLab, 미들웨어, 슬랙 봇, 리뷰어와 두 파이프라인의 연결</title>
+      <!-- GitLab -->
+      <path class="ext" d="M20,122 a65,12 0 0,1 130,0 v70 a65,12 0 0,1 -130,0 z"/>
+      <path class="ext-line" d="M20,122 a65,12 0 0,0 130,0"/>
+      <text x="85" y="166" text-anchor="middle" class="title" fill="currentColor" style="fill:var(--ink)">GitLab</text>
+      <text x="85" y="185" text-anchor="middle" class="nsub">MR · 저장소</text>
+
+      <!-- middleware -->
+      <rect class="mw-box" x="250" y="78" width="360" height="152" rx="14"/>
+      <text x="268" y="106" class="title c-mw">미들웨어</text>
+      <text x="592" y="106" text-anchor="end" class="nsub">FastAPI · 프로세스 1개</text>
+      <rect class="mw-chip" x="265" y="124" width="105" height="92" rx="9"/>
+      <text x="317" y="150" text-anchor="middle" class="lbl" style="font-weight:700;fill:var(--ink)">입구</text>
+      <text x="317" y="172" text-anchor="middle" class="nsub">GitLab 폴러</text>
+      <text x="317" y="190" text-anchor="middle" class="nsub">Socket Mode</text>
+      <rect class="mw-chip" x="378" y="124" width="105" height="92" rx="9"/>
+      <text x="430" y="150" text-anchor="middle" class="lbl" style="font-weight:700;fill:var(--ink)">상태</text>
+      <text x="430" y="172" text-anchor="middle" class="nsub">상태 기계</text>
+      <text x="430" y="190" text-anchor="middle" class="nsub">SQLite</text>
+      <rect class="mw-chip" x="491" y="124" width="105" height="92" rx="9"/>
+      <text x="543" y="150" text-anchor="middle" class="lbl" style="font-weight:700;fill:var(--ink)">실행</text>
+      <text x="543" y="172" text-anchor="middle" class="nsub">리바이스 큐</text>
+      <text x="543" y="190" text-anchor="middle" class="nsub">mrdoc 스레드</text>
+
+      <!-- GitLab <-> middleware -->
+      <path class="e" d="M250,140 H154" marker-end="url(#ah)"/>
+      <text x="202" y="131" text-anchor="middle" class="lbl">조회 · 머지 · push</text>
+      <path class="e dash" d="M152,186 H248" marker-end="url(#ah)"/>
+      <text x="200" y="204" text-anchor="middle" class="lbl">MR 상태</text>
+
+      <!-- slack bot -->
+      <rect class="bot-box" x="710" y="108" width="130" height="94" rx="12"/>
+      <text x="775" y="150" text-anchor="middle" class="title c-bot">슬랙 봇</text>
+      <text x="775" y="171" text-anchor="middle" class="nsub">메시지 · 버튼</text>
+      <path class="e" d="M610,140 H706" marker-end="url(#ah)"/>
+      <text x="660" y="131" text-anchor="middle" class="lbl">알림 · 리포트</text>
+      <path class="e" d="M708,186 H614" marker-end="url(#ah)"/>
+      <text x="660" y="204" text-anchor="middle" class="lbl">버튼 입력</text>
+
+      <!-- reviewer -->
+      <rect class="ext" x="918" y="124" width="70" height="62" rx="31"/>
+      <text x="953" y="160" text-anchor="middle" class="lbl" style="font-weight:700;fill:var(--ink)">리뷰어</text>
+      <path class="e" d="M840,145 H914" marker-end="url(#ah)"/>
+      <text x="878" y="136" text-anchor="middle" class="lbl">메시지</text>
+      <path class="e" d="M916,170 H844" marker-end="url(#ah)"/>
+      <text x="880" y="188" text-anchor="middle" class="lbl">버튼</text>
+
+      <!-- pipelines -->
+      <rect class="mr-box" x="250" y="292" width="170" height="68" rx="12"/>
+      <text x="335" y="321" text-anchor="middle" class="title c-mr">MR 리뷰</text>
+      <text x="335" y="342" text-anchor="middle" class="nsub">10노드 · LLM 3 → 리포트</text>
+      <rect class="rv-box" x="440" y="292" width="170" height="68" rx="12"/>
+      <text x="525" y="321" text-anchor="middle" class="title c-rv">리바이스</text>
+      <text x="525" y="342" text-anchor="middle" class="nsub">8노드 · LLM 3 → 커밋</text>
+      <path class="e-mr" d="M335,230 V288" marker-end="url(#ah-mr)"/>
+      <text x="345" y="264" class="lbl">MR 발견 · 라운드 후</text>
+      <path class="e-rv" d="M525,230 V288" marker-end="url(#ah-rv)"/>
+      <text x="535" y="264" class="lbl">변경 요청</text>
+
+      <text x="20" y="40" class="grp">모든 화살표는 서버가 먼저 여는 연결입니다 · 웹훅 · Slack HTTP 미사용</text>
+    </svg>
+  </figure>
+  <ol class="steps">
+    <li><span class="n">1</span><span><b>폴러가 새 MR을 발견하면</b> 세션을 만들고 Slack 알림을 보냅니다. MR 리뷰 파이프라인이 리포트를 알림 스레드에 붙입니다.</span></li>
+    <li><span class="n">2</span><span><b>[변경 요청]</b>을 누르면 리바이스가 문서를 고쳐 커밋 · push하고, 새 라운드 알림과 리포트가 옵니다. MR당 최대 3라운드.</span></li>
+    <li><span class="n">3</span><span><b>[승인]</b>을 누르면 리뷰어가 본 커밋으로 고정해 머지합니다. 머지는 사람 승인으로만 일어납니다.</span></li>
+  </ol>
+</section>
+
+<!-- 03 미들웨어 -->
+<section id="s3">
+  <div class="sh">
+    <span class="no">03</span><h2>미들웨어</h2>
+    <p class="role"><b>이벤트를 받고, MR마다 상태를 기록하고, 파이프라인을 실행하는 서버</b>입니다. 모든 상태 변경은 상태 기계 한 곳을 거칩니다.</p>
+  </div>
+  <figure class="fig" style="margin:0">
+    <svg viewBox="0 0 840 312" role="img" aria-labelledby="f3t">
+      <title id="f3t">미들웨어 모듈 구성</title>
+      <text x="95" y="26" text-anchor="middle" class="grp">입구</text>
+      <text x="305" y="26" text-anchor="middle" class="grp">이벤트 처리</text>
+      <text x="515" y="26" text-anchor="middle" class="grp">상태</text>
+      <text x="725" y="26" text-anchor="middle" class="grp">실행</text>
+
+      <rect class="tool" x="20" y="46" width="150" height="58" rx="10"/>
+      <text x="95" y="71" text-anchor="middle" class="nid">gitlab_poller</text>
+      <text x="95" y="90" text-anchor="middle" class="nsub">GitLab 60초 조회</text>
+      <rect class="tool" x="20" y="176" width="150" height="58" rx="10"/>
+      <text x="95" y="201" text-anchor="middle" class="nid">slack_socket</text>
+      <text x="95" y="220" text-anchor="middle" class="nsub">Slack Socket Mode</text>
+
+      <rect class="tool" x="230" y="46" width="150" height="58" rx="10"/>
+      <text x="305" y="71" text-anchor="middle" class="nid">ingest</text>
+      <text x="305" y="90" text-anchor="middle" class="nsub">MR 이벤트 처리</text>
+      <rect class="tool" x="230" y="176" width="150" height="58" rx="10"/>
+      <text x="305" y="201" text-anchor="middle" class="nid">slack_dispatch</text>
+      <text x="305" y="220" text-anchor="middle" class="nsub">버튼 · 모달 처리</text>
+
+      <path class="mw-box" d="M440,110 a75,11 0 0,1 150,0 v54 a75,11 0 0,1 -150,0 z"/>
+      <path class="ext-line" style="stroke:var(--mw)" d="M440,110 a75,11 0 0,0 150,0"/>
+      <text x="515" y="143" text-anchor="middle" class="nid">state_machine</text>
+      <text x="515" y="161" text-anchor="middle" class="nsub">+ SQLite</text>
+
+      <rect class="tool" x="440" y="202" width="150" height="54" rx="10"/>
+      <text x="515" y="225" text-anchor="middle" class="nid">sweeper</text>
+      <text x="515" y="243" text-anchor="middle" class="nsub">시간 초과 → manual</text>
+
+      <rect class="tool" x="650" y="46" width="150" height="58" rx="10"/>
+      <text x="725" y="71" text-anchor="middle" class="nid">mrdoc.rail</text>
+      <text x="725" y="90" text-anchor="middle" class="nsub">MR 리뷰 실행</text>
+      <rect class="tool" x="650" y="176" width="150" height="58" rx="10"/>
+      <text x="725" y="201" text-anchor="middle" class="nid">revise_executor</text>
+      <text x="725" y="220" text-anchor="middle" class="nsub">리바이스 큐 · 워커</text>
+
+      <path class="e" d="M170,75 H226" marker-end="url(#ah)"/>
+      <path class="e" d="M170,205 H226" marker-end="url(#ah)"/>
+      <path class="e" d="M380,62 H646" marker-end="url(#ah)"/>
+      <text x="515" y="54" text-anchor="middle" class="lbl">MR 발견</text>
+      <path class="e" d="M305,234 V286 H725 V238" marker-end="url(#ah)"/>
+      <text x="515" y="279" text-anchor="middle" class="lbl">변경 요청</text>
+      <path class="e" d="M380,90 L438,120" marker-end="url(#ah)"/>
+      <path class="e" d="M380,190 L438,160" marker-end="url(#ah)"/>
+      <path class="e" d="M650,190 L594,160" marker-end="url(#ah)"/>
+      <path class="e" d="M515,202 V180" marker-end="url(#ah)"/>
+      <path class="e dash" d="M725,176 V108" marker-end="url(#ah)"/>
+      <text x="734" y="146" class="lbl">라운드 후</text>
+    </svg>
+  </figure>
+  <p class="states"><span class="lab">세션 상태</span><code>reviewing</code>리뷰 대기 · <code>revising</code>수정 중 · <code>merging</code>머지 확인 중 · <code>manual</code>사람 처리 · <code>merged</code>완료</p>
+  <div class="nodes">
+    <div class="node"><div class="top"><span class="id">gitlab_poller</span></div><p>60초마다 GitLab API로 열린 MR을 조회해 DB와 비교합니다. 새 MR, 커밋 변경, 닫힘 · 머지, 다시 열림을 찾아 ingest로 넘깁니다.</p></div>
+    <div class="node"><div class="top"><span class="id">slack_socket</span></div><p>Slack에 WebSocket으로 붙어 버튼 · 모달 입력을 받고, 바로 응답한 뒤 slack_dispatch로 넘깁니다.</p></div>
+    <div class="node"><div class="top"><span class="id">ingest</span></div><p>MR 이벤트를 처리합니다. 세션 생성, 알림 발송, MR 리뷰 기동, 사람 push와 외부 머지 · 닫힘 처리.</p></div>
+    <div class="node"><div class="top"><span class="id">slack_dispatch</span></div><p>[승인]은 머지 절차로, [변경 요청]은 의견을 저장한 뒤 리바이스 큐로 보냅니다.</p></div>
+    <div class="node"><div class="top"><span class="id">state_machine · db</span></div><p>허용된 전이만 CAS로 바꾸고, 모든 전이를 event_log에 남깁니다.</p></div>
+    <div class="node"><div class="top"><span class="id">revise_executor</span></div><p>리바이스 작업 큐와 워커 1개. 결과를 커밋 · push하고 라운드 알림을 보냅니다.</p></div>
+    <div class="node"><div class="top"><span class="id">mrdoc.rail</span></div><p>MR 리뷰를 백그라운드 스레드로 돌리고 결과를 알림 스레드에 올립니다.</p></div>
+    <div class="node"><div class="top"><span class="id">sweeper</span></div><p>머지나 수정이 제시간에 끝나지 않은 세션을 manual로 넘깁니다.</p></div>
+  </div>
+  <p class="note">코드에는 GitLab 웹훅(<code>gitlab_webhook</code>)과 Slack HTTP(<code>slack_actions</code>) 입구도 있습니다. 같은 처리기로 이어지지만 지금 구성에서는 쓰지 않습니다.</p>
+</section>
+
+<!-- 04 슬랙 봇 -->
+<section id="s4">
+  <div class="sh">
+    <span class="no">04</span><h2>슬랙 봇</h2>
+    <p class="role"><b>사람이 보는 화면</b>입니다. 메시지를 보내고 버튼 입력을 미들웨어로 넘깁니다. 버튼은 저장소에 매핑된 리뷰어만 누를 수 있습니다.</p>
+  </div>
+  <div class="msgs">
+    <div class="msg"><h3>MR 알림</h3><p>제목 · 브랜치 · 작성자, AI 요약, [Yes · 승인] [No · 변경 요청]</p></div>
+    <div class="msg"><h3>리포트</h3><p>알림 스레드에 mrdoc 리포트 파일과 요약</p></div>
+    <div class="msg"><h3>라운드 알림</h3><p>라운드마다 새 메시지. 변경 요약 · 미반영 목록, 이전 버튼은 회수</p></div>
+    <div class="msg"><h3>되물음</h3><p>고칠 곳 후보를 보여 주고 같은 [변경 요청] 버튼으로 답을 받음</p></div>
+  </div>
+  <div class="chain">
+    <h3>[승인] 절차</h3>
+    <ol>
+      <li class="btn">Yes · 승인</li><li class="ar" aria-hidden="true">→</li>
+      <li>확인창</li><li class="ar" aria-hidden="true">→</li>
+      <li>리뷰어 · 버튼 토큰 확인</li><li class="ar" aria-hidden="true">→</li>
+      <li>최신 커밋 일치</li><li class="ar" aria-hidden="true">→</li>
+      <li>상태 잠금</li><li class="ar" aria-hidden="true">→</li>
+      <li>커밋 고정 머지</li><li class="ar" aria-hidden="true">→</li>
+      <li class="end">merged</li>
+    </ol>
+  </div>
+  <div class="chain">
+    <h3>[변경 요청] 절차</h3>
+    <ol>
+      <li class="btn">No · 변경 요청</li><li class="ar" aria-hidden="true">→</li>
+      <li>의견 입력창</li><li class="ar" aria-hidden="true">→</li>
+      <li>저장 + MR 코멘트</li><li class="ar" aria-hidden="true">→</li>
+      <li>가드: 3라운드 · 사람 커밋</li><li class="ar" aria-hidden="true">→</li>
+      <li class="end">리바이스 큐</li>
+    </ol>
+  </div>
+</section>
+
+<!-- 05 MR 리뷰 -->
+<section id="s5">
+  <div class="sh">
+    <span class="no">05</span><h2>MR 리뷰 파이프라인</h2>
+    <p class="role"><b>문서 변경을 섹션 단위로 쪼개 분류하고 리포트로 만듭니다.</b> 변경 파일의 80% 이상이 .md / .mdx인 MR에서 돌고, 산출물 파일이 있으면 그 노드는 끝난 것으로 봅니다.</p>
+  </div>
+  <figure class="fig" style="margin:0">
+    <svg viewBox="0 0 1000 330" role="img" aria-labelledby="f5t">
+      <title id="f5t">MR 리뷰 파이프라인 10노드 DAG</title>
+      <text x="395" y="30" text-anchor="middle" class="grp">사실 추출 · 도구</text>
+      <line class="bracket" x1="20" y1="40" x2="770" y2="40"/>
+      <text x="882" y="30" text-anchor="middle" class="grp">설명 · LLM</text>
+      <line class="bracket" x1="800" y1="40" x2="965" y2="40"/>
+
+      <rect class="tool" x="20" y="56" width="165" height="58" rx="10"/>
+      <text x="102" y="81" text-anchor="middle" class="nid">changeset</text>
+      <text x="102" y="100" text-anchor="middle" class="nsub">변경 파일 · 줄 범위</text>
+      <rect class="tool" x="215" y="56" width="165" height="58" rx="10"/>
+      <text x="297" y="81" text-anchor="middle" class="nid">structure</text>
+      <text x="297" y="100" text-anchor="middle" class="nsub">섹션 짝짓기 → 유닛</text>
+      <rect class="tool" x="410" y="56" width="165" height="58" rx="10"/>
+      <text x="492" y="81" text-anchor="middle" class="nid">literals</text>
+      <text x="492" y="100" text-anchor="middle" class="nsub">값의 전후 차이</text>
+      <rect class="tool" x="605" y="56" width="165" height="58" rx="10"/>
+      <text x="687" y="81" text-anchor="middle" class="nid">excerpt</text>
+      <text x="687" y="100" text-anchor="middle" class="nsub">LLM용 원문 발췌</text>
+      <rect class="llm" x="800" y="56" width="165" height="58" rx="10"/>
+      <text x="955" y="70" text-anchor="end" class="ltag">LLM</text>
+      <text x="882" y="81" text-anchor="middle" class="nid">analysis</text>
+      <text x="882" y="100" text-anchor="middle" class="nsub">설명 · 분류 작성</text>
+
+      <path class="e" d="M185,85 H211" marker-end="url(#ah)"/>
+      <path class="e" d="M380,85 H406" marker-end="url(#ah)"/>
+      <path class="e" d="M575,85 H601" marker-end="url(#ah)"/>
+      <path class="e" d="M770,85 H796" marker-end="url(#ah)"/>
+      <path class="e" d="M882,114 V148 H90 V212" marker-end="url(#ah)"/>
+
+      <path class="e-mr dash" d="M255,216 V180 H930 V118" marker-end="url(#ah-mr)"/>
+      <text x="590" y="200" text-anchor="middle" class="lbl" style="fill:var(--review)">지적 · 금지어 · 빈 설명 → 재작성, 최대 2회</text>
+
+      <rect class="tool" x="20" y="216" width="140" height="58" rx="10"/>
+      <text x="90" y="241" text-anchor="middle" class="nid">levelcheck</text>
+      <text x="90" y="260" text-anchor="middle" class="nsub">분류 확정 · 금지어</text>
+      <rect class="llm" x="185" y="216" width="140" height="58" rx="10"/>
+      <text x="315" y="230" text-anchor="end" class="ltag">LLM</text>
+      <text x="255" y="241" text-anchor="middle" class="nid">verifier</text>
+      <text x="255" y="260" text-anchor="middle" class="nsub">설명 감사</text>
+      <rect class="llm" x="350" y="216" width="140" height="58" rx="10"/>
+      <text x="480" y="230" text-anchor="end" class="ltag">LLM</text>
+      <text x="420" y="241" text-anchor="middle" class="nid">themes</text>
+      <text x="420" y="260" text-anchor="middle" class="nsub">주제 묶기</text>
+      <rect class="tool" x="515" y="216" width="140" height="58" rx="10"/>
+      <text x="585" y="241" text-anchor="middle" class="nid">collect</text>
+      <text x="585" y="260" text-anchor="middle" class="nsub">합치기 · 집계</text>
+      <rect class="tool" x="680" y="216" width="140" height="58" rx="10"/>
+      <text x="750" y="241" text-anchor="middle" class="nid">render</text>
+      <text x="750" y="260" text-anchor="middle" class="nsub">리포트 생성</text>
+      <rect class="out-mr" x="845" y="216" width="140" height="58" rx="10"/>
+      <text x="915" y="241" text-anchor="middle" class="nid">report.html</text>
+      <text x="915" y="260" text-anchor="middle" class="nsub">+ Slack 요약</text>
+
+      <path class="e" d="M160,245 H181" marker-end="url(#ah)"/>
+      <path class="e" d="M325,245 H346" marker-end="url(#ah)"/>
+      <path class="e" d="M490,245 H511" marker-end="url(#ah)"/>
+      <path class="e" d="M655,245 H676" marker-end="url(#ah)"/>
+      <path class="e" d="M820,245 H841" marker-end="url(#ah)"/>
+
+      <line class="bracket" x1="20" y1="290" x2="325" y2="290"/>
+      <text x="172" y="310" text-anchor="middle" class="grp">검사</text>
+      <line class="bracket" x1="350" y1="290" x2="985" y2="290"/>
+      <text x="667" y="310" text-anchor="middle" class="grp">묶기 · 출력</text>
+    </svg>
+  </figure>
+  <div class="nodes">
+    <div class="node"><div class="top"><span class="id">changeset</span><span class="k">도구</span><span class="art">00-changeset</span></div><p>MR의 변경 파일과 변경 줄 범위를 정리합니다.</p></div>
+    <div class="node"><div class="top"><span class="id">structure</span><span class="k">도구</span><span class="art">05-structure</span></div><p>전후 문서를 섹션 트리로 만들어 짝짓고, 바뀐 섹션 하나를 변경 유닛 하나로 만듭니다.</p></div>
+    <div class="node"><div class="top"><span class="id">literals</span><span class="k">도구</span><span class="art">06-literals</span></div><p>유닛마다 숫자 · 버전 · 단위 · 키-값의 전후 차이를 뽑습니다.</p></div>
+    <div class="node"><div class="top"><span class="id">excerpt</span><span class="k">도구</span><span class="art">07-excerpt</span></div><p>LLM에 줄 원문 발췌를 만듭니다. 문서 본문이 들어가는 유일한 산출물입니다.</p></div>
+    <div class="node is-llm"><div class="top"><span class="id">analysis</span><span class="k llm">LLM</span><span class="art">20-analysis/</span></div><p>파일 묶음마다 유닛 설명, 분류 주장, 파일 요약을 씁니다.</p></div>
+    <div class="node"><div class="top"><span class="id">levelcheck</span><span class="k">도구</span><span class="art">30-levelcheck</span></div><p>분류를 도구 증거로 확정합니다. 값이 바뀌었으면 의미(값)로 올리고 평가 표현 금지어를 잡습니다.</p></div>
+    <div class="node is-llm"><div class="top"><span class="id">verifier</span><span class="k llm">LLM</span><span class="art">40-verifier</span></div><p>설명이 원문과 맞는지 유닛마다 판정하고 개수를 대조합니다. 고칠 대상은 FIX로 남깁니다.</p></div>
+    <div class="node is-llm"><div class="top"><span class="id">themes</span><span class="k llm">LLM</span><span class="art">45-themes</span></div><p>유닛 목록만 받아 주요 변경을 주제로 묶습니다.</p></div>
+    <div class="node"><div class="top"><span class="id">collect</span><span class="k">도구</span><span class="art">50-collect</span></div><p>모든 결과를 합치고 집계합니다. 리포트와 Slack 요약이 이 하나에서 나옵니다.</p></div>
+    <div class="node"><div class="top"><span class="id">render</span><span class="k">도구</span><span class="art">report.html</span></div><p>report.html과 Slack 요약 텍스트를 만듭니다.</p></div>
+  </div>
+  <p class="note"><b>재작성</b>이 실패하면 이전 결과로 복원한 뒤 리포트까지 진행합니다. 검증하지 못한 설명은 리포트에 "미검증"으로 표시합니다.</p>
+</section>
+
+<!-- 06 리바이스 -->
+<section id="s6">
+  <div class="sh">
+    <span class="no">06</span><h2>리바이스 파이프라인<span class="flag">현재 꺼짐 · 실사용 검증 전</span></h2>
+    <p class="role"><b>리뷰어 의견대로 문서를 고쳐 MR 브랜치에 커밋합니다.</b> LLM이 낸 결과는 다음 도구 노드가 검사하고, 걸리면 원인에 맞는 단계로 돌려보냅니다.</p>
+  </div>
+  <figure class="fig" style="margin:0">
+    <svg viewBox="0 0 1000 352" role="img" aria-labelledby="f6t">
+      <title id="f6t">리바이스 파이프라인 8노드 체인과 되돌림 경로</title>
+      <path class="e-rv dash" d="M315,72 V36 H922 V70" marker-end="url(#ah-rv)"/>
+      <path class="e-rv dash" d="M525,72 V36"/>
+      <text x="620" y="28" text-anchor="middle" class="lbl" style="fill:var(--revise)">대상 못 찾음 · 현재 값 후보가 여럿</text>
+
+      <rect class="llm" x="20" y="72" width="170" height="58" rx="10"/>
+      <text x="180" y="86" text-anchor="end" class="ltag">LLM</text>
+      <text x="105" y="97" text-anchor="middle" class="nid">intent</text>
+      <text x="105" y="116" text-anchor="middle" class="nsub">의견 구조화 (3a)</text>
+      <rect class="tool" x="230" y="72" width="170" height="58" rx="10"/>
+      <text x="315" y="97" text-anchor="middle" class="nid">anchor</text>
+      <text x="315" y="116" text-anchor="middle" class="nsub">고칠 섹션 찾기</text>
+      <rect class="tool" x="440" y="72" width="170" height="58" rx="10"/>
+      <text x="525" y="97" text-anchor="middle" class="nid">spec</text>
+      <text x="525" y="116" text-anchor="middle" class="nsub">스펙 대조 · A 확정</text>
+      <rect class="tool" x="650" y="72" width="170" height="58" rx="10"/>
+      <text x="735" y="97" text-anchor="middle" class="nid">impact</text>
+      <text x="735" y="116" text-anchor="middle" class="nsub">동반 수정 후보</text>
+      <rect class="out-rv dash" x="860" y="72" width="125" height="58" rx="10"/>
+      <text x="922" y="97" text-anchor="middle" class="nid">되물음</text>
+      <text x="922" y="116" text-anchor="middle" class="nsub">Slack으로 후보</text>
+
+      <path class="e" d="M190,101 H226" marker-end="url(#ah)"/>
+      <path class="e" d="M400,101 H436" marker-end="url(#ah)"/>
+      <path class="e" d="M610,101 H646" marker-end="url(#ah)"/>
+
+      <path class="e-rv dash" d="M505,130 V152 H80 V134" marker-end="url(#ah-rv)"/>
+      <text x="292" y="147" text-anchor="middle" class="lbl" style="fill:var(--revise)">스펙 오류 → 3a 다시</text>
+
+      <path class="e" d="M735,130 V174 H105 V228" marker-end="url(#ah)"/>
+
+      <rect class="llm" x="20" y="232" width="170" height="58" rx="10"/>
+      <text x="180" y="246" text-anchor="end" class="ltag">LLM</text>
+      <text x="105" y="257" text-anchor="middle" class="nid">edit</text>
+      <text x="105" y="276" text-anchor="middle" class="nsub">문서 편집 (3b)</text>
+      <rect class="tool" x="230" y="232" width="170" height="58" rx="10"/>
+      <text x="315" y="257" text-anchor="middle" class="nid">gate</text>
+      <text x="315" y="276" text-anchor="middle" class="nsub">편집 검사 · 되돌림</text>
+      <rect class="llm" x="440" y="232" width="170" height="58" rx="10"/>
+      <text x="600" y="246" text-anchor="end" class="ltag">LLM</text>
+      <text x="525" y="257" text-anchor="middle" class="nid">verify</text>
+      <text x="525" y="276" text-anchor="middle" class="nsub">반영 판정 (3c)</text>
+      <rect class="tool" x="650" y="232" width="170" height="58" rx="10"/>
+      <text x="735" y="257" text-anchor="middle" class="nid">summary</text>
+      <text x="735" y="276" text-anchor="middle" class="nsub">커밋 범위 확정</text>
+      <rect class="out-rv" x="860" y="232" width="125" height="58" rx="10"/>
+      <text x="922" y="257" text-anchor="middle" class="nid">커밋 · push</text>
+      <text x="922" y="276" text-anchor="middle" class="nsub">+ 라운드 알림</text>
+
+      <path class="e" d="M190,261 H226" marker-end="url(#ah)"/>
+      <path class="e" d="M400,261 H436" marker-end="url(#ah)"/>
+      <path class="e" d="M610,261 H646" marker-end="url(#ah)"/>
+      <path class="e" d="M820,261 H856" marker-end="url(#ah)"/>
+
+      <path class="e-rv dash" d="M315,290 V310 H125 V294" marker-end="url(#ah-rv)"/>
+      <text x="220" y="306" text-anchor="middle" class="lbl" style="fill:var(--revise)">값 치환 실패</text>
+      <path class="e-rv dash" d="M525,290 V330 H85 V294" marker-end="url(#ah-rv)"/>
+      <text x="340" y="346" text-anchor="middle" class="lbl" style="fill:var(--revise)">미반영 판정 → 3b 다시, 두 번째면 3a부터</text>
+    </svg>
+    <p class="cap">되돌림은 라운드당 2회까지입니다. 되물음은 커밋이 없으면 라운드를 소모하지 않습니다.</p>
+  </figure>
+  <div class="nodes">
+    <div class="node is-llm"><div class="top"><span class="id">intent · 3a</span><span class="k llm">LLM · 읽기 전용</span><span class="art">00-intent</span></div><p>의견을 대상 문서, 작업 종류, "A → B" 수정 방향, 검색어로 구조화합니다.</p></div>
+    <div class="node"><div class="top"><span class="id">anchor</span><span class="k">도구</span><span class="art">10-anchor</span></div><p>검색어로 고칠 섹션을 찾습니다. 못 찾으면 가까운 후보 3개로 되묻습니다.</p></div>
+    <div class="node"><div class="top"><span class="id">spec</span><span class="k">도구</span><span class="art">15-spec</span></div><p>3a 스펙을 의견 원문 · 섹션과 대조하고, 바꿀 현재 값 A를 섹션에서 확정합니다. 이미 반영된 의견은 여기서 닫습니다.</p></div>
+    <div class="node"><div class="top"><span class="id">impact</span><span class="k">도구</span><span class="art">20-impact</span></div><p>같은 값이나 링크를 가진 다른 섹션을 함께 고칠 후보로 둡니다.</p></div>
+    <div class="node is-llm"><div class="top"><span class="id">edit · 3b</span><span class="k llm">LLM · 쓰기</span><span class="art">30-edit</span></div><p>허용된 파일 안에서만 문서를 편집합니다. 쓰기 권한은 이 노드에만 있습니다.</p></div>
+    <div class="node"><div class="top"><span class="id">gate</span><span class="k">도구</span><span class="art">35-gate</span></div><p>허용 밖 파일과 문서가 아닌 파일은 되돌리고, A → B 치환 여부와 변경 크기를 검사합니다.</p></div>
+    <div class="node is-llm"><div class="top"><span class="id">verify · 3c</span><span class="k llm">LLM · 읽기 전용</span><span class="art">40-verify</span></div><p>diff를 보고 의견마다 반영 · 부분 반영 · 미반영을 판정합니다.</p></div>
+    <div class="node"><div class="top"><span class="id">summary</span><span class="k">도구</span><span class="art">50-summary</span></div><p>반영 판정을 받은 편집만 커밋 대상으로 남기고, 변경 요약과 미반영 목록을 만듭니다.</p></div>
+  </div>
+</section>
+
+<!-- 07 회고 -->
+<section id="s7">
+  <div class="sh">
+    <span class="no">07</span><h2>회고</h2>
+  </div>
+  <div class="retro">
+    <div class="col good">
+      <h3>잘 된 것</h3>
+      <ul>
+        <li><b>LLM 결과를 다음 도구 노드가 검사</b>하는 구조. 분류 확정, 스펙 대조, 편집 게이트.</li>
+        <li><b>산출물 파일로 진행 상태를 판단</b>해서 중간부터 다시 시작할 수 있음.</li>
+        <li><b>밖에서 들어오는 연결 없이</b> 동작. 폴러 + Socket Mode.</li>
+        <li>검증하지 못한 것은 <b>"미검증"으로 표시</b>하고 정상으로 숨기지 않음.</li>
+      </ul>
+    </div>
+    <div class="col hard">
+      <h3>부딪힌 문제</h3>
+      <ul>
+        <li><b>LLM의 조용한 실패.</b> 성공이라고 하고 산출물이 없음. 파일 존재와 파싱으로 판정하게 바꿈.</li>
+        <li><b>프롬프트 템플릿과 파서 불일치.</b> 템플릿을 파서 쪽 렌더러로 생성하게 바꿈.</li>
+        <li><b>분류 과대 주장과 평가 어휘.</b> 도구 증거로 승격하고 금지어로 막음.</li>
+        <li><b>문서와 코드의 어긋남.</b> 이번 감사에서 약 120건.</li>
+      </ul>
+    </div>
+    <div class="col todo">
+      <h3>남은 과제</h3>
+      <ul>
+        <li>리터럴 검증에 떨어진 편집이 재시도를 다 쓴 뒤 <b>커밋될 수 있음</b>.</li>
+        <li>리바이스가 제한 시간을 넘기면 <b>이전 실행과 재시도가 겹칠 수 있음</b>.</li>
+        <li>리바이스 주의 항목이 <b>Slack까지 전달되지 않음</b>.</li>
+        <li>리바이스 <b>실사용 검증</b>. 지금 구성은 stub.</li>
+        <li>재시작하면 <b>진행 중이던 리바이스가 사라짐</b>.</li>
+        <li><b>MR을 쓰지 않는 팀</b>에 적용하는 방법.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<footer>MR 리뷰 봇 · 코드 기준 2026-09-28 · 노드 이름은 코드의 식별자 그대로입니다.</footer>
+
+</div>
+
+</body>
+</html>
