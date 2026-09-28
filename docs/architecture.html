@@ -1,0 +1,527 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>시스템 한 장 — 스택 · 상태 · 두 레일 (v1)</title>
+<link rel="stylesheet" href="assets/doc.css">
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <div class="eyebrow">Docs · Architecture</div>
+  <h1>시스템 한 장 — 스택 · 상태 · 두 레일</h1>
+  <p class="lede">
+    코드를 읽기 전에 <b>어디에 무엇이 있고 왜 그렇게 두었는지</b>를 잡아 두는 문서입니다.
+    노드별 필드 규격이나 템플릿 원문은 여기 없습니다 — 각 절 끝의 <b>더 깊이</b>에서
+    권위 문서로 넘어가세요. 제품이 뭘 하는지 아직 모른다면
+    <a href="overview.html">overview</a>를 먼저 읽는 편이 빠릅니다.
+  </p>
+  <div class="chips">
+    <span class="chip"><b>v1</b></span>
+    <span class="chip">최종 갱신 <b>2026-09-28</b></span>
+    <span class="chip">독자 <b>합류 개발자</b></span>
+    <span class="chip">성격 <b>개념 · 요약</b></span>
+  </div>
+</header>
+
+<!-- ============================================================ 01 -->
+<section class="sect">
+  <div class="sec-head"><span class="num">01</span><h2>스택 — 없는 것이 더 많다</h2><span class="rule"></span></div>
+
+  <div class="band">
+    <p class="sub">
+      이 프로젝트의 첫인상은 <b>무엇을 쓰지 않았는가</b>입니다.
+      ORM도, 작업 큐 미들웨어도, 캐시 서버도 없습니다. 의도적인 선택입니다.
+    </p>
+
+    <div class="cards">
+      <div class="card ok">
+        <div class="ctitle">쓰는 것</div>
+        <div class="csub">전부 표준 라이브러리에 가깝다</div>
+        <ul>
+          <li><b>FastAPI + uvicorn</b>, 워커 <b>1개</b></li>
+          <li><b>stdlib <code>sqlite3</code></b> — WAL 모드, <code>busy_timeout</code> 설정</li>
+          <li>백그라운드는 <b>데몬 스레드 + <code>queue.Queue</code></b></li>
+          <li>외부 호출은 <b><code>httpx</code></b> 직접 — Slack SDK도 쓰지 않음</li>
+        </ul>
+      </div>
+      <div class="card">
+        <div class="ctitle">안 쓰는 것</div>
+        <div class="csub">그리고 그 대가</div>
+        <ul>
+          <li><b>ORM 없음</b> → 스키마가 <code>app/db.py</code> 한 곳에 SQL로 고정.
+              마이그레이션 도구가 없으니 스키마 변경 비용이 큽니다.</li>
+          <li><b>Celery/Redis 없음</b> → 배포가 프로세스 하나로 끝납니다.
+              대신 <b>재시작하면 진행 중이던 작업이 사라집니다.</b></li>
+          <li><b>워커 1개</b> → 프로세스 간 락을 고민할 필요가 없습니다.
+              수평 확장은 불가능합니다.</li>
+        </ul>
+      </div>
+      <div class="card ai">
+        <div class="ctitle">이 선택이 만든 설계</div>
+        <div class="csub">제약이 구조를 결정했다</div>
+        <ul>
+          <li>큐를 믿을 수 없으니 <b>상태를 DB와 파일에 둡니다.</b>
+              그래서 파이프라인이 <b>재개 가능</b>합니다.</li>
+          <li>분산 락이 없으니 <b>SQL의 <code>UPDATE … WHERE status=?</code> 자체를 락</b>으로 씁니다.</li>
+          <li>재시도 인프라가 없으니 <b>타임아웃을 계층으로 겹쳐</b> 놓았습니다.</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ 02 -->
+<section class="sect">
+  <div class="sec-head"><span class="num">02</span><h2>기동되는 것 — 엔트리포인트</h2><span class="rule"></span></div>
+
+  <div class="band">
+    <p class="sub">
+      <code>app/main.py</code>의 <code>lifespan</code>이 기동 시 넷을 켜고 종료 시 역순으로 끕니다.
+      나머지는 HTTP 라우터이거나 필요할 때 시작되는 워커입니다.
+      <b>대부분 기본이 꺼져 있고</b>, 각자의 설정 게이트가 닫혀 있으면 호출해도 아무 일이 없습니다.
+    </p>
+
+    <div class="scroll-x">
+    <table class="dtable">
+      <thead><tr><th class="nw">무엇</th><th class="nw">파일</th><th class="nw">기본</th><th>역할</th></tr></thead>
+      <tbody>
+        <tr><td class="nw">GitLab 웹훅</td><td class="nw m">gitlab_webhook.py</td><td class="nw m">항상</td>
+            <td><code>POST /webhooks/gitlab/mr</code> — MR open/reopen/merge/close, push 수신</td></tr>
+        <tr><td class="nw">Slack 인터랙션</td><td class="nw m">slack_actions.py</td><td class="nw m">항상</td>
+            <td><code>POST /webhooks/slack/actions</code> — 버튼 클릭과 모달 제출</td></tr>
+        <tr><td class="nw">health</td><td class="nw m">main.py</td><td class="nw m">항상</td>
+            <td><code>GET /health</code></td></tr>
+        <tr><td class="nw">스위퍼</td><td class="nw m">sweeper.py</td><td class="nw m">켜짐</td>
+            <td>제한 시간을 넘긴 <code>merging</code>/<code>revising</code> 세션을 수동으로 내림</td></tr>
+        <tr><td class="nw">알림 아웃박스</td><td class="nw m">notify_queue.py</td><td class="nw m">켜짐</td>
+            <td>Slack 전송 실패를 재시도. 기동 시 미발송 건을 다시 큐에 넣음</td></tr>
+        <tr><td class="nw">GitLab 폴러</td><td class="nw m">gitlab_poller.py</td><td class="nw m">꺼짐</td>
+            <td>웹훅을 놓쳤을 때의 보완 경로. 외부 머지·재오픈·사람 push를 따라잡음</td></tr>
+        <tr><td class="nw">Socket Mode</td><td class="nw m">slack_socket.py</td><td class="nw m">꺼짐</td>
+            <td>공개 URL 없이 Slack 이벤트를 받는 경로</td></tr>
+        <tr><td class="nw">리바이스 워커</td><td class="nw m">revise_executor.py</td><td class="nw m">요청 시</td>
+            <td>의견이 들어오면 시작되는 <b>단일</b> 데몬 스레드. 동시 실행은 하나뿐</td></tr>
+      </tbody>
+    </table>
+    </div>
+
+    <div class="note info" style="margin-top:12px">
+      <span class="nt">읽는 순서</span>
+      <code>app/main.py</code> → <code>app/gitlab_webhook.py</code> → <code>app/ingest.py</code>
+      → <code>app/slack_dispatch.py</code> 순으로 읽으면 한 MR이 알림이 되고 버튼 클릭이
+      처리되기까지를 한 줄로 따라갈 수 있습니다.
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ 03 -->
+<section class="sect">
+  <div class="sec-head"><span class="num">03</span><h2>레일이 갈리는 곳</h2><span class="rule"></span></div>
+
+  <div class="band">
+    <p class="sub">
+      MR 하나는 항상 <b>같은 입구</b>로 들어와 Slack 메시지 한 통이 됩니다.
+      그 직후 <code>app/mrdoc/rail.py</code>의 게이트가 <b>변경 파일 중 md 비중</b>을 재고,
+      기준(<code>mrdoc_doc_ratio_threshold</code>, 기본 <b>0.8</b>) 이상이면 mrdoc이 인수합니다.
+    </p>
+
+    <div class="cards">
+      <div class="card ai">
+        <div class="ctitle">일반 레일</div>
+        <div class="csub">모든 MR의 기본값</div>
+        <ul>
+          <li>AI 요약 + 버튼 알림</li>
+          <li>범용 리뷰 리포트(<code>report_html.py</code>)를 스레드에 첨부</li>
+          <li>의견이 오면 <b>리바이스 8노드</b>가 실제 수정을 수행</li>
+        </ul>
+      </div>
+      <div class="card hum">
+        <div class="ctitle">mrdoc 레일</div>
+        <div class="csub">문서가 지배적인 MR</div>
+        <ul>
+          <li>게이트 통과 시 <b>범용 리포트를 억제</b>하고 mrdoc이 리포트를 담당</li>
+          <li><b>10노드</b> 파이프라인이 별도 작업 디렉터리에서 돌아감</li>
+          <li>리바이스 루프는 그대로 동작 — 라운드가 끝나 HEAD가 움직이면
+              mrdoc이 다시 리포트를 만듭니다</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="note" style="margin-top:12px">
+      <span class="nt">둘 다 켜야 동작한다</span>
+      mrdoc은 토글이 <b>둘</b>입니다 — 레일 자체(<code>mrdoc_enabled</code>)와
+      LLM 위성(<code>mrdoc_satellite_enabled</code>). 둘 다 켜져야 mrdoc이 리포트를
+      "인수"하며, 한쪽만 켜면 범용 리포트가 그대로 나갑니다.
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ 04 -->
+<section class="sect">
+  <div class="sec-head"><span class="num">04</span><h2>상태기계 — 다섯 상태</h2><span class="rule"></span></div>
+
+  <div class="band">
+    <p class="sub">
+      MR 하나당 <code>review_session</code> 한 행이고, 그 행의 <code>status</code>가
+      시스템의 진실입니다. 상태는 다섯 개뿐이며 <code>merged</code>는 종단입니다.
+    </p>
+
+    <div class="states">
+      <div class="state reviewing">reviewing<small>알림 게시됨 · 버튼 대기</small></div>
+      <div class="state merging">merging<small>머지 진행 · 결과 폴링 중</small></div>
+      <div class="state revising">revising<small>수정 작업 중 · 세션 잠김</small></div>
+      <div class="state manual">manual<small>봇이 손 뗌 · 사람이 이어받음</small></div>
+      <div class="state merged">merged<small>종단</small></div>
+    </div>
+
+    <h3>전이는 목록에 있는 것만</h3>
+    <p class="sub">
+      <code>app/state_machine.py</code>의 <code>ALLOWED_TRANSITIONS</code>가
+      <b>(출발, 도착) 쌍마다 허용되는 사유까지</b> 고정합니다. 목록에 없는 전이는 예외이고,
+      허용되지 않은 사유를 붙여도 예외입니다. 새 전이를 코드로 몰래 만들 수 없습니다.
+    </p>
+
+    <div class="scroll-x">
+    <table class="dtable">
+      <thead><tr><th class="nw">전이</th><th>허용 사유</th><th>의미</th></tr></thead>
+      <tbody>
+        <tr><td class="nw m">reviewing → merging</td><td class="m">approve</td>
+            <td>승인 버튼이 모든 검사를 통과</td></tr>
+        <tr><td class="nw m">reviewing → revising</td><td class="m">opinion</td>
+            <td>의견 제출 — 이 전이가 곧 <b>세션 잠금</b></td></tr>
+        <tr><td class="nw m">reviewing → merged</td><td class="m">external_merge</td>
+            <td>봇 밖에서 사람이 머지함</td></tr>
+        <tr><td class="nw m">reviewing → manual</td><td class="m">external_close · guard_reject</td>
+            <td>MR이 닫혔거나, 승인자 매핑이 없어 거절</td></tr>
+        <tr><td class="nw m">merging → merged</td><td class="m">merge_poll_success · external_merge</td>
+            <td>머지 확인됨</td></tr>
+        <tr><td class="nw m">merging → manual</td><td class="m">merge_poll_failed · push_during_merge · external_close</td>
+            <td>머지 확인 실패, 또는 도중에 push/close가 끼어듦</td></tr>
+        <tr><td class="nw m">revising → reviewing</td><td class="m">revise_success</td>
+            <td>라운드 성공 — 다시 사람의 판단으로</td></tr>
+        <tr><td class="nw m">revising → manual</td><td class="m">human_push · revise_timeout · revise_attempts_exceeded · external_close</td>
+            <td>사람이 직접 push했거나, 시간·시도 한계</td></tr>
+        <tr><td class="nw m">revising → merged</td><td class="m">external_merge</td>
+            <td>작업 중 밖에서 머지됨</td></tr>
+        <tr><td class="nw m">manual → merged</td><td class="m">human_merge</td>
+            <td>사람이 마무리</td></tr>
+        <tr><td class="nw m">manual → reviewing</td><td class="m">mr_reopened · <span style="opacity:.6">operator_resume</span></td>
+            <td>닫혔던 MR이 다시 열림. <b>폴러만</b> 호출하며, 직전 이벤트가
+                <code>external_close</code>일 때로 제한</td></tr>
+      </tbody>
+    </table>
+    </div>
+
+    <h3>CAS가 곧 락이다</h3>
+    <div class="cards">
+      <div class="card ok">
+        <div class="ctitle">어떻게 동작하나</div>
+        <ul>
+          <li>전이는 <b>단일 문장</b>입니다 —
+              <code>UPDATE review_session SET status=? WHERE id=? AND status=?</code></li>
+          <li>성공하면 rowcount 1, 이미 남이 옮겼으면 <b>0</b>입니다.</li>
+          <li>0을 받은 쪽은 <b>졌다</b>고 판단하고 아무 부수효과도 남기지 않습니다.</li>
+        </ul>
+      </div>
+      <div class="card">
+        <div class="ctitle">이것이 막아 주는 것</div>
+        <ul>
+          <li><b>중복 클릭</b> — 두 번째 승인은 rowcount 0으로 조용히 무시됩니다.</li>
+          <li><b>경합</b> — 승인 클릭과 외부 머지 웹훅이 동시에 와도 하나만 이깁니다.</li>
+          <li>별도 락 테이블도, 분산 락도 필요 없습니다. <b>문장이 락입니다.</b></li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="deeper">
+      <a href="mr-review-pipeline.html">상태 기계 · 이중 기록 · 장애 모드</a>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ 05 -->
+<section class="sect">
+  <div class="sec-head"><span class="num">05</span><h2>데이터 — 테이블 셋</h2><span class="rule"></span></div>
+
+  <div class="band">
+    <p class="sub">
+      SQLite 하나에 테이블 <b>셋</b>이 전부입니다. 각 테이블의 <code>UNIQUE</code> 제약이
+      곧 이 시스템의 중복 방지 장치이므로, 스키마를 읽을 때 제약부터 보세요.
+    </p>
+
+    <div class="cards">
+      <div class="card ai">
+        <div class="ctitle">review_session</div>
+        <div class="csub">MR 하나 = 행 하나</div>
+        <ul>
+          <li><code>UNIQUE(project_id, mr_iid)</code> — 같은 MR로 세션이 둘 생기지 않습니다.</li>
+          <li><code>status</code>는 다섯 값으로 <code>CHECK</code> 제약</li>
+          <li><code>round</code>, <code>revise_attempts</code>,
+              <code>merging_since</code>, <code>revising_since</code>,
+              <code>slack_channel</code>, <code>slack_ts</code>, <code>mr_sha</code></li>
+          <li><b>브랜치·제목·URL 컬럼이 없습니다.</b> 이 생략이 뒤에 나오는
+              "재발급 버튼" 결함의 근본 원인입니다.</li>
+        </ul>
+      </div>
+      <div class="card ai">
+        <div class="ctitle">opinion</div>
+        <div class="csub">리뷰어가 넣은 의견</div>
+        <ul>
+          <li><code>UNIQUE(session_id, slack_user, body_hash)</code> —
+              같은 사람이 같은 말을 또 넣어도 한 건입니다.</li>
+          <li><code>applied_round</code> — 몇 라운드에서 처리됐는지.
+              값이 차면 대기열에서 빠집니다.</li>
+          <li><code>last_verdict</code> — 반영되지 않았다면 그 이유</li>
+        </ul>
+      </div>
+      <div class="card hum">
+        <div class="ctitle">event_log</div>
+        <div class="csub">한 테이블이 네 가지 일을 한다</div>
+        <ul>
+          <li><b>멱등 원장</b> — <code>UNIQUE(idempotency_key)</code> 위반이 곧 중복 차단</li>
+          <li><b>락 시계</b> — 의견 잠금 시각의 기준점</li>
+          <li><b>되물음 카운터</b> — <code>clarify</code> 행을 세어 한도를 판단</li>
+          <li><b>Slack 아웃박스</b> — <code>send_state</code>로 발송 재시도를 관리</li>
+        </ul>
+      </div>
+    </div>
+
+    <h3>중복을 막는 네 가지 키</h3>
+    <div class="scroll-x">
+    <table class="dtable">
+      <thead><tr><th class="nw">무엇의 중복</th><th class="nw">키</th><th>동작</th></tr></thead>
+      <tbody>
+        <tr><td class="nw">웹훅 재전송</td><td class="nw m">GitLab 웹훅 UUID</td>
+            <td>같은 UUID면 삽입이 실패하고 그대로 종료. <b>헤더가 없으면 통과</b>시킵니다</td></tr>
+        <tr><td class="nw">같은 의견 재제출</td><td class="nw m">본문 정규화 해시</td>
+            <td>공백·형식 차이를 없앤 뒤 해시해 비교</td></tr>
+        <tr><td class="nw">승인 중복 클릭</td><td class="nw m">CAS 그 자체</td>
+            <td>별도 키 없이 상태 전이 실패로 걸러집니다</td></tr>
+        <tr><td class="nw">Slack 재전송</td><td class="nw m">event_log 행 id</td>
+            <td>아웃박스가 행 단위로 발송 상태를 관리</td></tr>
+      </tbody>
+    </table>
+    </div>
+
+    <h3>타이머는 겹쳐 놓았다</h3>
+    <div class="note info" style="margin-top:4px">
+      <span class="nt">불변식</span>
+      <b>큐 대기 한도 &lt; 작업 벽시계 한도 &lt; 세션 타임아웃</b>
+      (기본 <code>600</code> &lt; <code>2400</code> &lt; <code>3000</code>초).
+      안쪽이 먼저 끊겨야 바깥이 이유를 알고 정리할 수 있습니다.
+      이 순서가 뒤집히면 스위퍼가 <b>살아 있는 작업을 죽입니다.</b>
+      설정을 바꿀 때 반드시 함께 검토하세요.
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ 06 -->
+<section class="sect">
+  <div class="sec-head"><span class="num">06</span><h2>리바이스 레일 — 8노드</h2><span class="rule"></span></div>
+
+  <div class="band">
+    <p class="sub">
+      의견 하나가 커밋이 되기까지의 사슬입니다. <b>일직선 체인</b>이고,
+      각 노드는 파일 하나를 남깁니다. 파일 이름의 숫자가 곧 순서입니다.
+    </p>
+
+    <div class="scroll-x">
+    <table class="dtable">
+      <thead><tr><th class="nw">#</th><th class="nw">노드</th><th class="nw">산출물</th><th class="nw">LLM</th><th>하는 일</th></tr></thead>
+      <tbody>
+        <tr><td class="nw">1</td><td class="nw m">intent</td><td class="nw m">00-intent.md</td><td class="nw">●</td>
+            <td>의견 원문을 "무엇을 무엇으로"의 구조로 해석</td></tr>
+        <tr><td class="nw">2</td><td class="nw m">anchor</td><td class="nw m">10-anchor.md</td><td class="nw">—</td>
+            <td>대상 파일과 절을 문서에서 특정</td></tr>
+        <tr><td class="nw">3</td><td class="nw m">spec</td><td class="nw m">15-spec.md</td><td class="nw">—</td>
+            <td><b>스펙 게이트.</b> 편집 전에 요구를 원문과 대조</td></tr>
+        <tr><td class="nw">4</td><td class="nw m">impact</td><td class="nw m">20-impact.md</td><td class="nw">—</td>
+            <td>같이 손봐야 할 곳을 산출</td></tr>
+        <tr><td class="nw">5</td><td class="nw m">edit</td><td class="nw m">30-edit.md</td><td class="nw">●</td>
+            <td>실제 파일 편집 (쓰기 가능 샌드박스)</td></tr>
+        <tr><td class="nw">6</td><td class="nw m">gate</td><td class="nw m">35-gate.md</td><td class="nw">—</td>
+            <td>요구한 값이 정말 들어갔는지 기계적으로 확인.
+                실패하면 <b>되돌립니다</b></td></tr>
+        <tr><td class="nw">7</td><td class="nw m">verify</td><td class="nw m">40-verify.md</td><td class="nw">●</td>
+            <td>의견별로 반영 여부를 대조검증</td></tr>
+        <tr><td class="nw">8</td><td class="nw m">summary</td><td class="nw m">50-summary.md</td><td class="nw">—</td>
+            <td>알림에 쓸 요약과 미반영 목록을 구성</td></tr>
+      </tbody>
+    </table>
+    </div>
+
+    <div class="cards" style="margin-top:14px">
+      <div class="card ok">
+        <div class="ctitle">아티팩트가 곧 상태다</div>
+        <ul>
+          <li>진행 상태를 따로 기록하지 않습니다. <b>어떤 파일이 있느냐</b>로 상태를 도출합니다.</li>
+          <li>그래서 <code>gate</code>에서 죽은 라운드는 다시 돌리면 <b><code>gate</code>부터</b> 재개됩니다.</li>
+          <li>한 바퀴 돌았는데 상태가 그대로면 "진전 없음"으로 판단해 멈춥니다 —
+              무한 루프가 구조적으로 불가능합니다.</li>
+        </ul>
+      </div>
+      <div class="card warn">
+        <div class="ctitle">재투입 예산</div>
+        <ul>
+          <li>라운드당 <b>2회</b>까지만 되돌려 다시 시킵니다.</li>
+          <li>원인별로 돌아가는 지점이 다릅니다 —
+              <b>스펙 반려</b>는 intent로, <b>값 미반영</b>은 edit으로.</li>
+          <li>횟수는 <b>이력 파일에서 세므로</b>, 중간에 재시작해도 예산이 초기화되지 않습니다.</li>
+        </ul>
+      </div>
+      <div class="card hum">
+        <div class="ctitle">라운드 회계</div>
+        <ul>
+          <li>의견 제출은 <b>3라운드</b>까지 (<code>ROUND_CAP</code>).</li>
+          <li>되물음만 하고 커밋이 없으면 <b>라운드를 소모하지 않습니다.</b></li>
+          <li>되묻기는 <b>2회</b>까지. 넘으면 해당 의견을 "대상 미확인"으로 종결합니다.</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="deeper">
+      <a href="revise-workflow.html">노드별 템플릿 · 스펙 게이트 판정 · 결정론 게이트</a>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ 07 -->
+<section class="sect">
+  <div class="sec-head"><span class="num">07</span><h2>mrdoc 레일 — 10노드</h2><span class="rule"></span></div>
+
+  <div class="band">
+    <p class="sub">
+      문서 MR의 변경을 <b>서술</b>하는 파이프라인입니다. 리바이스와 달리 파일을 고치지 않고,
+      <b>무엇이 어떻게 바뀌었는지</b>만 만들어 냅니다.
+      작업 디렉터리는 <b>푸시마다 하나</b>씩 새로 생기고 불변입니다.
+    </p>
+
+    <div class="scroll-x">
+    <table class="dtable">
+      <thead><tr><th class="nw">#</th><th class="nw">노드</th><th class="nw">산출물</th><th class="nw">LLM</th><th>하는 일</th></tr></thead>
+      <tbody>
+        <tr><td class="nw">1</td><td class="nw m">changeset</td><td class="nw m">00-changeset.md</td><td class="nw">—</td>
+            <td>바뀐 파일 목록 확정</td></tr>
+        <tr><td class="nw">2</td><td class="nw m">structure</td><td class="nw m">05-structure.md</td><td class="nw">—</td>
+            <td>문서 트리와 절 구조, 이동 탐지</td></tr>
+        <tr><td class="nw">3</td><td class="nw m">literals</td><td class="nw m">06-literals.md</td><td class="nw">—</td>
+            <td>숫자·값 같은 <b>리터럴</b>의 증감을 기계적으로 추출</td></tr>
+        <tr><td class="nw">4</td><td class="nw m">excerpt</td><td class="nw m">07-excerpts.md</td><td class="nw">—</td>
+            <td>근거가 될 원문 발췌 (본문을 담는 유일한 산출물)</td></tr>
+        <tr><td class="nw">5</td><td class="nw m">analysis</td><td class="nw m">20-analysis/</td><td class="nw">●</td>
+            <td>파일별 변경 서술. 여러 파일을 묶어 병렬 호출</td></tr>
+        <tr><td class="nw">6</td><td class="nw m">levelcheck</td><td class="nw m">30-levelcheck.md</td><td class="nw">—</td>
+            <td>축 분류 검사 — <b>승급만</b> 하고 강등은 없음</td></tr>
+        <tr><td class="nw">7</td><td class="nw m">verifier</td><td class="nw m">40-verifier.md</td><td class="nw">●</td>
+            <td>서술이 원문에 있는지 대조. <b>지어냈는지 / 빠뜨렸는지</b>만 판정</td></tr>
+        <tr><td class="nw">8</td><td class="nw m">themes</td><td class="nw m">45-themes.md</td><td class="nw">●</td>
+            <td>변경을 주제로 묶음. <b>원문을 읽지 않고</b> 요약 목록만 봄</td></tr>
+        <tr><td class="nw">9</td><td class="nw m">collect</td><td class="nw m">50-collect.md</td><td class="nw">—</td>
+            <td>모든 산출물을 하나로 집계</td></tr>
+        <tr><td class="nw">10</td><td class="nw m">render</td><td class="nw m">report.html · slack-summary.txt</td><td class="nw">—</td>
+            <td>둘을 <b>같은 집계에서</b> 생성 — 그래서 수치가 어긋날 수 없음</td></tr>
+      </tbody>
+    </table>
+    </div>
+
+    <div class="cards" style="margin-top:14px">
+      <div class="card ai">
+        <div class="ctitle">원자 인벤토리</div>
+        <div class="csub">숫자의 단일 출처</div>
+        <ul>
+          <li>모든 셀 수 있는 사실을 <b>원자</b> 하나로 환원합니다 —
+              (유닛, 파일, 축, 연산, 종류).</li>
+          <li>축은 <b>구조 / 의미 / 표현</b>, 연산은 <b>추가 / 변경 / 삭제</b>.</li>
+          <li>이 집계 하나가 리포트 매트릭스·검증 프롬프트·주제 입력에 <b>모두</b> 쓰입니다.
+              숫자가 갈라질 자리가 없습니다.</li>
+        </ul>
+      </div>
+      <div class="card warn">
+        <div class="ctitle">COUNTS 게이트</div>
+        <div class="csub">산문 vs 집계</div>
+        <ul>
+          <li>검증 단계에 <b>파일별 실측 개수</b>를 주입하고,
+              서술이 주장한 개수와 대조시킵니다.</li>
+          <li>"n곳 vs n항목" 같은 단위 차이는 넘어가고,
+              <b>존재 모순</b>만 불일치로 칩니다 — "없다"고 했는데 원자가 있는 경우.</li>
+        </ul>
+      </div>
+      <div class="card">
+        <div class="ctitle">fix 라운드와 강등</div>
+        <ul>
+          <li>문제가 발견되면 최대 <b>2회</b> 다시 씁니다.
+              대상은 세 게이트(검증·분류·누락)의 <b>합집합</b>입니다.</li>
+          <li>재작성이 실패하면 <b>직전 상태로 복원</b>하고, 소모된 라운드는 돌려주지 않습니다.</li>
+          <li>주제나 검증이 실패해도 <b>중단하지 않습니다</b> — 실패를 표기한 채 리포트를 냅니다.</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="deeper">
+      <a href="mrdoc-pipeline.html">노드별 템플릿 · 위성 규약 · 산출물 소비 관계</a> ·
+      <a href="trust-model.html">왜 이렇게까지 하는가</a>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ 08 -->
+<section class="sect">
+  <div class="sec-head"><span class="num">08</span><h2>모듈 지도</h2><span class="rule"></span></div>
+
+  <div class="band">
+    <div class="scroll-x">
+    <table class="dtable">
+      <thead><tr><th class="nw">파일</th><th>역할</th></tr></thead>
+      <tbody>
+        <tr><td class="nw m">main.py</td><td>ASGI 앱, lifespan에서 백그라운드 4종 기동, health</td></tr>
+        <tr><td class="nw m">config.py</td><td>설정 전체. <code>reviewers_for()</code>가 저장소별 승인자를 fail-closed로 판정</td></tr>
+        <tr><td class="nw m">security.py</td><td>GitLab 토큰 상수시간 비교, Slack 서명 검증</td></tr>
+        <tr><td class="nw m">gitlab_webhook.py</td><td>웹훅 수신·멱등 삽입·이벤트 분기</td></tr>
+        <tr><td class="nw m">ingest.py</td><td>MR 오픈·사람 push·외부 종료 처리. 알림 게시와 리포트 전달</td></tr>
+        <tr><td class="nw m">slack_actions.py</td><td>Slack HTTP 수신 라우터</td></tr>
+        <tr><td class="nw m">slack_socket.py</td><td>Socket Mode 수신 (선택)</td></tr>
+        <tr><td class="nw m">slack_dispatch.py</td><td>버튼·모달 처리의 본체. 승인 6단계와 의견 가드</td></tr>
+        <tr><td class="nw m">slack_client.py</td><td>Slack API 호출과 모든 메시지 렌더링</td></tr>
+        <tr><td class="nw m">notify_queue.py</td><td>Slack 발송 아웃박스 워커</td></tr>
+        <tr><td class="nw m">state_machine.py</td><td>전이 정의와 CAS</td></tr>
+        <tr><td class="nw m">db.py</td><td>스키마와 커넥션. WAL 전환 경합을 피하는 초기화</td></tr>
+        <tr><td class="nw m">sweeper.py</td><td>시간 초과 세션 정리</td></tr>
+        <tr><td class="nw m">gitlab_poller.py</td><td>웹훅 보완 폴링 (선택)</td></tr>
+        <tr><td class="nw m">gitlab_client.py</td><td>GitLab REST 호출</td></tr>
+        <tr><td class="nw m">git_workspace.py</td><td>작업용 클론·체크아웃·커밋·푸시, 비밀값 마스킹</td></tr>
+        <tr><td class="nw m">action_token.py</td><td>버튼에 심는 서명 토큰 발급·검증</td></tr>
+        <tr><td class="nw m">ai_reviewer.py · ai_runner.py</td><td>알림용 AI 요약, 단일 호출 러너</td></tr>
+        <tr><td class="nw m">revise_executor.py</td><td>리바이스 워커 — 큐·워크스페이스·커밋·재알림·되물음 회계</td></tr>
+        <tr><td class="nw m">revise_workflow/</td><td>8노드 DAG. <code>runner</code>(구동) ·
+            <code>nodes</code>(결정론 로직) · <code>schema</code>(산출물 코덱)</td></tr>
+        <tr><td class="nw m">mrdoc/</td><td>10노드 파이프라인. <code>rail</code>(진입) ·
+            <code>dispatch</code>(DAG) · <code>orchestrator</code>(웨이브) ·
+            <code>satellites</code>(LLM 호출) · <code>inventory</code>(집계) ·
+            <code>report_render</code>(리포트)</td></tr>
+        <tr><td class="nw m">report_html.py</td><td>범용(비 mrdoc) 리뷰 리포트 렌더</td></tr>
+      </tbody>
+    </table>
+    </div>
+  </div>
+</section>
+
+<div class="rev-history">
+  <div class="rh-title">개정 이력</div>
+  <ol>
+    <li><b>v1 (2026-09-28)</b> — 최초 작성. 심화 문서 셋(mr-review-pipeline · revise-workflow ·
+      mrdoc-pipeline)에 진입하기 전 단계의 개념 지도를 세움. 스택 선택의 대가, 엔트리포인트 8종,
+      레일 분기 조건, 상태 전이 전체 표와 CAS 락, 3테이블·멱등 키 4종·타이머 불변식,
+      두 레일의 노드 표와 모듈 지도를 수록.</li>
+  </ol>
+</div>
+
+<footer>
+  SLACK MR NOTIFIER · ARCHITECTURE v1 · 2026-09-28 · 권위 문서 아님(요약) — 규격은 심화 문서 참조
+</footer>
+
+</div>
+</body>
+</html>

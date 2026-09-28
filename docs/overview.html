@@ -1,0 +1,470 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>이 봇이 해주는 일 — 리뷰어가 보는 화면 (v1)</title>
+<link rel="stylesheet" href="assets/doc.css">
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <div class="eyebrow">Docs · Overview</div>
+  <h1>이 봇이 해주는 일 — 리뷰어가 보는 화면</h1>
+  <p class="lede">
+    Slack에서 무엇을 받고, 버튼을 누르면 무슨 일이 일어나는지를 순서대로 보여줍니다.
+    코드를 몰라도 읽을 수 있게 썼습니다. 구조가 궁금해지면
+    <a href="index.html">문서 안내</a>로 돌아가 <b>architecture</b>로 넘어가세요.
+  </p>
+  <div class="chips">
+    <span class="chip"><b>v1</b></span>
+    <span class="chip">최종 갱신 <b>2026-09-28</b></span>
+    <span class="chip">독자 <b>전원</b></span>
+    <span class="chip">성격 <b>소개 · 요약</b></span>
+  </div>
+</header>
+
+<!-- ============================================================ 01 -->
+<section class="sect">
+  <div class="sec-head"><span class="num">01</span><h2>무엇을 해결하나</h2><span class="rule"></span></div>
+
+  <div class="cards">
+    <div class="card warn">
+      <div class="ctitle">문제 ①  리뷰가 밀린다</div>
+      <div class="csub">MR은 열려 있는데 아무도 안 본다</div>
+      <ul>
+        <li>MR이 열린 사실을 아무도 모른 채 하루가 지나갑니다.</li>
+        <li>알게 되더라도 <b>뭐가 바뀌었는지 파악하는 비용</b>이 커서 뒤로 미뤄집니다.</li>
+        <li>승인하려면 GitLab을 열고, 찾아 들어가고, 다시 읽어야 합니다.</li>
+      </ul>
+    </div>
+    <div class="card warn">
+      <div class="ctitle">문제 ②  의견이 왕복한다</div>
+      <div class="csub">"이 값 좀 고쳐주세요" 한 줄의 왕복</div>
+      <ul>
+        <li>코멘트를 남기면 작성자가 볼 때까지 멈춥니다.</li>
+        <li>사소한 수정 하나에 반나절이 사라집니다.</li>
+      </ul>
+    </div>
+    <div class="card ai">
+      <div class="ctitle">이 봇의 답</div>
+      <div class="csub">Slack 한 통 안에서 끝낸다</div>
+      <ul>
+        <li>MR이 열리면 <b>요약과 함께</b> Slack으로 먼저 찾아옵니다.</li>
+        <li><b>버튼 하나로 승인</b>하거나, 의견을 적어 넣으면
+            <b>LLM이 실제로 고쳐 push</b>하고 결과를 다시 알립니다.</li>
+        <li>문서 MR은 <b>무엇이 어떻게 바뀌었는지</b>를 검증된 리포트로 정리해 붙입니다.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ 02 -->
+<section class="sect">
+  <div class="sec-head"><span class="num">02</span><h2>① 알림이 온다</h2><span class="rule"></span></div>
+
+  <div class="band">
+    <p class="sub">
+      MR이 열리면 지정된 채널에 이 메시지 한 통이 올라옵니다.
+      요약은 메시지 안에, <b>상세 리포트는 같은 스레드에 파일로</b> 붙습니다.
+    </p>
+
+    <p class="mock-cap">SLACK · 채널 메시지</p>
+    <div class="mock">
+      <div class="mfrom">MR Notifier <span class="bot">앱</span></div>
+      <div class="l b">MR 리뷰 요청</div>
+      <div class="l link">!47 문서 자동화 셋업 가이드 정리</div>
+      <div class="l dim">feature/docs-setup → main · 작성자 jaecheon.jeong</div>
+      <div class="l dim">커밋 ffdd6bc9</div>
+      <div class="div"></div>
+      <div class="l b">🤖 AI 요약</div>
+      <div class="l">설치 절차 문서에서 재시도 정책과 타임아웃 기본값을 최신 구현에 맞춰 갱신했습니다.</div>
+      <div class="l b" style="margin-top:8px">주요 변경점</div>
+      <div class="bul">• 재시도 횟수 기본값 3 → 5로 수정</div>
+      <div class="bul">• 타임아웃 설명이 실제 설정 키와 어긋나던 부분 정정</div>
+      <div class="bul">• 설치 전 점검 항목 신설</div>
+      <div class="l it" style="margin-top:8px">📄 상세 리뷰 리포트는 이 메시지 스레드에 첨부된 report.html을 확인하세요</div>
+      <div class="mbtns">
+        <span class="btn go">Yes · 승인</span>
+        <span class="btn stop">No · 변경 요청</span>
+      </div>
+    </div>
+
+    <div class="notes" style="margin-top:14px">
+      <div class="note info">
+        <span class="nt">요약은 짧게, 상세는 파일로</span>
+        Slack 메시지에는 <b>한 줄 요약과 주요 변경점 최대 6개</b>만 담습니다.
+        파일별 diff와 확인 항목은 길이 제한이 없는 스레드 첨부 리포트로 갑니다.
+      </div>
+      <div class="note">
+        <span class="nt">아무나 누를 수 없다</span>
+        버튼은 모두에게 보이지만, <b>저장소별로 지정된 승인자만</b> 실제로 동작합니다.
+        권한이 없으면 본인에게만 보이는 안내가 뜨고 아무 일도 일어나지 않습니다.
+      </div>
+    </div>
+
+    <div class="deeper">
+      <a href="mr-review-pipeline.html">메인 플로우 · 컴포넌트 맵</a>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ 03 -->
+<section class="sect">
+  <div class="sec-head"><span class="num">03</span><h2>② [Yes · 승인]을 누르면</h2><span class="rule"></span></div>
+
+  <div class="band">
+    <p class="sub">
+      확인 창이 한 번 뜨고(<span class="mono">"이 MR을 승인할까요?"</span>), 승인하면
+      아래 검사를 순서대로 통과한 뒤에야 머지가 진행됩니다.
+      <b>하나라도 걸리면 머지하지 않고 이유를 알려줍니다.</b>
+    </p>
+
+    <div class="rail">
+      <div class="step hum">
+        <div class="no">01</div><div class="tt">누가 눌렀나</div>
+        <div class="ss">이 저장소의 승인자 명단에 있는 사람인지 확인</div>
+      </div>
+      <div class="arrow">→</div>
+      <div class="step">
+        <div class="no">02</div><div class="tt">버튼이 진짜인가</div>
+        <div class="ss">버튼에 심어둔 서명을 검증. 만료된 버튼은 거절</div>
+      </div>
+      <div class="arrow">→</div>
+      <div class="step warn">
+        <div class="no">03</div><div class="tt">그 사이 바뀌지 않았나</div>
+        <div class="ss">알림 당시 커밋과 현재 HEAD가 같은지 재조회해 대조</div>
+      </div>
+      <div class="arrow">→</div>
+      <div class="step">
+        <div class="no">04</div><div class="tt">중복 클릭인가</div>
+        <div class="ss">먼저 누른 사람만 통과. 두 번째 클릭은 조용히 무시</div>
+      </div>
+      <div class="arrow">→</div>
+      <div class="step ok">
+        <div class="no">05</div><div class="tt">머지</div>
+        <div class="ss">확인한 커밋을 <b>지정해서</b> 머지. 다른 커밋은 머지되지 않음</div>
+      </div>
+    </div>
+
+    <div class="note crit" style="margin-top:12px">
+      <span class="nt">3단계가 중요한 이유</span>
+      알림을 받고 승인을 누르기까지 사이에 작성자가 새 커밋을 올렸다면,
+      <b>당신이 읽은 내용과 머지될 내용이 다릅니다.</b>
+      그래서 읽은 시점의 커밋을 지정해 머지하고, 어긋나면 거절합니다.
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ 04 -->
+<section class="sect">
+  <div class="sec-head"><span class="num">04</span><h2>③ [No · 변경 요청]을 누르면</h2><span class="rule"></span></div>
+
+  <div class="band">
+    <p class="sub">
+      <b>MR 의견</b> 창이 열립니다. 고쳐야 할 내용을 평소 리뷰 코멘트 쓰듯 적으면 됩니다.
+      제출하면 봇이 저장소를 받아와 <b>실제로 파일을 고치고 커밋·푸시</b>한 뒤 결과를 알려줍니다.
+    </p>
+
+    <div class="rail">
+      <div class="step hum">
+        <div class="no">01</div><div class="tt">의견 입력</div>
+        <div class="ss">"재시도 기본값을 5가 아니라 3으로 되돌려주세요"</div>
+      </div>
+      <div class="arrow">→</div>
+      <div class="step ai">
+        <div class="no">02</div><div class="tt">의도 해석</div>
+        <div class="ss">무엇을 무엇으로 바꾸라는 요구인지 구조화</div>
+      </div>
+      <div class="arrow">→</div>
+      <div class="step">
+        <div class="no">03</div><div class="tt">대상 찾기</div>
+        <div class="ss">문서의 어느 절, 어느 값을 말하는지 특정</div>
+      </div>
+      <div class="arrow">→</div>
+      <div class="step warn">
+        <div class="no">04</div><div class="tt">편집 전 점검</div>
+        <div class="ss">요구가 원문과 맞는지 코드가 먼저 검사. 어긋나면 편집을 시작조차 안 함</div>
+      </div>
+      <div class="arrow">→</div>
+      <div class="step ai">
+        <div class="no">05</div><div class="tt">편집 · 검증</div>
+        <div class="ss">고친 뒤 요구한 값이 실제로 들어갔는지 기계적으로 재확인</div>
+      </div>
+      <div class="arrow">→</div>
+      <div class="step ok">
+        <div class="no">06</div><div class="tt">커밋 · 푸시</div>
+        <div class="ss">정말 바뀐 파일만 커밋</div>
+      </div>
+    </div>
+
+    <h3>결과는 새 메시지로 온다</h3>
+    <p class="sub">
+      원래 알림을 수정하지 않고 <b>라운드마다 새 메시지</b>를 올립니다.
+      한 번 지나간 알림이 조용히 바뀌면 놓치기 때문입니다.
+    </p>
+
+    <p class="mock-cap">SLACK · 라운드 결과</p>
+    <div class="mock">
+      <div class="mfrom">MR Notifier <span class="bot">앱</span></div>
+      <div class="l b">🔄 라운드 1 완료 — 재확인 후 승인해주세요</div>
+      <div class="div"></div>
+      <div class="l b">🤖 AI 요약</div>
+      <div class="l">재시도 기본값 설명을 3으로 되돌리고, 관련 표의 수치도 함께 맞췄습니다.</div>
+      <div class="l dim" style="margin-top:8px">2 files changed, 6 insertions(+), 6 deletions(-)</div>
+      <div class="l link">변경분 비교 보기 →</div>
+      <div class="ctxb">
+        ⚠️ 미반영 의견 1건<br>
+        · "예시도 같이 정리" — 대상 절을 특정하지 못했습니다
+      </div>
+      <div class="mbtns">
+        <span class="btn go">Yes · 승인</span>
+        <span class="btn stop">No · 변경 요청</span>
+      </div>
+    </div>
+
+    <div class="notes" style="margin-top:14px">
+      <div class="note info">
+        <span class="nt">미반영 목록이 있는 이유</span>
+        고치지 못한 의견을 <b>조용히 삼키지 않습니다.</b> 어떤 의견이 왜 반영되지 않았는지
+        같이 적어, 다음에 무엇을 다시 말해야 할지 알 수 있게 합니다.
+      </div>
+      <div class="note">
+        <span class="nt">라운드는 3번까지</span>
+        같은 MR에서 의견 제출은 <b>3라운드</b>까지입니다. 그 뒤에는 봇이 손을 떼고
+        사람이 직접 처리하도록 넘깁니다. 무한 왕복을 막기 위한 상한입니다.
+      </div>
+      <div class="note">
+        <span class="nt">사람이 직접 커밋했다면</span>
+        봇이 작업하는 중에 작성자가 직접 push하면 봇은 즉시 물러납니다.
+        사람 손이 닿은 브랜치를 봇이 덮어쓰지 않습니다.
+      </div>
+    </div>
+
+    <div class="deeper">
+      <a href="revise-workflow.html">리바이스 8노드 규격 · 스펙 게이트</a>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ 05 -->
+<section class="sect">
+  <div class="sec-head"><span class="num">05</span><h2>④ 되물음이 오면</h2><span class="rule"></span></div>
+
+  <div class="band">
+    <p class="sub">
+      봇이 의견을 이해했지만 <b>어디를 고쳐야 할지 확정하지 못했을 때</b>,
+      추측해서 고치는 대신 되묻습니다. 잘못 짚고 편집하는 것보다 한 번 더 묻는 편이 낫기 때문입니다.
+    </p>
+
+    <p class="mock-cap">SLACK · 되물음</p>
+    <div class="mock">
+      <div class="mfrom">MR Notifier <span class="bot">앱</span></div>
+      <div class="l b">🔄 라운드 1 — 대상 확인 필요</div>
+      <div class="ctxb">
+        문서에서 대상을 찾지 못했습니다. 혹시 이 중 하나인가요?<br>
+        · 03.SETUP-GUIDE.md § 재시도 정책<br>
+        · 03.SETUP-GUIDE.md § 타임아웃<br>
+        · 00.README.md § 기본 설정
+      </div>
+      <div class="mbtns">
+        <span class="btn go">Yes · 승인</span>
+        <span class="btn stop">No · 변경 요청</span>
+      </div>
+    </div>
+
+    <div class="cards" style="margin-top:14px">
+      <div class="card">
+        <div class="ctitle">되묻는 두 경우</div>
+        <ul>
+          <li><b>대상을 못 찾음</b> — 말한 절이나 값이 문서에 없습니다. 후보를 최대 3개까지 보여줍니다.</li>
+          <li><b>대상이 여럿</b> — 바꿀 현재 값이 그 절 안에 여러 개라 무엇을 가리키는지 확정할 수 없습니다.</li>
+        </ul>
+      </div>
+      <div class="card">
+        <div class="ctitle">어떻게 답하나</div>
+        <ul>
+          <li>되물음 블록은 <b>버튼이 아닙니다.</b> 답은 다시 <b>[No · 변경 요청]</b>을 눌러
+              더 구체적으로 적어 주면 됩니다.</li>
+          <li>되묻기는 <b>2번까지</b>입니다. 그 뒤에는 해당 의견을
+              "대상 미확인"으로 정리하고 더 붙잡지 않습니다.</li>
+          <li>되묻기만 하고 아무것도 고치지 못한 라운드는 <b>라운드 수를 소모하지 않습니다.</b></li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ 06 -->
+<section class="sect">
+  <div class="sec-head"><span class="num">06</span><h2>⑤ 문서 MR이면 — 리포트 읽는 법</h2><span class="rule"></span></div>
+
+  <div class="band">
+    <p class="sub">
+      바뀐 파일이 대부분 문서(<code>.md</code>)이면 <b>mrdoc</b>이 인수해서, 별도의 리포트를
+      만들어 원래 알림 스레드에 올립니다. 요약 한 통과 <code>report.html</code> 한 개가 함께 옵니다.
+    </p>
+
+    <p class="mock-cap">SLACK · 스레드 답글</p>
+    <div class="mock">
+      <div class="mfrom">MR Notifier <span class="bot">앱</span></div>
+      <div class="l b">mrdoc 문서 변경 리포트 — MR !47</div>
+      <div class="l dim">ffdd6bc9 → 3a1c05e2 · 파일 2 · 유닛 9</div>
+      <div class="l">구조 2 · 의미 5(값 3) · 표현 2 / 추가 4 · 변경 4 · 삭제 1</div>
+      <div class="l" style="margin-top:6px">03.SETUP-GUIDE.md — 재시도·타임아웃 기본값을 구현에 맞춰 갱신</div>
+      <div class="l">00.README.md — 설치 전 점검 항목 신설</div>
+      <div class="l dim" style="margin-top:6px">주요 주제: 기본값 정정 · 설치 절차</div>
+      <div class="attach">📄 mrdoc-report.html</div>
+    </div>
+
+    <h3>리포트 5개 절</h3>
+    <div class="scroll-x">
+    <table class="dtable">
+      <thead><tr><th class="nw">절</th><th>무엇을 보여주나</th><th>언제 보나</th></tr></thead>
+      <tbody>
+        <tr>
+          <td class="nw">01 변경 매트릭스</td>
+          <td>파일 × (구조 / 의미 / 표현) × (추가 / 변경 / 삭제) 집계표</td>
+          <td>전체 규모와 성격을 30초에 파악할 때</td>
+        </tr>
+        <tr>
+          <td class="nw">02 핵심 변경사항</td>
+          <td>흩어진 변경을 주제로 묶은 카드</td>
+          <td>"결국 무슨 작업이었나"를 알고 싶을 때</td>
+        </tr>
+        <tr>
+          <td class="nw">03 확인이 필요한 항목</td>
+          <td><b>주황</b> = 사람이 판단해야 할 것 · <b>파랑</b> = 파이프라인이 확신하지 못한 것</td>
+          <td><b>가장 먼저.</b> 여기가 리뷰의 핵심입니다</td>
+        </tr>
+        <tr>
+          <td class="nw">04 파일별 상세</td>
+          <td>파일마다 바뀐 부분을 before / after 카드로</td>
+          <td>실제 문구를 확인해야 할 때</td>
+        </tr>
+        <tr>
+          <td class="nw">05 분석 상태</td>
+          <td>몇 개를 검증했고 무엇이 미검증인지, 실패한 단계가 있는지</td>
+          <td>이 리포트를 어디까지 믿을지 정할 때</td>
+        </tr>
+      </tbody>
+    </table>
+    </div>
+
+    <div class="note info" style="margin-top:12px">
+      <span class="nt">03절의 두 색을 구분하세요</span>
+      <b>주황</b>은 "문서끼리 말이 어긋난다" 같은 <b>당신이 판단할 문제</b>입니다.
+      <b>파랑</b>은 "이 유닛은 검증하지 못했다" 같은 <b>봇이 스스로 신고한 한계</b>입니다.
+      파랑이 많으면 리포트를 덜 믿고 원문을 직접 보세요.
+    </div>
+
+    <div class="deeper">
+      <a href="mrdoc-report-template.html">실제로 렌더된 리포트 한 벌 보기</a> ·
+      <a href="mrdoc-pipeline.html">mrdoc 10노드 규격</a>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ 07 -->
+<section class="sect">
+  <div class="sec-head"><span class="num">07</span><h2>이 봇이 하지 않는 것</h2><span class="rule"></span></div>
+
+  <div class="cards">
+    <div class="card crit" style="border-color:color-mix(in srgb,var(--crit) 50%,var(--line))">
+      <div class="ctitle" style="color:var(--crit)">자동 머지</div>
+      <ul>
+        <li>봇이 스스로 머지하는 경로는 <b>없습니다.</b>
+            사람이 승인 버튼을 누른 경우에만 머지 API를 호출합니다.</li>
+        <li>AI 요약은 <b>읽는 것을 돕는 자료</b>일 뿐, 판단을 대신하지 않습니다.</li>
+      </ul>
+    </div>
+    <div class="card">
+      <div class="ctitle">머지 차단</div>
+      <ul>
+        <li>[No · 변경 요청]은 GitLab에서 <b>머지를 막지 않습니다.</b>
+            GitLab REST API에 버전 독립적인 "변경 요청" 상태가 없기 때문입니다.</li>
+        <li>차단이 필요하면 GitLab 승인 규칙을 따로 설정해야 합니다.</li>
+      </ul>
+    </div>
+    <div class="card">
+      <div class="ctitle">코드 품질 심사</div>
+      <ul>
+        <li>보안 취약점 탐지나 코드 품질 등급을 매기는 도구가 아닙니다.</li>
+        <li>mrdoc은 <b>무엇이 바뀌었는지 서술</b>할 뿐,
+            좋다/나쁘다를 판정하지 않습니다 — 평가 어휘 자체가 금지되어 있습니다.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ 08 -->
+<section class="sect">
+  <div class="sec-head"><span class="num">08</span><h2>지금 어디까지 와 있나</h2><span class="rule"></span></div>
+
+  <div class="band">
+    <p class="sub">
+      기능은 <b>전부 기본이 꺼져 있고</b> 하나씩 켜는 구조입니다. 도입할 때는 아래 순서로
+      단계를 올리면서 각 단계가 안정된 뒤 다음을 켜는 방식을 권합니다.
+    </p>
+
+    <div class="scroll-x">
+    <table class="dtable">
+      <thead><tr><th class="nw">단계</th><th class="nw">기본값</th><th>켜면 생기는 일</th></tr></thead>
+      <tbody>
+        <tr><td class="nw">알림 + 버튼</td><td class="nw m">항상</td>
+            <td>MR 알림, 승인·의견 버튼. 여기까지는 LLM 없이 동작합니다</td></tr>
+        <tr><td class="nw">AI 요약</td><td class="nw m">켜짐</td>
+            <td>알림에 요약과 주요 변경점이 붙습니다. 실패하면 요약 없이 알림만 갑니다</td></tr>
+        <tr><td class="nw">실제 수정(리바이스)</td><td class="nw m">꺼짐</td>
+            <td>의견이 커밋·푸시로 이어집니다. 저장소에 쓰기가 발생하는 첫 단계입니다</td></tr>
+        <tr><td class="nw">mrdoc 리포트</td><td class="nw m">꺼짐</td>
+            <td>문서 MR에 검증된 변경 리포트가 붙습니다. 별도 토글이 하나 더 있습니다</td></tr>
+        <tr><td class="nw">폴러 · 소켓 모드</td><td class="nw m">꺼짐</td>
+            <td>웹훅을 놓친 경우의 보완 경로. 필요할 때만 켭니다</td></tr>
+      </tbody>
+    </table>
+    </div>
+
+    <h3>미리 알고 있어야 할 한계</h3>
+    <div class="notes">
+      <div class="note crit">
+        <span class="nt">재발급된 승인 버튼</span>
+        알림 후 작성자가 push하면 봇이 승인 버튼을 새로 발급하는데,
+        <b>이 버튼은 현재 정상 동작하지 않습니다.</b>
+        그 경우 GitLab에서 직접 머지하거나, MR을 다시 열어 새 알림을 받으세요.
+      </div>
+      <div class="note">
+        <span class="nt">비용 상한은 아직 안 걸린다</span>
+        LLM 호출 비용 상한값을 설정할 수는 있지만 <b>실제로 집행되지 않습니다.</b>
+        비용 통제는 현재 시간 제한(호출당 상한)으로만 이루어집니다.
+      </div>
+      <div class="note">
+        <span class="nt">재시작하면 진행 중 작업이 끊긴다</span>
+        수정 작업 도중 서버가 재시작되면 그 작업은 이어지지 않고,
+        일정 시간 뒤 <b>수동 처리로 전환</b>됩니다. 그때는 사람이 이어받으면 됩니다.
+      </div>
+    </div>
+
+    <div class="deeper">
+      <a href="dev-report.html">구현 진척과 고도화 항목</a>
+    </div>
+  </div>
+</section>
+
+<div class="rev-history">
+  <div class="rh-title">개정 이력</div>
+  <ol>
+    <li><b>v1 (2026-09-28)</b> — 최초 작성. 사용자 관점의 진입 문서가 저장소에 전무했던 상태를 메움.
+      알림 · 승인 · 변경 요청 · 되물음 · mrdoc 리포트의 5개 화면을 구현 코드의 실제 문구로 목업하고,
+      하지 않는 것 3가지와 알려진 한계 3가지를 명시.</li>
+  </ol>
+</div>
+
+<footer>
+  SLACK MR NOTIFIER · OVERVIEW v1 · 2026-09-28 · 권위 문서 아님(요약) — 규격은 심화 문서 참조
+</footer>
+
+</div>
+</body>
+</html>

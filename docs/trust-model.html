@@ -1,0 +1,430 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LLM을 믿지 않는 설계 (v1)</title>
+<link rel="stylesheet" href="assets/doc.css">
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <div class="eyebrow">Docs · Trust Model</div>
+  <h1>LLM을 믿지 않는 설계</h1>
+  <p class="lede">
+    이 시스템은 LLM에게 일을 시키지만 <b>LLM의 말을 근거로 삼지 않습니다.</b>
+    모델이 "했습니다"라고 답한 것은 아무것도 증명하지 않으며, 성공 여부는 언제나
+    코드가 파일과 숫자를 보고 판정합니다. 그 원칙 여덟 개를 한곳에 모았습니다.
+    <b>왜 이 출력을 믿어도 되는가</b>에 대한 답이기도 합니다.
+  </p>
+  <div class="chips">
+    <span class="chip"><b>v1</b></span>
+    <span class="chip">최종 갱신 <b>2026-09-28</b></span>
+    <span class="chip">독자 <b>전원</b></span>
+    <span class="chip">성격 <b>개념 · 요약</b></span>
+  </div>
+</header>
+
+<!-- ============================================================ 01 -->
+<section class="sect">
+  <div class="sec-head"><span class="num">01</span><h2>출발점 — 그럴듯하게 틀린다</h2><span class="rule"></span></div>
+
+  <div class="band">
+    <p class="sub">
+      아래 셋은 가상의 위험이 아니라 <b>이 프로젝트에서 실제로 난 사고</b>이고,
+      지금 있는 장치들은 전부 그 사고에 대한 대응으로 생겼습니다.
+    </p>
+
+    <div class="cards">
+      <div class="card warn">
+        <div class="ctitle">① 번호를 지어냈다</div>
+        <div class="csub">편집은 완벽했다</div>
+        <ul>
+          <li>편집 단계가 <b>MR 번호 자리에 프로젝트 번호</b>를,
+              <b>라운드 자리에 MR 번호</b>를 적어 돌려줬습니다.</li>
+          <li>정작 편집 결과 자체는 흠이 없었습니다. <b>맞는 일을 하고 틀린 보고를 한 것</b>입니다.</li>
+        </ul>
+      </div>
+      <div class="card warn">
+        <div class="ctitle">② 평가를 시작했다</div>
+        <div class="csub">서술만 하라고 했는데</div>
+        <ul>
+          <li>"상향된 표현", "절 간 기준이 일치하게 되었다" 같은 문장이 나왔습니다.</li>
+          <li>요청은 <b>무엇이 어떻게 바뀌었는지</b>였지, 좋아졌는지가 아니었습니다.</li>
+          <li>원인은 단순합니다 — <b>돌아온 글을 아무도 검사하지 않았습니다.</b></li>
+        </ul>
+      </div>
+      <div class="card warn">
+        <div class="ctitle">③ 개수가 어긋났다</div>
+        <div class="csub">요약은 "삭제 0", 본문엔 삭제된 문단</div>
+        <ul>
+          <li>한 유닛에 제목 변경 하나와 값 수정 넷이 섞여 있었는데
+              <b>한 번만 집계</b>됐습니다.</li>
+          <li>그 결과 개요는 "삭제 0"이라 말하고, 같은 리포트 본문에는
+              삭제된 문단이 실려 있었습니다.</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="note crit" style="margin-top:14px">
+      <span class="nt">교훈</span>
+      세 사고의 공통점은 <b>모델이 거짓말을 했다는 것이 아니라, 아무도 확인하지 않았다는 것</b>입니다.
+      그래서 이 시스템의 모든 장치는 "모델을 더 잘 시키는 법"이 아니라
+      <b>"모델 없이 확인하는 법"</b>의 모양을 하고 있습니다.
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ 02 -->
+<section class="sect">
+  <div class="sec-head"><span class="num">02</span><h2>원칙 1 — 파싱이 곧 검증이다</h2><span class="rule"></span></div>
+
+  <div class="band">
+    <p>
+      각 LLM 단계는 <b>정해진 형식의 문서</b>를 돌려줘야 합니다.
+      그 문서를 코드가 다시 읽어 구조체로 만들고, <b>읽히지 않으면 그 단계는 실패</b>입니다.
+    </p>
+    <ul class="sub">
+      <li>"형식을 지켜 주세요"라고 부탁하고 넘어가는 것이 아니라,
+          <b>지키지 못하면 진행이 안 되는</b> 구조입니다.</li>
+      <li>따로 검증기를 두지 않습니다. <b>파서가 검증기</b>입니다.
+          검증기를 따로 두면 파서와 검증기가 서로 다른 것을 허용하게 됩니다.</li>
+      <li>필드가 있고 타입이 맞는다는 것만 증명될 뿐, <b>내용이 참이라는 증명은 아닙니다.</b>
+          내용은 뒤의 게이트들이 봅니다.</li>
+    </ul>
+  </div>
+</section>
+
+<!-- ============================================================ 03 -->
+<section class="sect">
+  <div class="sec-head"><span class="num">03</span><h2>원칙 2 — 프롬프트를 손으로 쓰지 않는다</h2><span class="rule"></span></div>
+
+  <div class="band">
+    <p>
+      "이런 형식으로 답하세요"라며 예시를 프롬프트에 <b>타이핑해 넣지 않습니다.</b>
+      산출물을 만드는 <b>렌더러를 호출해</b> 예시를 생성하고, 그것을 프롬프트에 넣습니다.
+    </p>
+    <div class="cards">
+      <div class="card warn">
+        <div class="ctitle">손으로 쓰면</div>
+        <ul>
+          <li>파서가 바뀌었는데 프롬프트의 예시는 옛 형식으로 남습니다.</li>
+          <li>모델은 시킨 대로 옛 형식으로 답하고, 파서는 거절합니다.</li>
+          <li>모델 탓처럼 보이지만 <b>문서 두 벌이 갈라진 것</b>입니다.</li>
+        </ul>
+      </div>
+      <div class="card ok">
+        <div class="ctitle">렌더러로 만들면</div>
+        <ul>
+          <li>프롬프트의 예시와 파서가 <b>같은 코드에서 나옵니다.</b></li>
+          <li>형식을 바꾸면 양쪽이 동시에 바뀝니다. <b>갈라질 자리가 없습니다.</b></li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ 04 -->
+<section class="sect">
+  <div class="sec-head"><span class="num">04</span><h2>원칙 3 — 정체성은 코드가 찍는다</h2><span class="rule"></span></div>
+
+  <div class="band">
+    <p>
+      MR 번호, 라운드, 프로젝트 번호, 기준 커밋 — 이런 값은 <b>이미 코드가 알고 있습니다.</b>
+      모델이 돌려준 값은 읽지 않고 <b>코드 값으로 덮어씁니다.</b>
+    </p>
+    <ul class="sub">
+      <li>모델에게 그 필드를 채우게 하는 이유는 형식 완성도 때문이지, 값을 얻기 위해서가 아닙니다.</li>
+      <li>이 값들로 조인하지도 않습니다 — 내부 연결은 전부 <b>의견 id</b>로 합니다.</li>
+      <li>그럼에도 덮어쓰는 이유: <b>사람이 그 파일을 읽고, 리포트에 그대로 실리기 때문</b>입니다.
+          사람이 볼 숫자를 모델의 추측으로 둘 수 없습니다.</li>
+    </ul>
+    <div class="note info">
+      <span class="nt">일반화</span>
+      <b>코드가 이미 아는 것을 모델에게 묻지 않는다.</b> 물었다면 답을 쓰지 않는다.
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ 05 -->
+<section class="sect">
+  <div class="sec-head"><span class="num">05</span><h2>원칙 4 — 숫자는 파이썬이 센다</h2><span class="rule"></span></div>
+
+  <div class="band">
+    <p>
+      리포트의 모든 수치는 <b>원자 인벤토리</b>라는 단일 집계에서 나옵니다.
+      모델은 서술을 쓰고, <b>개수는 한 번도 세지 않습니다.</b>
+    </p>
+
+    <div class="rail">
+      <div class="step">
+        <div class="no">입력</div><div class="tt">구조 + 리터럴</div>
+        <div class="ss">문서의 절 구조와 값 변화. 둘 다 기계적으로 추출한 것</div>
+      </div>
+      <div class="arrow">→</div>
+      <div class="step ok">
+        <div class="no">집계</div><div class="tt">원자 하나 = 사실 하나</div>
+        <div class="ss">(유닛, 파일, 축, 연산, 종류)로 환원</div>
+      </div>
+      <div class="arrow">→</div>
+      <div class="step ai">
+        <div class="no">소비 ①</div><div class="tt">리포트 매트릭스</div>
+        <div class="ss">01절의 파일 × 축 × 연산 표</div>
+      </div>
+      <div class="arrow">→</div>
+      <div class="step ai">
+        <div class="no">소비 ②</div><div class="tt">검증 프롬프트</div>
+        <div class="ss">서술이 주장한 개수와 대조할 실측값</div>
+      </div>
+      <div class="arrow">→</div>
+      <div class="step ai">
+        <div class="no">소비 ③</div><div class="tt">주제 묶기 입력</div>
+        <div class="ss">원문 대신 이 목록만 봄</div>
+      </div>
+    </div>
+
+    <div class="note" style="margin-top:12px">
+      <span class="nt">왜 한 출처여야 하나</span>
+      리포트가 쓰는 숫자와 검증이 쓰는 숫자가 다른 경로로 계산되면,
+      <b>검증은 통과하는데 리포트는 틀린</b> 상태가 만들어집니다.
+      앞의 사고 ③이 정확히 그 모양이었습니다. 지금은 같은 집계를 세 소비자가 나눠 씁니다.
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ 06 -->
+<section class="sect">
+  <div class="sec-head"><span class="num">06</span><h2>원칙 5 — 판단이 필요한 곳엔 결정론 게이트를 둔다</h2><span class="rule"></span></div>
+
+  <div class="band">
+    <p class="sub">
+      "이 정도면 맞다"는 판단을 모델에게 맡기지 않습니다.
+      중요한 분기 셋은 <b>전부 코드가 판정</b>합니다.
+    </p>
+
+    <div class="cards">
+      <div class="card hum">
+        <div class="ctitle">스펙 게이트 <span class="badge">편집 전</span></div>
+        <div class="csub">리바이스 레일</div>
+        <ul>
+          <li>편집을 <b>시작하기 전에</b> 요구가 원문과 맞는지 대조합니다.</li>
+          <li><b>바꿀 현재 값은 코드가 확정</b>합니다 — 원문에 명시됐으면 그것,
+              아니면 그 절에서 같은 종류로 유일한 값.
+              후보가 여럿이면 <b>되물음</b>으로 보냅니다.</li>
+          <li>이미 반영된 요구는 편집 없이 "반영됨"으로 종결합니다.</li>
+          <li>여기서 걸린 요구는 <b>편집 호출 자체가 일어나지 않습니다.</b>
+              틀린 편집을 되돌리는 것보다 싸게 끝납니다.</li>
+        </ul>
+      </div>
+      <div class="card hum">
+        <div class="ctitle">리터럴 게이트 <span class="badge">편집 후</span></div>
+        <div class="csub">리바이스 레일</div>
+        <ul>
+          <li>요구한 값이 <b>파일에 실제로 들어갔는지</b> 문자열로 확인합니다.</li>
+          <li>바꾸기 전 값이 원문에 <b>있었는지도</b> 함께 봅니다 —
+              없던 값을 "바꿨다"고 하는 <b>공허한 통과</b>를 막기 위해서입니다.</li>
+          <li>실패하면 편집을 <b>되돌립니다.</b> 통과 못 한 편집은 남기지 않습니다.</li>
+        </ul>
+      </div>
+      <div class="card hum">
+        <div class="ctitle">분류 게이트 <span class="badge">승급 전용</span></div>
+        <div class="csub">mrdoc 레일</div>
+        <ul>
+          <li>변경의 축(구조/의미/표현) 분류를 <b>올리기만</b> 합니다.</li>
+          <li>값이 실제로 바뀌었는데 "표현"이라고 주장하면 <b>"의미"로 올립니다.</b></li>
+          <li><b>내리는 경로는 존재하지 않습니다.</b> 중요한 변경이 사소해 보이게
+              강등되는 일이 구조적으로 불가능합니다.</li>
+          <li>아무도 분류하지 않은 것은 <b>미분류</b>로 남습니다 — 기본값으로 때우지 않습니다.</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ 07 -->
+<section class="sect">
+  <div class="sec-head"><span class="num">07</span><h2>원칙 6 — 성공은 세 조건이 모두 참일 때만</h2><span class="rule"></span></div>
+
+  <div class="band">
+    <p>
+      LLM 호출 하나가 "성공"으로 기록되려면 아래 <b>셋이 전부</b> 참이어야 합니다.
+      모델이 "완료했습니다"라고 말했는지는 <b>조건에 포함되지 않습니다.</b>
+    </p>
+
+    <div class="rail">
+      <div class="step">
+        <div class="no">①</div><div class="tt">정상 종료</div>
+        <div class="ss">호출 프로세스가 오류 없이 끝났는가</div>
+      </div>
+      <div class="arrow">＋</div>
+      <div class="step ok">
+        <div class="no">②</div><div class="tt">파일이 실재하는가</div>
+        <div class="ss">쓰겠다고 선언한 경로가 <b>디스크에 실제로</b> 있는가</div>
+      </div>
+      <div class="arrow">＋</div>
+      <div class="step ok">
+        <div class="no">③</div><div class="tt">내용 검사 통과</div>
+        <div class="ss">중복된 항목은 없는가, 있던 항목이 사라지지 않았는가</div>
+      </div>
+    </div>
+
+    <div class="note info" style="margin-top:12px">
+      <span class="nt">②가 따로 필요한 이유</span>
+      모델은 "파일을 작성했습니다"라고 답하면서 <b>아무것도 쓰지 않을 수 있습니다.</b>
+      종료 코드만 보면 성공으로 보입니다. 그래서 선언한 산출물의 <b>존재</b>를 별도로 확인합니다.
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ 08 -->
+<section class="sect">
+  <div class="sec-head"><span class="num">08</span><h2>원칙 7 — 어휘를 강제하고, 목록은 한 벌만 둔다</h2><span class="rule"></span></div>
+
+  <div class="band">
+    <p class="sub">
+      mrdoc의 서술은 <b>무엇이 / 어떻게</b> 바뀌었는지만 말할 수 있습니다.
+      세 종류의 문장이 금지됩니다.
+    </p>
+
+    <div class="cards">
+      <div class="card">
+        <div class="ctitle">금지 1 — 왜</div>
+        <div class="csub">동기 · 배경 추론</div>
+        <p class="sub" style="margin:6px 0 0">
+          왜 바꿨는지는 커밋과 MR 설명이 말할 일입니다. 리포트가 추측할 영역이 아닙니다.
+        </p>
+      </div>
+      <div class="card">
+        <div class="ctitle">금지 2 — 그래서</div>
+        <div class="csub">영향 · 의미 부여</div>
+        <p class="sub" style="margin:6px 0 0">
+          이 변경이 무엇을 뜻하는지는 <b>읽는 사람이 판단</b>합니다.
+        </p>
+      </div>
+      <div class="card">
+        <div class="ctitle">금지 3 — 평가</div>
+        <div class="csub">좋다 · 나쁘다 · 개선 · 위험</div>
+        <p class="sub" style="margin:6px 0 0">
+          사고 ②가 만든 규칙입니다. 서술 도구가 심사 도구로 변질되는 것을 막습니다.
+        </p>
+      </div>
+    </div>
+
+    <div class="note info" style="margin-top:12px">
+      <span class="nt">목록이 한 벌인 이유</span>
+      금지어 목록은 <b>모듈 하나에 상수로</b> 있습니다.
+      프롬프트가 그 상수를 그대로 끼워 넣고, 사후 검사도 <b>같은 상수</b>를 찾습니다.
+      두 벌로 적으면 프롬프트가 금지한 말을 게이트가 더 이상 잡지 못하게 됩니다 —
+      그것도 <b>조용히</b>.
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ 09 -->
+<section class="sect">
+  <div class="sec-head"><span class="num">09</span><h2>원칙 8 — 실패는 중단이 아니라 강등이다</h2><span class="rule"></span></div>
+
+  <div class="band">
+    <p class="sub">
+      단계 하나가 실패했다고 전체를 버리지 않습니다.
+      <b>실패했다는 사실을 표기한 채</b> 끝까지 갑니다.
+    </p>
+
+    <div class="scroll-x">
+    <table class="dtable">
+      <thead><tr><th class="nw">실패한 것</th><th>결과</th><th class="nw">리포트</th></tr></thead>
+      <tbody>
+        <tr><td class="nw">주제 묶기</td>
+            <td>주제 없이 진행. 리포트 02절에 "주제 생성 실패"로 표기</td>
+            <td class="nw">나온다</td></tr>
+        <tr><td class="nw">검증</td>
+            <td>검증 결과를 "실패"로 기록. 검증 수치를 <b>0이 아니라 "—"</b>로 표시</td>
+            <td class="nw">나온다</td></tr>
+        <tr><td class="nw">재작성(fix)</td>
+            <td>직전 상태로 <b>복원</b>하고 계속. 소모한 라운드는 돌려주지 않음</td>
+            <td class="nw">나온다</td></tr>
+        <tr><td class="nw">리포트 생성 자체</td>
+            <td>요약만이라도 반드시 보냄. 첨부가 안 되면 일반 메시지로 전환</td>
+            <td class="nw">요약만</td></tr>
+      </tbody>
+    </table>
+    </div>
+
+    <div class="cards" style="margin-top:14px">
+      <div class="card ok">
+        <div class="ctitle">"0"과 "—"를 구분한다</div>
+        <ul>
+          <li><b>0</b>은 "확인했고 없었다"입니다.</li>
+          <li><b>—</b>는 "확인하지 못했다"입니다.</li>
+          <li>검증이 실패했을 때 0을 찍으면 <b>확인한 척</b>이 됩니다. 그래서 —로 둡니다.</li>
+        </ul>
+      </div>
+      <div class="card">
+        <div class="ctitle">모든 강등은 이력에 남는다</div>
+        <ul>
+          <li>웨이브마다 무슨 일이 있었는지 <b>추가만 되는 이력 파일</b>에 기록됩니다.</li>
+          <li>시각을 넣지 않습니다 — 그래야 두 실행의 이력을 그대로 <b>비교</b>할 수 있습니다.</li>
+          <li>"주제 강등(위성 실패)" 같은 줄이 그대로 남습니다.</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ 10 -->
+<section class="sect">
+  <div class="sec-head"><span class="num">10</span><h2>그래서 이 출력을 어디까지 믿나</h2><span class="rule"></span></div>
+
+  <div class="band">
+    <div class="cards">
+      <div class="card ok">
+        <div class="ctitle">믿어도 되는 것</div>
+        <ul>
+          <li><b>개수와 매트릭스</b> — 모델이 아니라 파일 비교에서 나온 값입니다.</li>
+          <li><b>"이 값이 이렇게 바뀌었다"</b> — 리터럴 게이트가 문자열로 확인했습니다.</li>
+          <li><b>커밋된 수정</b> — 게이트를 통과하지 못한 편집은 되돌려져 커밋되지 않습니다.</li>
+          <li><b>미반영 목록</b> — 못 한 것을 숨기지 않고 이유와 함께 보고합니다.</li>
+        </ul>
+      </div>
+      <div class="card warn">
+        <div class="ctitle">사람이 봐야 하는 것</div>
+        <ul>
+          <li><b>서술 문장</b> — 원문 대조는 거쳤지만 결국 모델이 쓴 글입니다.</li>
+          <li><b>주제 묶기</b> — 원문을 읽지 않고 요약 목록만 보고 묶은 결과입니다.</li>
+          <li><b>03절 확인 항목</b> — 여기는 애초에 "사람이 판단하라"고 모아 둔 자리입니다.</li>
+          <li><b>05절에 미검증이 많을 때</b> — 그만큼 리포트를 덜 믿고 원문을 보세요.</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="note info" style="margin-top:14px">
+      <span class="nt">한 줄로</span>
+      <b>숫자와 기계적 사실은 믿고, 문장은 사람이 읽는다.</b>
+      리포트 05절은 그 경계가 이번 실행에서 어디였는지를 알려 주기 위해 존재합니다.
+    </div>
+
+    <div class="deeper">
+      <a href="architecture.html">두 레일의 구조</a> ·
+      <a href="revise-workflow.html">결정론 게이트 규격</a> ·
+      <a href="mrdoc-pipeline.html">위성 공통 규약</a>
+    </div>
+  </div>
+</section>
+
+<div class="rev-history">
+  <div class="rh-title">개정 이력</div>
+  <ol>
+    <li><b>v1 (2026-09-28)</b> — 최초 작성. 여러 심화 문서에 흩어져 있던 신뢰 장치를
+      한 문서로 모음. 실제 사고 3건(식별자 오기·평가 어휘 유출·집계 누락)을 출발점으로 삼아
+      원칙 8개를 정리하고, 마지막 절에 "믿어도 되는 것 / 사람이 봐야 하는 것"의 경계를 명시.</li>
+  </ol>
+</div>
+
+<footer>
+  SLACK MR NOTIFIER · TRUST MODEL v1 · 2026-09-28 · 권위 문서 아님(요약) — 규격은 심화 문서 참조
+</footer>
+
+</div>
+</body>
+</html>

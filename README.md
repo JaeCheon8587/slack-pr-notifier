@@ -1,27 +1,36 @@
 # Slack MR Notifier
 
-GitLab Merge Request가 생성되면 Slack으로 리뷰 요청을 보내고, Slack 버튼으로
-GitLab MR을 승인하거나 변경 요청 코멘트를 남기는 Python 미들웨어입니다.
+GitLab Merge Request가 열리면 Slack으로 리뷰를 요청하고, Slack 버튼 하나로 승인하거나
+의견을 남기면 LLM이 실제로 문서·코드를 고쳐 push하고 다시 알리는 Python 미들웨어입니다.
+문서(`.md`) 위주의 MR은 **mrdoc** 레일로 빠져, 무엇이 어떻게 바뀌었는지를 검증된 HTML
+리포트로 만들어 같은 스레드에 붙입니다.
 
-Claude Code CLI로 MR 변경 내용을 요약하며, 최종 판단은 사람이 내립니다. 자동 머지는
-수행하지 않습니다.
+**최종 판단은 사람이 내립니다. 자동 머지는 하지 않습니다.**
 
 ```text
 GitLab MR 생성
-  → POST /webhooks/gitlab
-  → GitLab diff/변경 파일 조회
-  → Claude Code CLI로 요약
-  → Slack AI 요약 + Yes/No 메시지
-  → Yes: GitLab MR 승인
-  → No: Slack에서 사유 입력 → GitLab MR 코멘트 등록
+  → POST /webhooks/gitlab/mr
+  → AI 요약 + [Yes · 승인] / [No · 변경 요청] Slack 알림
+  → Yes: 권한·서명·HEAD SHA 검사 후 머지
+  → No : 의견 입력 → LLM이 수정·커밋·푸시 → 라운드 결과를 새 메시지로 알림
+  → 문서 MR: mrdoc이 변경 리포트를 스레드에 첨부
 ```
 
-> GitLab의 범용 REST API에는 `REQUEST_CHANGES` 상태를 만드는 버전 독립적인 호출이
-> 없습니다. 따라서 No 동작은 변경 요청 코멘트를 남기지만,
-> 그 자체로 머지를 차단하지 않습니다. 머지 차단이 필요하면 GitLab 승인 규칙이나
-> 외부 상태 검사를 별도로 설정해야 합니다.
+## 문서
 
-## 로컬 실행
+**[docs/index.html](docs/index.html) 이 진입점입니다.** 독자별 읽기 경로가 거기 있습니다.
+
+| 문서 | 읽는 사람 |
+|---|---|
+| [docs/overview.html](docs/overview.html) | 처음 보는 사람 — 뭘 해주고 뭘 안 하는가, 화면은 어떻게 생겼는가 |
+| [docs/architecture.html](docs/architecture.html) | 합류 개발자 — 스택·두 레일·상태기계·데이터 |
+| [docs/trust-model.html](docs/trust-model.html) | 전원 — LLM 출력을 왜 믿을 수 있는가 |
+| [docs/setup.html](docs/setup.html) | 운영자 — **설치·설정·운영의 권위 문서** |
+
+심화 규격은 `docs/`의 `mr-review-pipeline.html`, `revise-workflow.html`,
+`mrdoc-pipeline.html`에 있습니다. 안내 문서와 어긋나면 심화 문서가 옳습니다.
+
+## 빠른 시작
 
 Python 3.12 이상이 필요합니다.
 
@@ -29,96 +38,32 @@ Python 3.12 이상이 필요합니다.
 python -m venv .venv
 .venv\Scripts\Activate.ps1
 python -m pip install -e ".[dev]"
+copy .env.example .env    # 값을 채운 뒤
 uvicorn app.main:app --reload
 ```
 
-- 상태 확인: `http://localhost:8000/health`
-- API 문서: `http://localhost:8000/docs`
+- 상태 확인 `http://localhost:8000/health`
+- API 문서 `http://localhost:8000/docs`
+- 테스트 `pytest` · 린트 `ruff check .`
 
-## 환경 변수
+> 백그라운드 작업이 프로세스 안의 스레드와 큐로 돌아갑니다. **워커는 1개를 유지하세요.**
 
-`.env.example`을 복사해 `.env`에 값을 설정합니다. 실제 Secret과 Token은 커밋하지
-않습니다.
+설정 키 전체, GitLab 웹훅·Slack App 등록, 승인자 매핑(`REVIEWER_MAP`), 단계별로 켜는
+순서, 장애 대응과 알려진 결함은 **[docs/setup.html](docs/setup.html)** 에 있습니다.
 
-```env
-GITLAB_URL=https://gitlab.company.example
-GITLAB_WEBHOOK_SECRET=GitLab-Webhook에-등록한-secret-token
-GITLAB_TOKEN=GitLab-project-or-personal-access-token
-GITLAB_VERIFY_SSL=true
-SLACK_BOT_TOKEN=xoxb-your-bot-token
-SLACK_SIGNING_SECRET=Slack-App-Signing-Secret
-SLACK_CHANNEL_ID=C0123456789
-SLACK_ALLOWED_USER_IDS=U0123456789
-ACTION_TOKEN_SECRET=버튼-데이터-서명용-긴-임의값
-AI_ENABLED=true
-AI_MODEL=claude-opus-4-8
-AI_EFFORT=high
-AI_MAX_INPUT_CHARS=240000
-AI_TIMEOUT_SECONDS=180
-AI_MAX_BUDGET_USD=1.0
-```
+## 알아 둘 제약
 
-- `GITLAB_URL`: 사내 GitLab 루트 URL. `/api/v4`는 코드가 자동으로 붙입니다.
-- `GITLAB_TOKEN`: `api` scope가 있는 Project Access Token 또는 Personal Access Token.
-  토큰 소유자는 대상 프로젝트에서 MR을 승인할 수 있는 역할과 승인 규칙 자격이 있어야
-  합니다.
-- `GITLAB_VERIFY_SSL`: 기본값 `true`. 사내 인증서를 OS 신뢰 저장소에 등록하는 방식을
-  권장합니다. 개발 환경에서 검증을 끌 때만 `false`로 설정합니다.
-- `SLACK_BOT_TOKEN`: Slack App의 `chat:write` 권한 필요
-- `SLACK_CHANNEL_ID`: 알림을 보낼 채널 ID
-- `SLACK_ALLOWED_USER_IDS`: 승인 가능한 Slack 사용자 ID. 쉼표로 여러 명을 지정하며,
-  비워두면 워크스페이스의 모든 사용자가 버튼을 누를 수 있음
-- `ACTION_TOKEN_SECRET`: DB 없이 버튼에 담긴 MR 정보를 검증하는 서버 전용 키
-- AI 분석은 로그인된 `claude` CLI를 헤드리스 모드로 호출합니다. MR 입력은 도구가
-  비활성화된 안전 모드에서 처리하며, 실패하거나 시간 초과되면 AI 요약 없이 Slack
-  알림을 계속 전송합니다.
-- `AI_MAX_INPUT_CHARS`: CLI 호출 전 입력 크기 상한입니다. 예산을 넘긴 파일 내용과
-  diff는 프롬프트 및 서버 로그에 생략 사실을 남깁니다.
-- `AI_MAX_BUDGET_USD`: Claude CLI 한 번 호출에 허용할 최대 비용 상한입니다.
-
-GitLab에는 `GITLAB_TOKEN` 소유자의 계정으로 승인이 기록됩니다. 프로젝트 설정에서 MR
-작성자 승인이나 커미터 승인을 막은 경우 해당 계정이 만든 MR은 승인할 수 없습니다.
-
-## GitLab Webhook
-
-대상 프로젝트의 **Settings → Webhooks**에서 다음 URL을 등록합니다.
-
-```text
-https://<public-host>/webhooks/gitlab
-```
-
-- Secret token: `GITLAB_WEBHOOK_SECRET`과 동일한 값
-- Trigger: **Merge request events**
-- SSL verification: Enable
-
-여러 프로젝트를 연결할 때는 각 프로젝트 웹훅에 같은 URL과 Secret token을 등록할 수
-있습니다. API 호출은 웹훅 payload의 숫자형 Project ID를 사용합니다.
-
-## Slack App
-
-1. Slack App의 OAuth 권한에 `chat:write`를 추가합니다.
-2. App을 워크스페이스에 설치하고 알림 채널에 초대합니다.
-3. **Interactivity & Shortcuts**를 활성화합니다.
-4. Request URL에 다음 주소를 등록합니다.
-
-```text
-https://<public-host>/webhooks/slack/actions
-```
-
-GitLab과 Slack은 같은 실행 중인 서버 및 터널 주소를 사용합니다. Quick Tunnel을 다시
-실행하여 주소가 바뀌면 GitLab Webhook과 Slack Request URL을 모두 갱신해야 합니다.
+- GitLab REST API에는 버전 독립적인 `REQUEST_CHANGES` 상태가 없습니다. [No · 변경 요청]은
+  코멘트를 남기고 수정 루프를 돌릴 뿐, **그 자체로 머지를 차단하지는 않습니다.**
+  차단이 필요하면 GitLab 승인 규칙을 별도로 설정하세요.
+- 승인은 `GITLAB_TOKEN` 소유자 계정으로 기록됩니다. 프로젝트가 작성자 승인이나 커미터
+  승인을 막고 있다면 그 계정이 만든 MR은 승인할 수 없습니다.
+- 모든 LLM 기능은 기본이 꺼져 있습니다. 하나씩 켜세요.
 
 ## 보안 검증
 
 - GitLab 요청: `X-Gitlab-Token`을 `GITLAB_WEBHOOK_SECRET`과 상수 시간 비교
-- Slack 요청: `X-Slack-Signature` 및 5분 타임스탬프 검증
-- Slack 버튼 데이터: `ACTION_TOKEN_SECRET`으로 HMAC 서명 및 24시간 만료
-- 승인자 제한: `SLACK_ALLOWED_USER_IDS`
-- 승인 대상 고정: 웹훅 시점의 HEAD SHA를 GitLab 승인 API에 전달하여 변경된 MR 거부
-
-## 테스트
-
-```powershell
-pytest
-ruff check .
-```
+- Slack 요청: `X-Slack-Signature`와 5분 타임스탬프 검증
+- 버튼 데이터: `ACTION_TOKEN_SECRET`으로 HMAC 서명, 24시간 만료
+- 승인자 제한: `REVIEWER_MAP`의 저장소별 매핑 (미등록 저장소는 fail-closed)
+- 승인 대상 고정: 알림 시점의 HEAD SHA를 머지 API에 전달해, 그사이 바뀐 MR은 거절

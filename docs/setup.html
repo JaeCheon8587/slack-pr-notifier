@@ -1,0 +1,482 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>설치 · 설정 · 운영 (v1)</title>
+<link rel="stylesheet" href="assets/doc.css">
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <div class="eyebrow">Docs · Setup &amp; Operations</div>
+  <h1>설치 · 설정 · 운영</h1>
+  <p class="lede">
+    띄우고, 연결하고, 단계별로 켜고, 막혔을 때 푸는 방법입니다.
+    설정 기본값은 <code>app/config.py</code>에서 확인한 값이며, 이 문서가
+    설정에 관한 <b>권위 문서</b>입니다.
+  </p>
+  <div class="chips">
+    <span class="chip"><b>v1</b></span>
+    <span class="chip">최종 갱신 <b>2026-09-28</b></span>
+    <span class="chip">독자 <b>운영자 · 개발자</b></span>
+    <span class="chip">성격 <b>절차 · 권위</b></span>
+  </div>
+</header>
+
+<div class="note crit" style="margin-bottom:8px">
+  <span class="nt">먼저 알아 둘 것</span>
+  저장소 루트의 <code>README.md</code>와 <code>.env.example</code>은 <b>현재 구현과 어긋나 있습니다.</b>
+  웹훅 경로가 <code>/webhooks/gitlab</code>으로 적혀 있으나 실제는 <code>/webhooks/gitlab/mr</code>이고,
+  승인자 설정도 <code>SLACK_ALLOWED_USER_IDS</code>가 아니라 <code>REVIEWER_MAP</code>으로 바뀌었습니다.
+  <b>이 문서를 기준으로 삼으세요.</b>
+</div>
+
+<!-- ============================================================ 01 -->
+<section class="sect">
+  <div class="sec-head"><span class="num">01</span><h2>로컬에서 띄우기</h2><span class="rule"></span></div>
+
+  <div class="band">
+    <h3>요구사항</h3>
+    <ul class="sub">
+      <li><b>Python 3.12 이상</b></li>
+      <li>AI 기능을 켤 경우, 해당 CLI가 <b>설치되어 있고 로그인된 상태</b>여야 합니다 —
+          알림 요약은 <code>claude</code>, 리바이스·mrdoc의 단계 실행은 <code>codex</code>.
+          경로가 <code>PATH</code>에 없으면 <code>CLAUDE_BIN</code> / <code>CODEX_BIN</code>으로 지정합니다.</li>
+      <li>리바이스를 켤 경우, 대상 저장소에 <b>push 권한이 있는 GitLab 토큰</b></li>
+    </ul>
+
+    <h3>실행</h3>
+    <div class="mock" style="max-width:none;border-left-color:var(--ink-3)">
+      <div class="l dim">python -m venv .venv</div>
+      <div class="l dim">.venv\Scripts\Activate.ps1</div>
+      <div class="l dim">python -m pip install -e ".[dev]"</div>
+      <div class="l dim">uvicorn app.main:app --reload</div>
+    </div>
+    <ul class="sub" style="margin-top:10px">
+      <li>상태 확인 <code>http://localhost:8000/health</code></li>
+      <li>API 문서 <code>http://localhost:8000/docs</code></li>
+      <li>테스트 <code>pytest</code> · 린트 <code>ruff check .</code></li>
+    </ul>
+
+    <div class="note" style="margin-top:12px">
+      <span class="nt">워커는 반드시 1개</span>
+      백그라운드 작업이 <b>프로세스 안의 스레드와 큐</b>로 돌아갑니다.
+      워커를 늘리면 같은 일을 여러 프로세스가 중복 수행하게 됩니다.
+      <code>uvicorn --workers 1</code>을 유지하세요.
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ 02 -->
+<section class="sect">
+  <div class="sec-head"><span class="num">02</span><h2>설정 전수</h2><span class="rule"></span></div>
+
+  <div class="band">
+    <p class="sub">
+      <code>.env</code>에 넣습니다. 아래는 <code>app/config.py</code>의 실제 필드와 기본값입니다.
+      환경변수 이름은 필드명을 <b>대문자</b>로 쓴 것입니다 (<code>mrdoc_enabled</code> →
+      <code>MRDOC_ENABLED</code>).
+    </p>
+
+    <h3>필수 — 없으면 동작하지 않는다</h3>
+    <div class="scroll-x">
+    <table class="dtable">
+      <thead><tr><th class="nw">키</th><th class="nw">기본</th><th>설명</th></tr></thead>
+      <tbody>
+        <tr><td class="nw m">GITLAB_URL</td><td class="nw m">gitlab.com</td>
+            <td>사내 GitLab 루트. <code>/api/v4</code>는 코드가 붙입니다</td></tr>
+        <tr><td class="nw m">GITLAB_WEBHOOK_SECRET</td><td class="nw m">—</td>
+            <td>웹훅 검증용. <b>미설정이면 웹훅을 전부 거절</b>합니다(fail-closed)</td></tr>
+        <tr><td class="nw m">GITLAB_TOKEN</td><td class="nw m">—</td>
+            <td><code>api</code> scope. 승인·머지·push에 이 계정이 쓰입니다</td></tr>
+        <tr><td class="nw m">SLACK_BOT_TOKEN</td><td class="nw m">—</td>
+            <td><code>chat:write</code>와 <b><code>files:write</code></b> 필요</td></tr>
+        <tr><td class="nw m">SLACK_SIGNING_SECRET</td><td class="nw m">—</td>
+            <td>Slack 요청 서명 검증</td></tr>
+        <tr><td class="nw m">SLACK_CHANNEL_ID</td><td class="nw m">—</td>
+            <td>알림을 보낼 채널</td></tr>
+        <tr><td class="nw m">ACTION_TOKEN_SECRET</td><td class="nw m">—</td>
+            <td>버튼에 심는 서명 키. 긴 임의값</td></tr>
+        <tr><td class="nw m">REVIEWER_MAP</td><td class="nw m">빈 값</td>
+            <td><b>저장소별 승인자.</b> 아래 §05 참조 — 비면 아무도 승인할 수 없습니다</td></tr>
+      </tbody>
+    </table>
+    </div>
+
+    <h3>레일 토글 — 무엇을 켤지</h3>
+    <div class="scroll-x">
+    <table class="dtable">
+      <thead><tr><th class="nw">키</th><th class="nw">기본</th><th>설명</th></tr></thead>
+      <tbody>
+        <tr><td class="nw m">AI_ENABLED</td><td class="nw m">true</td>
+            <td>알림의 AI 요약. 실패해도 알림은 나갑니다</td></tr>
+        <tr><td class="nw m">AI_RUNNER</td><td class="nw m">stub</td>
+            <td>리바이스 실행기 — <code>stub</code>(아무것도 안 함) ·
+                <code>claude</code>(단일 호출) · <code>staged</code>(8노드 DAG)</td></tr>
+        <tr><td class="nw m">MRDOC_ENABLED</td><td class="nw m">false</td>
+            <td>mrdoc 레일 자체</td></tr>
+        <tr><td class="nw m">MRDOC_SATELLITE_ENABLED</td><td class="nw m">false</td>
+            <td>mrdoc의 LLM 호출. <b>이것까지 켜야</b> mrdoc이 리포트를 인수합니다</td></tr>
+        <tr><td class="nw m">REPORT_HTML_ENABLED</td><td class="nw m">true</td>
+            <td>범용 리뷰 리포트 첨부</td></tr>
+        <tr><td class="nw m">POLL_ENABLED</td><td class="nw m">false</td>
+            <td>웹훅 보완 폴링. <code>POLL_PROJECT_IDS</code>도 채워야 동작</td></tr>
+        <tr><td class="nw m">SLACK_SOCKET_MODE</td><td class="nw m">false</td>
+            <td>공개 URL 없이 수신. <code>SLACK_APP_TOKEN</code>도 필요</td></tr>
+        <tr><td class="nw m">LOG_ENABLED</td><td class="nw m">false</td>
+            <td>파일 로깅</td></tr>
+      </tbody>
+    </table>
+    </div>
+
+    <h3>타이머 — 순서가 곧 안전장치</h3>
+    <div class="scroll-x">
+    <table class="dtable">
+      <thead><tr><th class="nw">키</th><th class="nw">기본(초)</th><th>설명</th></tr></thead>
+      <tbody>
+        <tr><td class="nw m">REVISE_QUEUE_WAIT_LIMIT</td><td class="nw m">600</td>
+            <td>큐에서 기다릴 수 있는 한도</td></tr>
+        <tr><td class="nw m">REVISE_STAGE_TIMEOUT_SECONDS</td><td class="nw m">600</td>
+            <td>노드 하나의 LLM 호출 한도</td></tr>
+        <tr><td class="nw m">REVISE_WALL_CLOCK_SECONDS</td><td class="nw m">2400</td>
+            <td>라운드 하나 전체의 한도</td></tr>
+        <tr><td class="nw m">REVISING_TIMEOUT</td><td class="nw m">3000</td>
+            <td>스위퍼가 세션을 수동으로 내리는 시점</td></tr>
+        <tr><td class="nw m">MERGING_TIMEOUT</td><td class="nw m">300</td>
+            <td>머지 확인 대기 한도</td></tr>
+        <tr><td class="nw m">SWEEP_INTERVAL</td><td class="nw m">60</td><td>스위퍼 주기</td></tr>
+        <tr><td class="nw m">POLL_INTERVAL</td><td class="nw m">60</td><td>폴러 주기</td></tr>
+        <tr><td class="nw m">AI_TIMEOUT_SECONDS</td><td class="nw m">180</td><td>알림 요약 호출 한도</td></tr>
+        <tr><td class="nw m">MRDOC_SATELLITE_TIMEOUT_SECONDS</td><td class="nw m">600</td>
+            <td>mrdoc 위성 호출 한도</td></tr>
+        <tr><td class="nw m">NOTIFY_RETRY_BASE / NOTIFY_MAX_ATTEMPTS</td><td class="nw m">30 / 5</td>
+            <td>Slack 발송 재시도</td></tr>
+      </tbody>
+    </table>
+    </div>
+
+    <div class="note crit" style="margin-top:12px">
+      <span class="nt">이 부등식을 깨지 마세요</span>
+      <b>QUEUE_WAIT(600) &lt; WALL_CLOCK(2400) &lt; REVISING_TIMEOUT(3000)</b>.
+      안쪽이 먼저 끊겨야 바깥이 <b>이유를 알고</b> 정리합니다.
+      뒤집히면 스위퍼가 <b>정상 진행 중인 작업을 죽이고</b> 수동으로 내려 버립니다.
+      한 값을 올리면 바깥 값도 같이 올리세요.
+    </div>
+
+    <h3>모델 · 한도</h3>
+    <div class="scroll-x">
+    <table class="dtable">
+      <thead><tr><th class="nw">키</th><th class="nw">기본</th><th>설명</th></tr></thead>
+      <tbody>
+        <tr><td class="nw m">AI_MODEL / AI_EFFORT</td><td class="nw m">claude-opus-4-8 / high</td>
+            <td>알림 요약용</td></tr>
+        <tr><td class="nw m">AI_MAX_INPUT_CHARS</td><td class="nw m">240000</td>
+            <td>입력 상한. 넘으면 생략하고 생략 사실을 남깁니다</td></tr>
+        <tr><td class="nw m">REVISE_STAGE_MODEL / _EFFORT</td><td class="nw m">빈 값 / high</td>
+            <td>빈 값이면 <code>codex</code> CLI 기본 모델</td></tr>
+        <tr><td class="nw m">REVISE_MAX_CHANGED_FILES / _LINES</td><td class="nw m">10 / 400</td>
+            <td>한 라운드가 건드릴 수 있는 규모 상한</td></tr>
+        <tr><td class="nw m">REVISE_CLARIFY_LIMIT</td><td class="nw m">2</td>
+            <td>되물음 횟수 한도</td></tr>
+        <tr><td class="nw m">MRDOC_DOC_RATIO_THRESHOLD</td><td class="nw m">0.8</td>
+            <td>mrdoc이 인수할 md 비중 기준</td></tr>
+        <tr><td class="nw m">MRDOC_MAX_FILES / _FANOUT</td><td class="nw m">40 / 5</td>
+            <td>분석 대상 상한과 한 호출당 파일 수</td></tr>
+        <tr><td class="nw m">WORKSPACE_ROOT / DB_PATH / REPORT_HTML_DIR</td>
+            <td class="nw m">workspaces / mr_review.db / reports</td><td>경로</td></tr>
+        <tr><td class="nw m">BOT_USERNAME · BOT_EMAIL · BOT_GIT_NAME · BOT_GIT_EMAIL</td>
+            <td class="nw m">—</td>
+            <td>봇 자신의 push를 사람 push와 구분하는 데 쓰입니다. <b>설정 권장</b></td></tr>
+      </tbody>
+    </table>
+    </div>
+
+    <div class="note" style="margin-top:12px">
+      <span class="nt">비용 상한은 아직 집행되지 않는다</span>
+      <code>AI_MAX_BUDGET_USD</code> · <code>REVISE_STAGE_BUDGET_USD</code> ·
+      <code>MRDOC_SATELLITE_BUDGET_USD</code>는 <b>설정할 수 있지만 실제로 적용되지 않습니다.</b>
+      현재 비용 통제 수단은 <b>타임아웃과 입력 상한</b>뿐입니다.
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ 03 -->
+<section class="sect">
+  <div class="sec-head"><span class="num">03</span><h2>GitLab 웹훅 등록</h2><span class="rule"></span></div>
+
+  <div class="band">
+    <p class="sub">대상 프로젝트의 <b>Settings → Webhooks</b>에 등록합니다.</p>
+    <div class="mock" style="max-width:none;border-left-color:var(--ink-3)">
+      <div class="l dim">https://&lt;public-host&gt;/webhooks/gitlab/mr</div>
+    </div>
+    <ul class="sub" style="margin-top:10px">
+      <li><b>Secret token</b> — <code>GITLAB_WEBHOOK_SECRET</code>과 같은 값</li>
+      <li><b>Trigger</b> — Merge request events. 리바이스를 쓸 경우 <b>Push events</b>도 함께
+          (사람이 직접 push했을 때 봇이 물러나기 위해 필요합니다)</li>
+      <li><b>SSL verification</b> — 활성화</li>
+      <li>여러 프로젝트에 <b>같은 URL과 같은 secret</b>을 등록해도 됩니다.
+          API 호출은 payload의 숫자 project id를 씁니다</li>
+    </ul>
+  </div>
+</section>
+
+<!-- ============================================================ 04 -->
+<section class="sect">
+  <div class="sec-head"><span class="num">04</span><h2>Slack App 설정</h2><span class="rule"></span></div>
+
+  <div class="band">
+    <ol class="sub">
+      <li>OAuth 권한에 <b><code>chat:write</code></b>와 <b><code>files:write</code></b>를 추가합니다.
+          <br><span style="color:var(--warn)">files:write가 없으면 리포트 첨부가 실패합니다</span> —
+          요약은 일반 메시지로 나가지만 리포트 파일은 오지 않습니다.</li>
+      <li>워크스페이스에 설치하고 알림 채널에 App을 초대합니다.</li>
+      <li><b>Interactivity &amp; Shortcuts</b>를 켜고 Request URL을 등록합니다.
+        <div class="mock" style="max-width:none;margin-top:8px;border-left-color:var(--ink-3)">
+          <div class="l dim">https://&lt;public-host&gt;/webhooks/slack/actions</div>
+        </div>
+      </li>
+      <li>공개 URL을 만들기 어렵다면 <b>Socket Mode</b>를 대신 쓸 수 있습니다 —
+          <code>SLACK_SOCKET_MODE=true</code>와 <code>SLACK_APP_TOKEN</code>이 필요합니다.</li>
+    </ol>
+
+    <div class="note" style="margin-top:12px">
+      <span class="nt">터널 주소가 바뀌면</span>
+      GitLab 웹훅 URL과 Slack Request URL을 <b>둘 다</b> 갱신해야 합니다.
+      한쪽만 고치면 알림은 오는데 버튼이 죽거나, 그 반대가 됩니다.
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ 05 -->
+<section class="sect">
+  <div class="sec-head"><span class="num">05</span><h2>승인자 — REVIEWER_MAP</h2><span class="rule"></span></div>
+
+  <div class="band">
+    <p class="sub">
+      승인 권한은 <b>저장소별</b>로 지정합니다. JSON 객체 하나이며,
+      키는 저장소 슬러그, 값은 Slack 사용자 ID 목록입니다.
+    </p>
+    <div class="mock" style="max-width:none;border-left-color:var(--ink-3)">
+      <div class="l dim">REVIEWER_MAP={"group/project": "U111,U222", "group/other": ["U333"]}</div>
+    </div>
+
+    <div class="cards" style="margin-top:12px">
+      <div class="card crit" style="border-color:color-mix(in srgb,var(--crit) 50%,var(--line))">
+        <div class="ctitle" style="color:var(--crit)">fail-closed</div>
+        <ul>
+          <li>매핑에 <b>없는 저장소는 승인자가 0명</b>입니다. 아무도 버튼을 쓸 수 없습니다.</li>
+          <li>그런 MR은 알림 단계에서 <b>수동 처리로 전환</b>되고 경고가 게시됩니다.</li>
+          <li>새 저장소를 붙일 때 <b>REVIEWER_MAP 추가를 잊으면</b> 바로 이 증상이 납니다.</li>
+        </ul>
+      </div>
+      <div class="card">
+        <div class="ctitle">검사 시점은 두 번</div>
+        <ul>
+          <li>버튼을 <b>누를 때</b> 한 번</li>
+          <li>의견 모달을 <b>제출할 때</b> 다시 한 번</li>
+          <li>권한이 없으면 본인에게만 보이는 안내가 뜨고 아무 상태도 바뀌지 않습니다.</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="note" style="margin-top:12px">
+      <span class="nt">GitLab 쪽 제약</span>
+      승인은 <code>GITLAB_TOKEN</code> 소유자 계정으로 기록됩니다.
+      프로젝트가 <b>MR 작성자 승인</b>이나 <b>커미터 승인</b>을 금지하고 있다면,
+      그 계정이 만든 MR은 승인할 수 없습니다.
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ 06 -->
+<section class="sect">
+  <div class="sec-head"><span class="num">06</span><h2>단계별로 켜기</h2><span class="rule"></span></div>
+
+  <div class="band">
+    <p class="sub">
+      한 번에 다 켜지 마세요. 각 단계가 안정된 뒤 다음으로 넘어가는 순서입니다.
+      <b>3단계부터 저장소에 쓰기가 발생</b>합니다.
+    </p>
+
+    <div class="rail vert">
+      <div class="step">
+        <div class="no">1단계</div><div class="tt">알림만</div>
+        <div class="ss"><code>AI_ENABLED=false</code> · <code>AI_RUNNER=stub</code> ·
+          mrdoc 꺼짐 — LLM 없이 알림과 승인 버튼만. 웹훅·서명·권한 매핑이 맞는지 여기서 확인합니다</div>
+      </div>
+      <div class="arrow">↓</div>
+      <div class="step ai">
+        <div class="no">2단계</div><div class="tt">AI 요약</div>
+        <div class="ss"><code>AI_ENABLED=true</code> — 알림에 요약이 붙습니다.
+          <code>claude</code> CLI 로그인 상태와 호출 시간을 확인합니다</div>
+      </div>
+      <div class="arrow">↓</div>
+      <div class="step warn">
+        <div class="no">3단계</div><div class="tt">실제 수정</div>
+        <div class="ss"><code>AI_RUNNER=staged</code> — 의견이 커밋·푸시로 이어집니다.
+          <b>테스트 저장소에서 먼저</b> 돌려 보세요. push 권한과 봇 계정 설정을 확인합니다</div>
+      </div>
+      <div class="arrow">↓</div>
+      <div class="step hum">
+        <div class="no">4단계</div><div class="tt">mrdoc 리포트</div>
+        <div class="ss"><code>MRDOC_ENABLED=true</code> +
+          <code>MRDOC_SATELLITE_ENABLED=true</code> — 문서 MR에 변경 리포트가 붙습니다</div>
+      </div>
+      <div class="arrow">↓</div>
+      <div class="step">
+        <div class="no">5단계</div><div class="tt">보완 경로</div>
+        <div class="ss">웹훅 유실이 관찰될 때만 <code>POLL_ENABLED=true</code>.
+          불필요하면 켜지 마세요 — API 호출만 늘어납니다</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ 07 -->
+<section class="sect">
+  <div class="sec-head"><span class="num">07</span><h2>운영 — 막혔을 때</h2><span class="rule"></span></div>
+
+  <div class="band">
+    <p class="sub">
+      대부분의 문제는 세션이 <b><span class="mono">manual</span>(수동 처리)</b>로 떨어지는 것으로 나타납니다.
+      이건 고장이 아니라 <b>봇이 손을 떼고 사람에게 넘기는 정상 동작</b>입니다.
+      중요한 건 <b>왜</b> 떨어졌는지입니다.
+    </p>
+
+    <div class="scroll-x">
+    <table class="dtable">
+      <thead><tr><th class="nw">사유</th><th>무슨 일이 있었나</th><th>대응</th></tr></thead>
+      <tbody>
+        <tr><td class="nw m">guard_reject</td>
+            <td>이 저장소에 승인자 매핑이 없음</td>
+            <td><b>REVIEWER_MAP에 저장소를 추가</b>하고 MR을 다시 여세요</td></tr>
+        <tr><td class="nw m">human_push</td>
+            <td>봇이 수정하는 중에 사람이 직접 push</td>
+            <td>정상입니다. 사람이 그대로 이어서 진행하세요</td></tr>
+        <tr><td class="nw m">revise_timeout</td>
+            <td>수정 작업이 제한 시간을 넘김 (재시작으로 유실된 경우 포함)</td>
+            <td>로그에서 어느 노드에서 멈췄는지 확인. 반복되면 타이머를 올리되 §02의 부등식 유지</td></tr>
+        <tr><td class="nw m">revise_attempts_exceeded</td>
+            <td>재시도까지 모두 실패</td>
+            <td>작업 디렉터리의 산출물을 열어 어디서 막혔는지 확인하세요</td></tr>
+        <tr><td class="nw m">merge_poll_failed</td>
+            <td>머지를 호출했으나 확인되지 않음</td>
+            <td>GitLab에서 MR 상태를 직접 확인. 충돌·승인 규칙 미충족이 흔한 원인입니다</td></tr>
+        <tr><td class="nw m">push_during_merge</td>
+            <td>머지 진행 중 새 커밋이 들어옴</td>
+            <td>머지하지 않은 것이 맞습니다. 새 내용으로 다시 리뷰하세요</td></tr>
+        <tr><td class="nw m">external_close</td>
+            <td>MR이 봇 밖에서 닫힘</td>
+            <td>MR을 다시 열면 폴러가 켜져 있을 때 자동으로 복귀합니다</td></tr>
+      </tbody>
+    </table>
+    </div>
+
+    <h3>무슨 일이 있었는지 보는 법</h3>
+    <ul class="sub">
+      <li>세션의 이력은 전부 <code>event_log</code> 테이블에 있습니다.
+          <code>session_id</code>로 시간순 조회하면 전이와 이유가 그대로 남아 있습니다.</li>
+      <li>리바이스 라운드의 중간 산출물은 <code>WORKSPACE_ROOT</code> 아래
+          <b>라운드별 디렉터리</b>에 번호 순으로 남습니다. 어느 노드까지 갔는지가 곧 파일 목록입니다.</li>
+      <li>mrdoc은 작업 디렉터리의 <b>이력 파일</b>에 웨이브별로 무엇이 성공·강등·실패했는지 적습니다.</li>
+    </ul>
+
+    <div class="note info" style="margin-top:12px">
+      <span class="nt">재시작해도 안전한가</span>
+      <b>알림 발송은 안전합니다</b> — 미발송 건을 기동 시 다시 큐에 넣습니다.
+      <b>진행 중인 수정 작업은 이어지지 않습니다</b> — 제한 시간이 지나면 수동으로 전환되며,
+      그때 사람이 이어받으면 됩니다.
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ 08 -->
+<section class="sect">
+  <div class="sec-head"><span class="num">08</span><h2>알려진 결함</h2><span class="rule"></span></div>
+
+  <div class="band">
+    <div class="notes">
+      <div class="note crit">
+        <span class="nt">재발급된 승인 버튼이 동작하지 않는다</span>
+        알림 후 작성자가 push하면 봇이 승인 버튼을 새로 발급하는데,
+        <b>그 버튼의 서명 토큰이 검증을 통과하지 못합니다.</b>
+        원인은 <code>review_session</code>에 제목·URL·브랜치 컬럼이 없어
+        토큰을 자리표시자로 채우기 때문입니다.
+        <b>우회</b> — GitLab에서 직접 머지하거나, MR을 닫았다 다시 열어 새 알림을 받으세요.
+      </div>
+      <div class="note">
+        <span class="nt">비용 상한이 집행되지 않는다</span>
+        예산 설정값은 읽히기만 하고 어떤 호출에도 전달되지 않습니다.
+        실질적인 통제는 타임아웃과 입력 문자 수 상한입니다.
+      </div>
+      <div class="note">
+        <span class="nt">재시작 시 진행 중 작업 유실</span>
+        큐가 프로세스 메모리에 있어 재시작하면 대기·진행 중이던 라운드가 사라집니다.
+        스위퍼의 제한 시간이 지나야 수동으로 정리됩니다.
+      </div>
+      <div class="note hold">
+        <span class="nt">번호 매긴 질문 참조는 비어 있다</span>
+        <code>opinion.question_refs</code> 컬럼은 항상 비어 있습니다.
+        해당 입력 기능이 제거되었고 컬럼만 남아 있습니다.
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ 09 -->
+<section class="sect">
+  <div class="sec-head"><span class="num">09</span><h2>테스트</h2><span class="rule"></span></div>
+
+  <div class="band">
+    <p class="sub">
+      <code>pytest</code> 하나로 전부 돌아갑니다. 외부 서비스를 부르지 않으며
+      테스트마다 임시 DB를 씁니다.
+    </p>
+    <div class="scroll-x">
+    <table class="dtable">
+      <thead><tr><th class="nw">영역</th><th>주요 파일</th></tr></thead>
+      <tbody>
+        <tr><td class="nw">입구 · 전송</td>
+            <td><code>test_gitlab_webhook</code> · <code>test_slack_actions</code> ·
+                <code>test_slack_socket</code> · <code>test_security</code> · <code>test_health</code></td></tr>
+        <tr><td class="nw">상태 · 데이터</td>
+            <td><code>test_state_machine</code> · <code>test_db</code> ·
+                <code>test_sweeper</code> · <code>test_notify_queue</code> · <code>test_action_token</code></td></tr>
+        <tr><td class="nw">리바이스</td>
+            <td><code>test_revise_executor</code> · <code>test_revise_workflow_nodes</code> ·
+                <code>test_revise_workflow_runner</code> · <code>test_revise_workflow_schema</code></td></tr>
+        <tr><td class="nw">Slack 렌더링</td>
+            <td><code>test_slack_client</code> · <code>test_report_delivery</code> · <code>test_report_html</code></td></tr>
+        <tr><td class="nw">mrdoc</td>
+            <td><code>test_mrdoc_*</code> — 파이프라인·위성·레일·인벤토리 등</td></tr>
+      </tbody>
+    </table>
+    </div>
+    <div class="note info" style="margin-top:12px">
+      <span class="nt">고칠 때 같이 보세요</span>
+      상태 전이를 건드린다면 <code>test_state_machine</code>이,
+      Slack 문구를 바꾼다면 <code>test_slack_client</code>가 먼저 깨집니다.
+      깨진 테스트가 곧 <b>그 변경이 닿는 범위</b>입니다.
+    </div>
+  </div>
+</section>
+
+<div class="rev-history">
+  <div class="rh-title">개정 이력</div>
+  <ol>
+    <li><b>v1 (2026-09-28)</b> — 최초 작성. README의 낡은 내용(웹훅 경로,
+      <code>SLACK_ALLOWED_USER_IDS</code> 기반 승인자)을 바로잡고 설정 전수표를
+      <code>app/config.py</code> 기준으로 새로 작성. 단계별 켜기 순서, 수동 전환 사유 대응표,
+      알려진 결함 4건, 테스트 지도를 추가.</li>
+  </ol>
+</div>
+
+<footer>
+  SLACK MR NOTIFIER · SETUP &amp; OPERATIONS v1 · 2026-09-28 · 설정에 관한 권위 문서
+</footer>
+
+</div>
+</body>
+</html>
