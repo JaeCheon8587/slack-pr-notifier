@@ -134,6 +134,7 @@ def make_fake_slack_client(calls: list[dict[str, Any]]):
             diff_stat: str | None = None,
             compare_url: str | None = None,
             clarify: list[dict[str, Any]] | None = None,
+            review: Any = None,
         ) -> dict[str, Any]:
             calls.append(
                 {
@@ -147,6 +148,7 @@ def make_fake_slack_client(calls: list[dict[str, Any]]):
                     "diff_stat": diff_stat,
                     "compare_url": compare_url,
                     "clarify": clarify,
+                    "review": review,
                 }
             )
             return {"ts": "999.888", "channel": channel}

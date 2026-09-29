@@ -46,6 +46,7 @@ from urllib.parse import urlsplit, urlunsplit
 
 from app import git_workspace
 from app.action_token import create_action_token
+from app.ai_reviewer import review_merge_request
 from app.ai_runner import AIRunner, ClaudeCliRunner, ReviseResult, StubRunner
 from app.config import Settings, get_settings, secret_value
 from app.db import get_connection, init_db, unapplied_opinions
@@ -616,6 +617,10 @@ async def _notify_revise_success(
     message in place, moves ``review_session.slack_ts`` to it as soon as the
     post succeeds (step c), and then best-effort withdraws the previous
     message's buttons (step d) so only the new message stays actionable.
+
+    The new message also carries an ``*🤖 AI 요약*`` block built from the
+    round's new head, so it is not a downgrade from the open notification
+    it replaces (사용자 결정: 라운드 알림에도 AI 요약).
     """
     if not settings.slack_bot_token or not settings.action_token_secret:
         return
@@ -628,6 +633,32 @@ async def _notify_revise_success(
     token = create_action_token(mr, secret_value(settings.action_token_secret))
     client = SlackClient(secret_value(settings.slack_bot_token))
 
+    # The MR context is fetched *before* the post because the round message
+    # now carries an AI 요약 of the round's new head, exactly like the open
+    # notification (사용자 결정). The same fetch is reused below by the
+    # round report and the mrdoc rail, so this costs one GitLab round-trip,
+    # not two. Both steps are best-effort: a failed fetch or a failed
+    # review leaves ``review`` None and the round notification still goes
+    # out — it must never depend on AI content.
+    context: dict[str, Any] | None = None
+    if settings.gitlab_token:
+        try:
+            context = await GitLabClient(
+                settings.gitlab_url,
+                secret_value(settings.gitlab_token),
+                verify_ssl=settings.gitlab_verify_ssl,
+            ).fetch_mr_context(mr["project_id"], mr["iid"], mr["sha"])
+        except Exception:
+            logger.warning(
+                "Revise executor: round report context fetch failed (session=%s)",
+                session_id,
+                exc_info=True,
+            )
+
+    # review_merge_request swallows its own failures (returns None) and
+    # short-circuits when settings.ai_enabled is off.
+    review = await review_merge_request(mr, context, settings) if context else None
+
     posted = await client.post_revise_result(
         channel,
         mr,
@@ -638,6 +669,7 @@ async def _notify_revise_success(
         diff_stat=diff_stat,
         compare_url=compare_url,
         clarify=clarify,
+        review=review,
     )
     new_ts = posted.get("ts") if isinstance(posted, dict) else None
     if new_ts:
@@ -652,20 +684,6 @@ async def _notify_revise_success(
     # round report. Every failure is swallowed -- the round notification
     # itself is already final at this point.
     if new_ts:
-        context: dict[str, Any] | None = None
-        if settings.gitlab_token:
-            try:
-                context = await GitLabClient(
-                    settings.gitlab_url,
-                    secret_value(settings.gitlab_token),
-                    verify_ssl=settings.gitlab_verify_ssl,
-                ).fetch_mr_context(mr["project_id"], mr["iid"], mr["sha"])
-            except Exception:
-                logger.warning(
-                    "Revise executor: round report context fetch failed (session=%s)",
-                    session_id,
-                    exc_info=True,
-                )
         mrdoc_owned = head_moved and mrdoc_rail.handles_mr(settings, context)
         if settings.report_html_enabled and not mrdoc_owned:
             try:

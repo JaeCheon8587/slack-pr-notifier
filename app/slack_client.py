@@ -267,6 +267,7 @@ class SlackClient:
         diff_stat: str | None = None,
         compare_url: str | None = None,
         clarify: list[dict[str, Any]] | None = None,
+        review: Any = None,
     ) -> None:
         """Re-notify after a revise round completes (§S4② step (e), kind=ok).
 
@@ -291,6 +292,7 @@ class SlackClient:
             diff_stat=diff_stat,
             compare_url=compare_url,
             clarify=clarify,
+            review=review,
         )
         await self.call(
             "chat.update",
@@ -314,6 +316,7 @@ class SlackClient:
         diff_stat: str | None = None,
         compare_url: str | None = None,
         clarify: list[dict[str, Any]] | None = None,
+        review: Any = None,
     ) -> dict[str, Any]:
         """Post a brand-new message for a completed revise round.
 
@@ -338,6 +341,7 @@ class SlackClient:
             diff_stat=diff_stat,
             compare_url=compare_url,
             clarify=clarify,
+            review=review,
         )
         return await self.call(
             "chat.postMessage",
@@ -460,6 +464,7 @@ def _revise_result_payload(
     diff_stat: str | None = None,
     compare_url: str | None = None,
     clarify: list[dict[str, Any]] | None = None,
+    review: Any = None,
 ) -> tuple[str, list[dict[str, Any]]]:
     """Build the (text, blocks) pair for a completed revise round's re-notify.
 
@@ -480,9 +485,14 @@ def _revise_result_payload(
     one context block per question with its candidate targets. **The button
     set is deliberately untouched**: the human answers by pressing the same
     [의견] button again, so there is no new button and no modal here.
-    ``None``/empty leaves the payload exactly as it was.
+    ``review`` is the AI review of the round's *new* head (an ``MRReview``);
+    when present it renders the same ``*🤖 AI 요약*`` block the open
+    notification carries, so a round message stands on its own instead of
+    losing the AI content the original message had (사용자 결정: 라운드
+    알림에도 AI 요약). ``None`` (AI off, no context, or the reviewer
+    failed) renders nothing extra — identical to the previous payload.
     """
-    blocks = review_blocks(mr, token)
+    blocks = review_blocks(mr, token, review)
     clarify_entries = [
         entry for entry in (clarify or []) if str(entry.get("question") or "").strip()
     ]

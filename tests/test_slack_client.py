@@ -262,3 +262,45 @@ def test_clarify_and_unapplied_render_together_in_a_partial_round() -> None:
     unapplied_at = next(i for i, item in enumerate(rendered) if "미반영 의견" in item)
     summary_at = next(i for i, item in enumerate(rendered) if "한 건 반영" in item)
     assert summary_at < clarify_at < unapplied_at
+
+
+# ---------------------------------------------------------------------------
+# AI 요약 — the round message carries the same block the open notification has
+# ---------------------------------------------------------------------------
+def test_payload_without_review_renders_no_ai_summary_block() -> None:
+    """The pre-existing shape: no review argument means no 🤖 AI 요약 block."""
+
+    _, blocks = _revise_result_payload(_mr(), TOKEN, round_number=2, unapplied=[])
+
+    assert not any("🤖 AI 요약" in item for item in _texts(blocks))
+
+
+def test_payload_with_review_renders_the_ai_summary_block() -> None:
+    """사용자 결정: 라운드 알림에도 AI 요약 — rendered from the new head's review."""
+
+    from app.ai_reviewer import MRReview
+
+    review = MRReview(
+        summary="재시도 상한을 3회에서 4회로 올렸다",
+        key_changes=["00.README.md: 재시도 상한 3 → 4", "03.SETUP-GUIDE.md: Python 3.12 → 3.13"],
+        points_to_watch=["도식과 표의 값이 어긋날 수 있다"],
+    )
+    _, blocks = _revise_result_payload(
+        _mr(),
+        TOKEN,
+        round_number=2,
+        unapplied=[],
+        summary="변경 요약 텍스트",
+        review=review,
+    )
+
+    rendered = _texts(blocks)
+    ai_at = next(i for i, item in enumerate(rendered) if "🤖 AI 요약" in item)
+    assert "재시도 상한을 3회에서 4회로 올렸다" in rendered[ai_at]
+    assert "00.README.md: 재시도 상한 3 → 4" in rendered[ai_at]
+    # The revise 변경 요약 (what this round edited) stays distinct from the
+    # AI 요약 (what the MR now does) — both are present, 요약 first.
+    summary_at = next(i for i, item in enumerate(rendered) if "변경 요약 텍스트" in item)
+    assert summary_at < ai_at
+    # The buttons remain the last block, review or not.
+    assert blocks[-1]["type"] == "actions"

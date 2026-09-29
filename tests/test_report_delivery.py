@@ -142,7 +142,7 @@ def test_revise_round_delivers_html_report_to_new_thread(
 
         async def post_revise_result(
             self, channel, mr, token, *, round_number, unapplied,
-            summary=None, diff_stat=None, compare_url=None, clarify=None
+            summary=None, diff_stat=None, compare_url=None, clarify=None, review=None
         ):  # noqa: ANN001
             return {"ts": "999.888", "channel": channel}
 
@@ -169,8 +169,14 @@ def test_revise_round_delivers_html_report_to_new_thread(
         async def fetch_mr_context(self, project_id, merge_request_iid, sha):  # noqa: ANN001
             return {"files": [], "contents": {}, "files_truncated": False}
 
+    async def no_ai_review(mr, context, settings):  # noqa: ANN001
+        return None
+
     monkeypatch.setattr(revise_executor, "SlackClient", FakeSlack)
     monkeypatch.setattr(revise_executor, "GitLabClient", FakeGitLab)
+    # The round report must stay the synthesized round view; the AI reviewer
+    # is exercised separately (test_revise_round_message_carries_ai_summary).
+    monkeypatch.setattr(revise_executor, "review_merge_request", no_ai_review)
 
     conn = get_connection(settings.db_path)
     init_db(conn)
@@ -411,3 +417,170 @@ def test_report_upload_failure_never_fails_the_notification(
     # The notification went out; the report failure was absorbed.
     assert result["notified"] is True
 
+
+
+def test_revise_round_message_carries_ai_summary(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """The round re-notify reviews the new head and hands it to post_revise_result.
+
+    사용자 결정: 라운드 알림에도 AI 요약 — the round message replaces the
+    open notification as the actionable one, so it must not lose the
+    ``*🤖 AI 요약*`` block that message carried.
+    """
+    import app.revise_executor as revise_executor
+    from app.ai_reviewer import MRReview
+    from app.config import get_settings
+    from app.db import get_connection, init_db
+    from app.ingest import _create_session
+
+    settings = get_settings()
+    monkeypatch.setattr(settings, "db_path", str(tmp_path / "test.db"))
+    monkeypatch.setattr(settings, "slack_bot_token", "xoxb-test")
+    monkeypatch.setattr(settings, "action_token_secret", "secret")
+    monkeypatch.setattr(settings, "gitlab_url", "https://gitlab.example.com")
+    monkeypatch.setattr(settings, "gitlab_token", "glpat-test")
+    monkeypatch.setattr(settings, "report_html_enabled", False)
+
+    review = MRReview(summary="요약", key_changes=["변경"], points_to_watch=["주의"])
+    posts: list[dict[str, Any]] = []
+    reviewed: list[tuple[Any, Any]] = []
+
+    class FakeSlack:
+        def __init__(self, token: str) -> None:
+            pass
+
+        async def post_revise_result(self, channel, mr, token, **kwargs):  # noqa: ANN001
+            posts.append({"channel": channel, "mr": mr, **kwargs})
+            return {"ts": "999.888", "channel": channel}
+
+        async def withdraw_buttons(self, channel, message_ts, header_text, reason):  # noqa: ANN001
+            return None
+
+    class FakeGitLab:
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            pass
+
+        async def fetch_mr_context(self, project_id, merge_request_iid, sha):  # noqa: ANN001
+            return {"files": [], "contents": {}, "files_truncated": False}
+
+    async def fake_review(mr, context, settings):  # noqa: ANN001
+        reviewed.append((mr["sha"], context))
+        return review
+
+    monkeypatch.setattr(revise_executor, "SlackClient", FakeSlack)
+    monkeypatch.setattr(revise_executor, "GitLabClient", FakeGitLab)
+    monkeypatch.setattr(revise_executor, "review_merge_request", fake_review)
+    monkeypatch.setattr(revise_executor.mrdoc_rail, "start_mrdoc_review", lambda *a, **k: None)
+
+    conn = get_connection(settings.db_path)
+    init_db(conn)
+    _create_session(conn, "918", 7, "deadbeef1234", "group/project")
+    conn.execute(
+        "UPDATE review_session SET slack_channel = ?, slack_ts = ? WHERE mr_iid = 7",
+        (CHANNEL, "111.222"),
+    )
+    conn.commit()
+    session = conn.execute("SELECT * FROM review_session WHERE mr_iid = 7").fetchone()
+
+    mr_full = {
+        "title": "Fix",
+        "web_url": "https://gitlab.example.com/mr/7",
+        "source_branch": "feat",
+        "target_branch": "main",
+        "author": {"username": "alice"},
+    }
+    asyncio.run(
+        revise_executor._notify_revise_success(
+            conn,
+            settings,
+            session,
+            mr_full,
+            "newsha999999",
+            2,
+            [],
+            summary="버퍼 크기 상수화",
+            head_moved=True,
+        )
+    )
+    conn.close()
+
+    (post,) = posts
+    assert post["review"] is review  # the AI summary rides the round message
+    assert post["summary"] == "버퍼 크기 상수화"  # the revise 요약 is still its own slot
+    # The review is built from the round's NEW head, not the pre-round sha.
+    assert reviewed == [("newsha999999", {"files": [], "contents": {}, "files_truncated": False})]
+
+
+def test_revise_round_message_survives_a_failed_context_fetch(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """No context means no AI review — but the round notification still posts."""
+    import app.revise_executor as revise_executor
+    from app.config import get_settings
+    from app.db import get_connection, init_db
+    from app.ingest import _create_session
+
+    settings = get_settings()
+    monkeypatch.setattr(settings, "db_path", str(tmp_path / "test.db"))
+    monkeypatch.setattr(settings, "slack_bot_token", "xoxb-test")
+    monkeypatch.setattr(settings, "action_token_secret", "secret")
+    monkeypatch.setattr(settings, "gitlab_url", "https://gitlab.example.com")
+    monkeypatch.setattr(settings, "gitlab_token", "glpat-test")
+    monkeypatch.setattr(settings, "report_html_enabled", False)
+
+    posts: list[dict[str, Any]] = []
+
+    class FakeSlack:
+        def __init__(self, token: str) -> None:
+            pass
+
+        async def post_revise_result(self, channel, mr, token, **kwargs):  # noqa: ANN001
+            posts.append({"channel": channel, **kwargs})
+            return {"ts": "999.888", "channel": channel}
+
+        async def withdraw_buttons(self, channel, message_ts, header_text, reason):  # noqa: ANN001
+            return None
+
+    class ExplodingGitLab:
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            pass
+
+        async def fetch_mr_context(self, project_id, merge_request_iid, sha):  # noqa: ANN001
+            raise RuntimeError("gitlab down")
+
+    async def never_called(mr, context, settings):  # noqa: ANN001
+        raise AssertionError("review_merge_request must not run without context")
+
+    monkeypatch.setattr(revise_executor, "SlackClient", FakeSlack)
+    monkeypatch.setattr(revise_executor, "GitLabClient", ExplodingGitLab)
+    monkeypatch.setattr(revise_executor, "review_merge_request", never_called)
+    monkeypatch.setattr(revise_executor.mrdoc_rail, "start_mrdoc_review", lambda *a, **k: None)
+
+    conn = get_connection(settings.db_path)
+    init_db(conn)
+    _create_session(conn, "918", 7, "deadbeef1234", "group/project")
+    conn.execute(
+        "UPDATE review_session SET slack_channel = ?, slack_ts = ? WHERE mr_iid = 7",
+        (CHANNEL, "111.222"),
+    )
+    conn.commit()
+    session = conn.execute("SELECT * FROM review_session WHERE mr_iid = 7").fetchone()
+
+    asyncio.run(
+        revise_executor._notify_revise_success(
+            conn,
+            settings,
+            session,
+            {"title": "Fix", "web_url": "u", "source_branch": "f", "target_branch": "m"},
+            "newsha999999",
+            2,
+            [],
+            summary="버퍼 크기 상수화",
+        )
+    )
+    conn.close()
+
+    (post,) = posts
+    assert post["review"] is None
+    assert post["summary"] == "버퍼 크기 상수화"

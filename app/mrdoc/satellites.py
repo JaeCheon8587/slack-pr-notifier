@@ -875,6 +875,30 @@ def _process_env() -> dict[str, str]:
     return dict(os.environ)
 
 
+#: Head and tail kept from a failed satellite's output, in characters.
+_FAILURE_HEAD = 300
+_FAILURE_TAIL = 700
+
+
+def _failure_detail(output: str | None) -> str:
+    """The head *and* tail of a failed run's output.
+
+    The codex CLI opens with a banner and then echoes the whole prompt, so a
+    plain head slice is all banner and never reaches the error that actually
+    killed the run (it is the last thing written). Keeping both ends costs a
+    line and makes the cause — rate limit, auth, sandbox denial — legible in
+    the app log instead of only in a manual re-run.
+    """
+
+    text = (output or "").strip()
+    if not text:
+        return "no error output"
+    if len(text) <= _FAILURE_HEAD + _FAILURE_TAIL:
+        return text
+    elided = len(text) - _FAILURE_HEAD - _FAILURE_TAIL
+    return f"{text[:_FAILURE_HEAD]}\n…[{elided} chars elided]…\n{text[-_FAILURE_TAIL:]}"
+
+
 def satellite_executor(
     settings: Settings, work_dir: Path
 ) -> Callable[[str], bool]:
@@ -950,7 +974,7 @@ def satellite_executor(
             )
             return False
         if proc.returncode != 0:
-            detail = (proc.stderr or proc.stdout or "no error output")[:500]
+            detail = _failure_detail(proc.stderr or proc.stdout)
             logger.warning(
                 "mrdoc satellite(%s): codex exited %s: %s",
                 mission.agent,
