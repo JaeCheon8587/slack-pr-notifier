@@ -42,6 +42,13 @@ logger = logging.getLogger("uvicorn.error")
 # revise executor's workspace_root so a pipeline bug can never touch either.
 _WORKSPACE_ROOT = Path(__file__).resolve().parents[2] / ".mrdoc-ws"
 
+# GitLab refreshes an MR's diff_refs asynchronously after a push, so a read
+# right after our own revise commit can still name the previous head -- whose
+# <iid>-<sha8> work dir is already complete and would re-post the old report.
+# A caller that knows the head it pushed waits for GitLab to catch up.
+_HEAD_POLL_ATTEMPTS = 10
+_HEAD_POLL_INTERVAL = 3.0
+
 
 def md_ratio(files: list[dict[str, Any]] | None) -> float | None:
     """Share of changed files that are .md/.mdx -- None when there are none."""
@@ -89,12 +96,15 @@ def start_mrdoc_review(
     posted: dict[str, Any] | None,
     *,
     context: dict[str, Any] | None = None,
+    expected_sha: str | None = None,
 ) -> threading.Thread | None:
     """Launch the pipeline thread for an opened MR -- None when gated out.
 
     When ``context`` (ingest's fetch_mr_context result) is available the md
     gate runs synchronously here so a code-only MR never pays for a thread;
     without it the gate re-runs inside the thread once files are fetched.
+    ``expected_sha`` is the head the caller just pushed (the revise
+    executor): the thread runs against that head or not at all.
     """
 
     if not settings.mrdoc_enabled:
@@ -112,7 +122,7 @@ def start_mrdoc_review(
         return None
     thread = threading.Thread(
         target=_run_thread,
-        args=(settings, mr, posted, context),
+        args=(settings, mr, posted, context, expected_sha),
         name="mrdoc-" + str(mr.get("iid")),
         daemon=True,
     )
@@ -126,11 +136,27 @@ def _run_thread(
     mr: dict[str, Any],
     posted: dict[str, Any] | None,
     context: dict[str, Any] | None,
+    expected_sha: str | None = None,
 ) -> None:
     try:
-        asyncio.run(_run_review(settings, mr, posted, context))
+        asyncio.run(_run_review(settings, mr, posted, context, expected_sha))
     except Exception:  # noqa: BLE001 -- the rail must never crash the app
         logger.exception("mrdoc rail: pipeline crashed for !%s", mr.get("iid"))
+
+
+async def _await_head(
+    client: GitLabClient, project_id: Any, mr_iid: Any, expected_sha: str
+) -> dict[str, Any] | None:
+    """The MR detail once its diff_refs name ``expected_sha`` -- None on timeout."""
+
+    for attempt in range(_HEAD_POLL_ATTEMPTS):
+        detail = await client.get_merge_request(project_id, mr_iid)
+        head = str((detail.get("diff_refs") or {}).get("head_sha") or "")
+        if head == expected_sha:
+            return detail
+        if attempt + 1 < _HEAD_POLL_ATTEMPTS:
+            await asyncio.sleep(_HEAD_POLL_INTERVAL)
+    return None
 
 
 async def _run_review(
@@ -138,6 +164,7 @@ async def _run_review(
     mr: dict[str, Any],
     posted: dict[str, Any] | None,
     context: dict[str, Any] | None,
+    expected_sha: str | None = None,
 ) -> None:
     mr_iid = mr.get("iid")
     token = secret_value(settings.gitlab_token)
@@ -149,7 +176,30 @@ async def _run_review(
     )
     project_id = mr.get("project_id")
 
-    detail = await client.get_merge_request(project_id, mr_iid)
+    if expected_sha:
+        found = await _await_head(client, project_id, mr_iid, expected_sha)
+        if found is None:
+            logger.warning(
+                "mrdoc rail: !%s head never reached %s -- skipped, no stale report",
+                mr_iid,
+                expected_sha[:8],
+            )
+            await _post_text(
+                settings,
+                posted,
+                mr_iid,
+                "*mrdoc 문서 변경 리포트 -- MR !"
+                + str(mr_iid)
+                + "* 생략: GitLab MR head 가 아직 "
+                + expected_sha[:8]
+                + " 로 갱신되지 않아 이전 리포트를 다시 올리지 않았다.",
+            )
+            return
+        detail = found
+        # The caller's file list was read before GitLab caught up -- re-read it.
+        context = None
+    else:
+        detail = await client.get_merge_request(project_id, mr_iid)
     refs = detail.get("diff_refs") or {}
     base_sha = refs.get("base_sha") or ""
     head_sha = refs.get("head_sha") or ""
@@ -334,6 +384,25 @@ async def _post_summary(
         except Exception:
             logger.exception("mrdoc rail: summary fallback post failed for !%s", mr_iid)
         return
+
+
+async def _post_text(
+    settings: Settings, posted: dict[str, Any] | None, mr_iid: Any, text: str
+) -> None:
+    """One plain thread message -- a notice for a run that did not happen."""
+
+    channel = posted.get("channel") if isinstance(posted, dict) else None
+    thread_ts = posted.get("ts") if isinstance(posted, dict) else None
+    if not (settings.slack_bot_token and channel and thread_ts):
+        logger.info("mrdoc rail: no Slack target for !%s -- notice follows\n%s", mr_iid, text)
+        return
+    try:
+        await SlackClient(secret_value(settings.slack_bot_token)).call(
+            "chat.postMessage",
+            {"channel": channel, "thread_ts": thread_ts, "text": text},
+        )
+    except Exception:
+        logger.exception("mrdoc rail: notice post failed for !%s", mr_iid)
 
 
 def _uploadable_report(directory: Path) -> str | None:

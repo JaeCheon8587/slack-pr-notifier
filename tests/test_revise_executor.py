@@ -1145,3 +1145,65 @@ def test_cas_race_leaves_round_and_sha_untouched_with_commit_paths_and_clarify(
     assert "clarify" not in event_kinds(settings, session_id)
     assert "revise_success_raced" in event_kinds(settings, session_id)
     assert calls == []
+
+
+# ---------------------------------------------------------------------------
+# round report — the mrdoc rail after a round that moved the head
+# ---------------------------------------------------------------------------
+def _moved_head_round(monkeypatch, tmp_path, gitlab_client):  # type: ignore[no-untyped-def]
+    settings = configure(monkeypatch, tmp_path)
+    session_id, _ = seed_revising_session(settings, ["의견 1"])
+    monkeypatch.setattr(revise_executor.git_workspace, "has_changes", lambda *a, **k: True)
+    monkeypatch.setattr(revise_executor, "SlackClient", make_fake_slack_client([]))
+    monkeypatch.setattr(revise_executor, "GitLabClient", gitlab_client)
+    started: list[dict[str, Any]] = []
+    monkeypatch.setattr(
+        revise_executor.mrdoc_rail,
+        "start_mrdoc_review",
+        lambda *args, **kwargs: started.append(kwargs),
+    )
+    return settings, session_id, started
+
+
+def test_a_moved_head_hands_the_rail_the_pushed_sha(monkeypatch, tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """The rail waits for GitLab to show this sha; nothing to fetch up front."""
+
+    fetches: list[Any] = []
+
+    class CountingGitLab(FakeGitLabClient):
+        async def fetch_mr_context(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+            fetches.append(args)
+            return {"files": [{"filename": "a.md"}]}
+
+    settings, session_id, started = _moved_head_round(monkeypatch, tmp_path, CountingGitLab)
+    revise_executor.process_one(
+        make_item(session_id), settings=settings, runner=FakeRunner(kind="ok")
+    )
+
+    (kwargs,) = started
+    assert kwargs["expected_sha"] == "newsha000"
+    assert kwargs["context"] is None
+    assert fetches == []  # report_html off: no legacy report, no gate to feed
+
+
+def test_a_failed_context_fetch_keeps_one_report_per_round(monkeypatch, tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """The legacy report already covered the round — the rail must not add a second."""
+
+    class FailingGitLab(FakeGitLabClient):
+        async def fetch_mr_context(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+            raise RuntimeError("gitlab down")
+
+    settings, session_id, started = _moved_head_round(monkeypatch, tmp_path, FailingGitLab)
+    monkeypatch.setattr(settings, "report_html_enabled", True)
+    delivered: list[Any] = []
+
+    async def deliver(*args: Any, **kwargs: Any) -> None:
+        delivered.append(kwargs)
+
+    monkeypatch.setattr(revise_executor, "_deliver_review_report", deliver)
+    revise_executor.process_one(
+        make_item(session_id), settings=settings, runner=FakeRunner(kind="ok")
+    )
+
+    assert len(delivered) == 1
+    assert started == []

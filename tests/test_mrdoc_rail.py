@@ -271,3 +271,119 @@ def test_post_summary_without_slack_target_posts_nothing(monkeypatch, tmp_path: 
     asyncio.run(rail._post_summary(settings, None, 31, tmp_path, 4))
 
     assert recorder.calls == [] and recorder.uploads == []
+
+
+class _FakeGitLab:
+    """get_merge_request walks ``heads`` (the last one sticks)."""
+
+    def __init__(self, heads: list[str]) -> None:
+        self.heads = heads
+        self.reads = 0
+        self.context_fetches = 0
+
+    async def get_merge_request(self, project_id: Any, iid: Any) -> dict[str, Any]:
+        head = self.heads[min(self.reads, len(self.heads) - 1)]
+        self.reads += 1
+        return {
+            "diff_refs": {"base_sha": "base0000", "head_sha": head, "start_sha": "base0000"},
+            "changes_count": "1",
+            "web_url": "https://gitlab.example.com/mr/7",
+        }
+
+    async def fetch_mr_context(
+        self, project_id: Any, iid: Any, sha: str, *, max_files: int = 50
+    ) -> dict[str, Any]:
+        self.context_fetches += 1
+        return {"files": _files("fresh.md"), "files_truncated": False}
+
+
+def _rail_run(monkeypatch, tmp_path: Path, heads: list[str]) -> tuple[Any, Any, list[Any]]:
+    settings = get_settings()
+    monkeypatch.setattr(settings, "gitlab_token", "glpat-test")
+    monkeypatch.setattr(settings, "slack_bot_token", "xoxb-test")
+    monkeypatch.setattr(settings, "mrdoc_enabled", True)
+    monkeypatch.setattr(settings, "mrdoc_doc_ratio_threshold", 0.8)
+    monkeypatch.setattr(rail, "_HEAD_POLL_INTERVAL", 0)
+    monkeypatch.setattr(rail, "_WORKSPACE_ROOT", tmp_path)
+    gitlab = _FakeGitLab(heads)
+    monkeypatch.setattr(rail, "GitLabClient", lambda *args, **kwargs: gitlab)
+
+    async def tree(api_url, headers, verify, project_id, ref):  # noqa: ANN001
+        return {"fresh.md": ref}
+
+    monkeypatch.setattr(rail, "_fetch_md_tree", tree)
+    monkeypatch.setattr(rail.satellites, "satellite_executor", lambda *args: None)
+    ran: list[Any] = []
+    monkeypatch.setattr(
+        rail, "run_to_completion", lambda inputs, *args, **kwargs: ran.append(inputs) or 0
+    )
+    return settings, gitlab, ran
+
+
+def test_a_stale_head_is_waited_out_and_the_file_list_re_read(monkeypatch, tmp_path: Path) -> None:
+    """Right after our push GitLab may still name the old head — whose work dir
+    is complete, so running on it would re-post the previous report."""
+
+    settings, gitlab, ran = _rail_run(monkeypatch, tmp_path, ["old00000", "new00000"])
+    summaries: list[Any] = []
+
+    async def post(*args):  # noqa: ANN002
+        summaries.append(args)
+
+    monkeypatch.setattr(rail, "_post_summary", post)
+    asyncio.run(
+        rail._run_review(
+            settings,
+            {"iid": 7, "project_id": 10},
+            {"channel": "C", "ts": "1"},
+            {"files": _files("stale.md")},
+            "new00000",
+        )
+    )
+    (inputs,) = ran
+    assert inputs.head_sha == "new00000"
+    assert gitlab.reads == 2
+    assert gitlab.context_fetches == 1  # the caller's pre-push file list is dropped
+    assert [entry["filename"] for entry in inputs.raw_files] == ["fresh.md"]
+    assert len(summaries) == 1
+
+
+def test_a_head_that_never_arrives_posts_a_notice_not_the_old_report(
+    monkeypatch, tmp_path: Path
+) -> None:
+    settings, gitlab, ran = _rail_run(monkeypatch, tmp_path, ["old00000"])
+    recorder = _RecordingSlack("xoxb-test")
+    monkeypatch.setattr(rail, "SlackClient", lambda token: recorder)
+    asyncio.run(
+        rail._run_review(
+            settings, {"iid": 7, "project_id": 10}, {"channel": "C", "ts": "1"}, None, "new00000"
+        )
+    )
+    assert ran == []
+    assert gitlab.reads == rail._HEAD_POLL_ATTEMPTS
+    assert recorder.uploads == []
+    (call,) = recorder.calls
+    assert call["payload"]["thread_ts"] == "1"
+    assert "new00000" in call["payload"]["text"]
+
+
+def test_without_an_expected_head_the_rail_reads_it_once(monkeypatch, tmp_path: Path) -> None:
+    """MR open (ingest): no pushed sha to wait for, and its context is used as is."""
+
+    settings, gitlab, ran = _rail_run(monkeypatch, tmp_path, ["old00000", "new00000"])
+
+    async def post(*args):  # noqa: ANN002
+        return None
+
+    monkeypatch.setattr(rail, "_post_summary", post)
+    asyncio.run(
+        rail._run_review(
+            settings,
+            {"iid": 7, "project_id": 10},
+            {"channel": "C", "ts": "1"},
+            {"files": _files("given.md")},
+        )
+    )
+    (inputs,) = ran
+    assert inputs.head_sha == "old00000"
+    assert (gitlab.reads, gitlab.context_fetches) == (1, 0)

@@ -447,6 +447,26 @@ def test_a_gate_written_before_a_in_base_text_existed_still_parses() -> None:
     assert all(check.text.a_in_base_text for check in parse_gate(text).literals)
 
 
+def test_a_line_break_inside_a_value_survives_the_round_trip() -> None:
+    """The block parser reads one field per line — a raw break split it."""
+
+    spec = _spec()
+    broken = Spec(
+        mr_iid=spec.mr_iid,
+        round=spec.round,
+        entries=(
+            SpecEntry(
+                opinion_id=43,
+                decision="clarify",
+                a_candidates=("30\n초", "C:\\new"),
+                notes=("첫 줄\r\n둘째 줄 \"인용\" \\n 은 글자 그대로",),
+            ),
+        ),
+        required=spec.required,
+    )
+    assert parse_spec(render_spec(broken)) == broken
+
+
 def test_quoted_values_keep_their_commas_and_colons() -> None:
     original = _anchor()
     parsed = parse_anchor(render_anchor(original))

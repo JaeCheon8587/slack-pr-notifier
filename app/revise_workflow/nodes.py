@@ -361,23 +361,112 @@ def _unique(values: Sequence[str]) -> tuple[str, ...]:
     return tuple(dict.fromkeys(value for value in values if value))
 
 
+#: A unit glued to its particle ('30초를', '10초는') is invisible to
+#: extract_literals — its `(?!\w)` edge counts Hangul as a word character —
+#: so the opinion, which is human prose, has the particle split off first.
+_GLUED_UNIT = re.compile(
+    r"(\d+(?:\.\d+)?\s*(?:초|분|시간|일|ms|s|m|h|KB|MB|GB|TB|%|회|개|건|명|배))"
+    r"(?=[을를이가은는에로와과도만까부의])"
+)
+
+#: Written right after a value the human wants left alone — '4.0 은 유지',
+#: '10초는 그대로', '3.2 버전은 건드리지 말고'. Such a value is never A.
+_KEEP = re.compile(
+    r"\s*(?:[가-힣]{1,3}\s*)??(?:은|는|을|를|이|가|도|만)?\s*"
+    r"(?:(?:계속|현재|지금|그냥|기존)\s*)?"
+    r"(?:유지|그대로|두고|둬|두세요|둔다|놔두|놓아두|바꾸지|변경하지|건드리지|고정)"
+)
+
+#: A sentence end — '주세요.' closes one, the dot inside '4.0' does not.
+_SENTENCE_END = re.compile(r"(?<![0-9])[.!?。]+(?=\s|$)|\n")
+
+
+def _opinion_literals(text: str) -> list[Literal]:
+    return extract_literals(_GLUED_UNIT.sub(r"\1 ", text))
+
+
+def _spans(literal: Literal, text: str) -> list[tuple[int, int]]:
+    """Where `literal` sits in `text` — a unit may be glued to its particle."""
+
+    if literal.kind == "unit":
+        pattern = _LEFT_DIGIT + re.escape(literal.value) + r"\s*" + re.escape(literal.key)
+        if literal.key[-1:].isascii() and literal.key[-1:].isalpha():
+            pattern += r"(?![A-Za-z])"
+    else:
+        value = literal.value
+        left = _LEFT_DIGIT if value[:1].isdigit() else ""
+        right = _RIGHT_DIGIT if value[-1:].isdigit() else ""
+        pattern = left + re.escape(value) + right
+    flags = re.IGNORECASE if literal.kind == "bool" else 0
+    return [found.span() for found in re.finditer(pattern, text, flags)]
+
+
+def _sentences(text: str) -> list[tuple[int, int]]:
+    bounds: list[tuple[int, int]] = []
+    start = 0
+    for end in _SENTENCE_END.finditer(text):
+        bounds.append((start, end.start()))
+        start = end.end()
+    bounds.append((start, len(text)))
+    return bounds
+
+
+def _current_values(
+    named: Sequence[Literal], b_literals: Sequence[Literal], text: str
+) -> tuple[list[Literal], list[Literal]]:
+    """(candidates, held) — which of the values the opinion names may be A.
+
+    A value followed by a keep word is held back. Of the rest, the ones
+    written before B in B's own sentence ('3.2 에서 3.3 으로') are the swap's
+    from side; once there is such a side, a value mentioned anywhere else
+    ('4.0 은 이미 지원') is context, not A. Without one ('3.2 로 되어 있네요.
+    4.0 으로 바꿔 주세요'), every value not kept stays a candidate.
+    """
+
+    kept = [
+        literal
+        for literal in named
+        if any(_KEEP.match(text, end) for _, end in _spans(literal, text))
+    ]
+    free = [literal for literal in named if literal not in kept]
+    b_starts = [start for target in b_literals for start, _ in _spans(target, text)]
+    before: list[Literal] = []
+    for first, last in _sentences(text):
+        cut = min((start for start in b_starts if first <= start < last), default=None)
+        if cut is None:
+            continue
+        before.extend(
+            literal
+            for literal in free
+            if literal not in before
+            and any(first <= start and end <= cut for start, end in _spans(literal, text))
+        )
+    candidates = before or free
+    return candidates, [literal for literal in named if literal not in candidates]
+
+
 def _resolve_a(
     spec_a: str, b: str, opinion_text: str, section: str
 ) -> tuple[str, str, tuple[str, ...]]:
     """(A, source, candidates) — A as the section spells it, '' when undecided.
 
     The human outranks 3a, and 3a outranks inference: a current value the
-    opinion itself names wins, then 3a's A if the section holds it, then the
-    one value in the section that B could replace (same kind — and same unit
-    or key). More than one such value is ambiguous and comes back as
-    candidates; none leaves A undecided. Inference never overrides the
+    opinion itself names wins (`_current_values` — never one the human said
+    to keep), then 3a's A if the section holds it and the human did not hold
+    it back (source 'held' when that is the only reason A is undecided),
+    then the one value in the section that B could replace (same kind — and
+    same unit or key). More than one such value is ambiguous and comes back
+    as candidates; none leaves A undecided. Inference never overrides the
     human: once the opinion names a current value, a section that does not
-    hold it is not given a look-alike ('3.2' is not '13.2').
+    hold it is not given a look-alike ('3.2' is not '13.2'). Nor does it
+    guess when the section already reads B — the lone other value may be
+    one the edit must not touch, so it comes back as a candidate to ask.
     """
 
     b_literals = extract_literals(b)
     replaceable: list[Literal] = []
     named: list[Literal] = []
+    held: list[Literal] = []
     stated: tuple[str, ...] = ()
     if b_literals:
         replaceable = [
@@ -388,30 +477,34 @@ def _resolve_a(
         ]
         named = [
             literal
-            for literal in extract_literals(opinion_text)
+            for literal in _opinion_literals(opinion_text)
             if _compatible(literal, b_literals)
             and not any(_same_literal(literal, target) for target in b_literals)
         ]
+        candidates, held = _current_values(named, b_literals, opinion_text)
         stated = _unique(
             [
                 _surface(literal, section)
                 for literal in replaceable
-                if any(_same_literal(literal, own) for own in named)
+                if any(_same_literal(literal, own) for own in candidates)
             ]
         )
         if len(stated) == 1:
             return stated[0], "opinion", ()
     located = _locate(spec_a, section)
-    if located and (not stated or located in stated):
+    vetoed = located is not None and any(
+        _same_literal(own, kept) for own in extract_literals(located) for kept in held
+    )
+    if located and not vetoed and (not stated or located in stated):
         return located, "spec", ()
     if len(stated) > 1:
         return "", "", stated
     if named:
-        return "", "", ()
+        return "", "held" if vetoed else "", ()
     surfaces = _unique([_surface(literal, section) for literal in replaceable])
-    if len(surfaces) == 1:
+    if len(surfaces) == 1 and _locate(b, section) is None:
         return surfaces[0], "code", ()
-    return "", "", surfaces if len(surfaces) > 1 else ()
+    return "", "", surfaces
 
 
 def _tier(terms: Sequence[str], unit: _Unit) -> str:
@@ -497,9 +590,18 @@ def _judge(
     section = unit.text
     a, source, candidates = _resolve_a(spec_a, b, opinion_text, section)
     if candidates:
+        note = (
+            f"대상 절에 바꿀 수 있는 현재 값이 여럿이다: {', '.join(candidates)}"
+            if len(candidates) > 1
+            else f"목표 값이 이미 절에 있어 {candidates[0]!r} 을 현재 값으로 단정하지 않는다"
+        )
         return SpecEntry(
-            **common, **pair, decision="clarify", a_candidates=candidates,
-            notes=(f"대상 절에 바꿀 수 있는 현재 값이 여럿이다: {', '.join(candidates)}",),
+            **common, **pair, decision="clarify", a_candidates=candidates, notes=(note,)
+        )
+    if source == "held":
+        return SpecEntry(
+            **common, **pair, decision="spec_error",
+            notes=(f"스펙의 현재 값 {spec_a!r} 은 의견이 바꿀 값으로 쓰지 않은 값이다",),
         )
     if not a:
         if _locate(b, section) is None:
@@ -711,7 +813,11 @@ def spec_verdict(entry: SpecEntry, spec: Spec) -> Verdict:
                 "현재 값이 없어 편집하지 않았다"
             ),
         )
-    if source.decision == "clarify":
+    if source.decision == "clarify" and len(source.a_candidates) == 1:
+        text = (
+            f"{prefix}목표 값이 이미 절에 있어 되묻는다 — 후보 {source.a_candidates[0]}"
+        )
+    elif source.decision == "clarify":
         text = f"{prefix}현재 값 후보가 여럿이라 되묻는다 — {', '.join(source.a_candidates)}"
     elif source.decision == "missing":
         text = f"{prefix}대상 미확인 — 앵커 0건"

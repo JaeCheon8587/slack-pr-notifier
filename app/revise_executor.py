@@ -636,12 +636,19 @@ async def _notify_revise_success(
     # The MR context is fetched *before* the post because the round message
     # now carries an AI 요약 of the round's new head, exactly like the open
     # notification (사용자 결정). The same fetch is reused below by the
-    # round report and the mrdoc rail, so this costs one GitLab round-trip,
-    # not two. Both steps are best-effort: a failed fetch or a failed
-    # review leaves ``review`` None and the round notification still goes
-    # out — it must never depend on AI content.
+    # legacy round report and the mrdoc gate, so this costs one GitLab
+    # round-trip, not two.
+    #
+    # Two independent consumers gate the fetch, so it is skipped only when
+    # neither wants it: ``report_html_enabled`` for the legacy report (the
+    # rail re-reads the file list itself) and ``ai_enabled`` for the 요약.
+    # Tying it to the report flag alone would silently drop the AI 요약 on
+    # a report-disabled deployment (사용자 결정: AI_ENABLED 기준으로 분리).
+    # Both steps are best-effort: a failed fetch or a failed review leaves
+    # ``review`` None and the round notification still goes out — it must
+    # never depend on AI content.
     context: dict[str, Any] | None = None
-    if settings.gitlab_token:
+    if settings.gitlab_token and (settings.report_html_enabled or settings.ai_enabled):
         try:
             context = await GitLabClient(
                 settings.gitlab_url,
@@ -682,10 +689,13 @@ async def _notify_revise_success(
     # summary + report.html land in this round message's thread. MRs the
     # mrdoc gate rejects (and rounds that changed nothing) keep the legacy
     # round report. Every failure is swallowed -- the round notification
-    # itself is already final at this point.
+    # itself is already final at this point. The context read above feeds the
+    # AI 요약, the legacy report, and the mrdoc gate; the rail re-reads the
+    # file list itself once GitLab's MR head has caught up with the pushed sha.
     if new_ts:
         mrdoc_owned = head_moved and mrdoc_rail.handles_mr(settings, context)
-        if settings.report_html_enabled and not mrdoc_owned:
+        legacy = settings.report_html_enabled and not mrdoc_owned
+        if legacy:
             try:
                 review_like = SimpleNamespace(
                     summary=f"라운드 {round_number} 개선 완료 — {summary or '수정 요약 없음'}",
@@ -710,13 +720,16 @@ async def _notify_revise_success(
                     session_id,
                     exc_info=True,
                 )
-        if head_moved:
+        # A failed context fetch already fell back to the legacy report; the
+        # rail's own gate would add a second report for the same round.
+        if head_moved and not (legacy and context is None):
             try:
                 mrdoc_rail.start_mrdoc_review(
                     settings,
                     mr,
                     {"channel": channel, "ts": new_ts},
                     context=context,
+                    expected_sha=mr["sha"],
                 )
             except Exception:
                 logger.warning(

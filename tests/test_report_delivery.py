@@ -440,7 +440,10 @@ def test_revise_round_message_carries_ai_summary(
     monkeypatch.setattr(settings, "action_token_secret", "secret")
     monkeypatch.setattr(settings, "gitlab_url", "https://gitlab.example.com")
     monkeypatch.setattr(settings, "gitlab_token", "glpat-test")
+    # 리포트는 끄고 AI 만 켠 배치 — 컨텍스트 조회가 report_html_enabled 하나에
+    # 묶여 있으면 여기서 AI 요약이 조용히 사라진다 (사용자 결정으로 분리한 지점).
     monkeypatch.setattr(settings, "report_html_enabled", False)
+    monkeypatch.setattr(settings, "ai_enabled", True)
 
     review = MRReview(summary="요약", key_changes=["변경"], points_to_watch=["주의"])
     posts: list[dict[str, Any]] = []
@@ -528,6 +531,7 @@ def test_revise_round_message_survives_a_failed_context_fetch(
     monkeypatch.setattr(settings, "gitlab_url", "https://gitlab.example.com")
     monkeypatch.setattr(settings, "gitlab_token", "glpat-test")
     monkeypatch.setattr(settings, "report_html_enabled", False)
+    monkeypatch.setattr(settings, "ai_enabled", True)
 
     posts: list[dict[str, Any]] = []
 
