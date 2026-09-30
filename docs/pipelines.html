@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>*,*::before,*::after{box-sizing:border-box}body{margin:0}img{max-width:100%}</style>
-<title>MR 리뷰 봇 파이프라인</title>
+<title>MR 리뷰 에이전트</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@500;600&family=IBM+Plex+Sans+KR:wght@400;500;700&display=swap">
@@ -125,6 +125,7 @@ h2 { margin: 0; font-size: clamp(22px, 3.4vw, 27px); line-height: 1.3; text-wrap
 .sh .role { grid-column: 2; margin: 0; color: var(--ink-2); max-width: 46em; }
 .sh .role b { color: var(--ink); }
 .flag { display: inline-block; margin-left: 10px; vertical-align: 3px; font-size: 12.5px; font-weight: 700; padding: 2px 10px; border-radius: 999px; background: var(--warn-soft); color: var(--warn); }
+.flag.ok { background: var(--good-soft); color: var(--good); }
 #s3 { --c: var(--mw); }
 #s4 { --c: var(--bot); }
 #s5 { --c: var(--review); }
@@ -164,6 +165,12 @@ svg .bracket { stroke: var(--rule); stroke-width: 1.5; }
 .ah { fill: var(--edge); }
 .ah-mr { fill: var(--review); }
 .ah-rv { fill: var(--revise); }
+svg .s-mw { fill: var(--mw-soft); stroke: var(--mw); stroke-width: 2; }
+svg .s-rv { fill: var(--revise-soft); stroke: var(--revise); stroke-width: 2; }
+svg .s-wn { fill: var(--warn-soft); stroke: var(--warn); stroke-width: 2; }
+svg .s-gd { fill: var(--good-soft); stroke: var(--good); stroke-width: 2; }
+svg .e-wn { fill: none; stroke: var(--warn); stroke-width: 1.6; }
+.ah-wn { fill: var(--warn); }
 
 /* ---------- cards ---------- */
 .nodes { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
@@ -200,6 +207,7 @@ svg .bracket { stroke: var(--rule); stroke-width: 1.5; }
 .states { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 14px; color: var(--ink-2); }
 .states code { background: var(--paper); border: 1px solid var(--rule); border-radius: 6px; padding: 1px 8px; font-size: 13px; color: var(--ink); }
 .states .lab { color: var(--ink-3); margin-right: 4px; }
+.sub-h { margin: 6px 0 -4px; font-size: 14px; color: var(--ink-3); font-weight: 600; letter-spacing: .04em; }
 
 /* ---------- 04 slack bot ---------- */
 .msgs { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
@@ -242,15 +250,16 @@ footer { margin-top: 56px; padding-top: 16px; border-top: 1px solid var(--rule);
     <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="ah"/></marker>
     <marker id="ah-mr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="ah-mr"/></marker>
     <marker id="ah-rv" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="ah-rv"/></marker>
+    <marker id="ah-wn" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="ah-wn"/></marker>
   </defs>
 </svg>
 
 <div class="page">
 
 <header>
-  <p class="eyebrow">개발자 공유 · 코드 기준 2026-09-28 · feature/python-middleware</p>
-  <h1>MR 리뷰 봇 파이프라인</h1>
-  <p class="lead">GitLab MR의 문서 변경을 <b>Slack에서 리뷰하고, 의견대로 고치고, 승인까지</b> 처리하는 서버입니다. 미들웨어 위에 파이프라인 두 개가 올라가 있습니다.</p>
+  <p class="eyebrow">개발자 공유 · 코드 기준 2026-09-29 · feature/python-middleware</p>
+  <h1>MR 리뷰 에이전트</h1>
+  <p class="lead">GitLab MR의 문서 변경을 <b>Slack에서 리뷰하고, 의견대로 고치고, 승인까지</b> 처리하는 에이전트입니다. 미들웨어 위에 파이프라인 두 개가 올라가 있습니다.</p>
   <ul class="legend" aria-label="그림 읽는 법">
     <li><span class="sw"></span>도구 노드 · 결정적 코드</li>
     <li><span class="sw llm"></span>LLM 노드 · codex 호출</li>
@@ -289,7 +298,7 @@ footer { margin-top: 56px; padding-top: 16px; border-top: 1px solid var(--rule);
       <ul>
         <li><span class="st on">사용</span>GitLab 폴러 + Slack Socket Mode</li>
         <li><span class="st on">켜짐</span>AI 요약 · MR 리뷰(mrdoc)</li>
-        <li><span class="st off">배치별</span>리바이스 — 기본값 <code>AI_RUNNER=stub</code>(꺼짐). <code>.env</code>는 배치마다 다르며, <code>staged</code>면 봇이 문서를 고쳐 MR 브랜치에 커밋·푸시합니다.</li>
+        <li><span class="st on">켜짐</span>리바이스 (<code>AI_RUNNER=staged</code>)</li>
       </ul>
     </div>
   </div>
@@ -299,7 +308,7 @@ footer { margin-top: 56px; padding-top: 16px; border-top: 1px solid var(--rule);
 <section id="s2">
   <div class="sh">
     <span class="no">02</span><h2>전체 흐름</h2>
-    <p class="role">모든 연결은 서버가 먼저 엽니다. GitLab은 주기적으로 조회하고, Slack에는 소켓으로 붙습니다.</p>
+    <p class="role">모든 연결은 미들웨어가 먼저 엽니다. GitLab은 주기적으로 조회하고, Slack에는 소켓으로 붙습니다.</p>
   </div>
   <figure class="fig" style="margin:0">
     <svg viewBox="0 0 1000 380" role="img" aria-labelledby="f2t">
@@ -362,7 +371,7 @@ footer { margin-top: 56px; padding-top: 16px; border-top: 1px solid var(--rule);
       <path class="e-rv" d="M525,230 V288" marker-end="url(#ah-rv)"/>
       <text x="535" y="264" class="lbl">변경 요청</text>
 
-      <text x="20" y="40" class="grp">모든 화살표는 서버가 먼저 여는 연결입니다 · 웹훅 · Slack HTTP 미사용</text>
+      <text x="20" y="40" class="grp">모든 화살표는 미들웨어가 먼저 여는 연결입니다 · 웹훅 · Slack HTTP 미사용</text>
     </svg>
   </figure>
   <ol class="steps">
@@ -430,7 +439,6 @@ footer { margin-top: 56px; padding-top: 16px; border-top: 1px solid var(--rule);
       <text x="734" y="146" class="lbl">라운드 후</text>
     </svg>
   </figure>
-  <p class="states"><span class="lab">세션 상태</span><code>reviewing</code>리뷰 대기 · <code>revising</code>수정 중 · <code>merging</code>머지 확인 중 · <code>manual</code>사람 처리 · <code>merged</code>완료</p>
   <div class="nodes">
     <div class="node"><div class="top"><span class="id">gitlab_poller</span></div><p>60초마다 GitLab API로 열린 MR을 조회해 DB와 비교합니다. 새 MR, 커밋 변경, 닫힘 · 머지, 다시 열림을 찾아 ingest로 넘깁니다.</p></div>
     <div class="node"><div class="top"><span class="id">slack_socket</span></div><p>Slack에 WebSocket으로 붙어 버튼 · 모달 입력을 받고, 바로 응답한 뒤 slack_dispatch로 넘깁니다.</p></div>
@@ -442,6 +450,62 @@ footer { margin-top: 56px; padding-top: 16px; border-top: 1px solid var(--rule);
     <div class="node"><div class="top"><span class="id">sweeper</span></div><p>머지나 수정이 제시간에 끝나지 않은 세션을 manual로 넘깁니다.</p></div>
   </div>
   <p class="note">코드에는 GitLab 웹훅(<code>gitlab_webhook</code>)과 Slack HTTP(<code>slack_actions</code>) 입구도 있습니다. 같은 처리기로 이어지지만 지금 구성에서는 쓰지 않습니다.</p>
+
+  <h3 class="sub-h">상태 천이</h3>
+  <figure class="fig" style="margin:0">
+    <svg viewBox="0 0 840 356" role="img" aria-labelledby="f3st">
+      <title id="f3st">세션 상태 5개와 전이</title>
+
+      <text x="170" y="22" text-anchor="middle" class="lbl">MR 열림</text>
+      <path class="e" d="M170,28 V50" marker-end="url(#ah)"/>
+
+      <rect class="s-mw" x="104" y="54" width="132" height="52" rx="10"/>
+      <text x="170" y="77" text-anchor="middle" class="nid">reviewing</text>
+      <text x="170" y="95" text-anchor="middle" class="nsub">리뷰 대기 · 버튼 유효</text>
+
+      <rect class="tool" x="364" y="54" width="132" height="52" rx="10"/>
+      <text x="430" y="77" text-anchor="middle" class="nid">merging</text>
+      <text x="430" y="95" text-anchor="middle" class="nsub">머지 확인 중</text>
+
+      <rect class="s-gd" x="644" y="54" width="132" height="52" rx="10"/>
+      <text x="710" y="77" text-anchor="middle" class="nid">merged</text>
+      <text x="710" y="95" text-anchor="middle" class="nsub">완료 · 종료</text>
+
+      <rect class="s-rv" x="104" y="174" width="132" height="52" rx="10"/>
+      <text x="170" y="197" text-anchor="middle" class="nid">revising</text>
+      <text x="170" y="215" text-anchor="middle" class="nsub">수정 중 · 동결</text>
+
+      <rect class="s-wn" x="364" y="284" width="132" height="52" rx="10"/>
+      <text x="430" y="307" text-anchor="middle" class="nid">manual</text>
+      <text x="430" y="325" text-anchor="middle" class="nsub">사람 처리</text>
+
+      <path class="e" d="M236,80 H360" marker-end="url(#ah)"/>
+      <text x="298" y="70" text-anchor="middle" class="lbl">승인</text>
+      <path class="e" d="M496,80 H640" marker-end="url(#ah)"/>
+      <text x="568" y="70" text-anchor="middle" class="lbl">머지 확인</text>
+
+      <path class="e" d="M140,106 V170" marker-end="url(#ah)"/>
+      <text x="130" y="142" text-anchor="end" class="lbl">의견 제출</text>
+      <path class="e" d="M200,170 V110" marker-end="url(#ah)"/>
+      <text x="210" y="136" class="lbl">revise 성공</text>
+      <text x="210" y="152" class="lbl">round+1</text>
+
+      <path class="e-wn" d="M430,106 V280" marker-end="url(#ah-wn)"/>
+      <text x="440" y="190" class="lbl">poll 실패 · 사람 push</text>
+
+      <path class="e-wn" d="M236,214 L358,288" marker-end="url(#ah-wn)"/>
+      <text x="246" y="250" class="lbl">시간 초과 · 사람 push</text>
+      <text x="246" y="266" class="lbl">재시도 소진 · 3라운드</text>
+
+      <path class="e" d="M496,300 L638,110" marker-end="url(#ah)"/>
+      <text x="568" y="216" class="lbl">사람이 직접 머지</text>
+
+      <path class="e dash" d="M364,310 H44 V80 H100" marker-end="url(#ah)"/>
+      <text x="90" y="330" class="lbl">MR 재오픈 — 외부 닫힘으로 manual이 된 세션만</text>
+    </svg>
+  </figure>
+  <p class="states"><span class="lab">세션 상태</span><code>reviewing</code>리뷰 대기 · <code>merging</code>머지 확인 중 · <code>revising</code>수정 중 · <code>manual</code>사람 처리 · <code>merged</code>완료</p>
+  <p class="note"><b>어느 상태에서든</b> 사람이 GitLab에서 직접 머지하면 <code>merged</code>, 직접 닫으면 <code>manual</code>로 갑니다. 모든 전이는 <code>UPDATE … WHERE status=?</code> 한 문장으로만 일어나, 중복 클릭이나 동시에 들어온 이벤트는 뒤에 온 쪽이 거부됩니다. <code>manual</code>을 운영자가 손으로 되살리는 경로는 전이만 예약돼 있고 아직 없습니다 — 위의 MR 재오픈 관측만 동작합니다.</p>
 </section>
 
 <!-- 04 슬랙 봇 -->
@@ -484,7 +548,7 @@ footer { margin-top: 56px; padding-top: 16px; border-top: 1px solid var(--rule);
 <section id="s5">
   <div class="sh">
     <span class="no">05</span><h2>MR 리뷰 파이프라인</h2>
-    <p class="role"><b>문서 변경을 섹션 단위로 쪼개 분류하고 리포트로 만듭니다.</b> 변경 파일의 80% 이상이 .md / .mdx인 MR에서 돌고, 산출물 파일이 있으면 그 노드는 끝난 것으로 봅니다.</p>
+    <p class="role"><b>문서 변경을 섹션 단위로 쪼개 분류하고 리포트로 만듭니다.</b> <code>MRDOC_ENABLED</code>과 <code>MRDOC_SATELLITE_ENABLED</code>가 모두 켜져 있고 변경 파일의 80% 이상이 .md / .mdx인 MR에서 돌고, 산출물 파일이 있으면 그 노드는 끝난 것으로 봅니다.</p>
   </div>
   <figure class="fig" style="margin:0">
     <svg viewBox="0 0 1000 330" role="img" aria-labelledby="f5t">
@@ -557,7 +621,7 @@ footer { margin-top: 56px; padding-top: 16px; border-top: 1px solid var(--rule);
     <div class="node"><div class="top"><span class="id">changeset</span><span class="k">도구</span><span class="art">00-changeset</span></div><p>MR의 변경 파일과 변경 줄 범위를 정리합니다.</p></div>
     <div class="node"><div class="top"><span class="id">structure</span><span class="k">도구</span><span class="art">05-structure</span></div><p>전후 문서를 섹션 트리로 만들어 짝짓고, 바뀐 섹션 하나를 변경 유닛 하나로 만듭니다.</p></div>
     <div class="node"><div class="top"><span class="id">literals</span><span class="k">도구</span><span class="art">06-literals</span></div><p>유닛마다 숫자 · 버전 · 단위 · 키-값의 전후 차이를 뽑습니다.</p></div>
-    <div class="node"><div class="top"><span class="id">excerpt</span><span class="k">도구</span><span class="art">07-excerpt</span></div><p>LLM에 줄 원문 발췌를 만듭니다. 문서 본문이 들어가는 유일한 산출물입니다.</p></div>
+    <div class="node"><div class="top"><span class="id">excerpt</span><span class="k">도구</span><span class="art">07-excerpts</span></div><p>LLM에 줄 원문 발췌를 만듭니다. 문서 본문이 들어가는 유일한 산출물입니다.</p></div>
     <div class="node is-llm"><div class="top"><span class="id">analysis</span><span class="k llm">LLM</span><span class="art">20-analysis/</span></div><p>파일 묶음마다 유닛 설명, 분류 주장, 파일 요약을 씁니다.</p></div>
     <div class="node"><div class="top"><span class="id">levelcheck</span><span class="k">도구</span><span class="art">30-levelcheck</span></div><p>분류를 도구 증거로 확정합니다. 값이 바뀌었으면 의미(값)로 올리고 평가 표현 금지어를 잡습니다.</p></div>
     <div class="node is-llm"><div class="top"><span class="id">verifier</span><span class="k llm">LLM</span><span class="art">40-verifier</span></div><p>설명이 원문과 맞는지 유닛마다 판정하고 개수를 대조합니다. 고칠 대상은 FIX로 남깁니다.</p></div>
@@ -571,7 +635,7 @@ footer { margin-top: 56px; padding-top: 16px; border-top: 1px solid var(--rule);
 <!-- 06 리바이스 -->
 <section id="s6">
   <div class="sh">
-    <span class="no">06</span><h2>리바이스 파이프라인<span class="flag">현재 꺼짐 · 실사용 검증 전</span></h2>
+    <span class="no">06</span><h2>리바이스 파이프라인<span class="flag ok">현재 켜짐 · 라이브 검증됨</span></h2>
     <p class="role"><b>리뷰어 의견대로 문서를 고쳐 MR 브랜치에 커밋합니다.</b> LLM이 낸 결과는 다음 도구 노드가 검사하고, 걸리면 원인에 맞는 단계로 돌려보냅니다.</p>
   </div>
   <figure class="fig" style="margin:0">
@@ -645,7 +709,7 @@ footer { margin-top: 56px; padding-top: 16px; border-top: 1px solid var(--rule);
     <div class="node is-llm"><div class="top"><span class="id">edit · 3b</span><span class="k llm">LLM · 쓰기</span><span class="art">30-edit</span></div><p>허용된 파일 안에서만 문서를 편집합니다. 쓰기 권한은 이 노드에만 있습니다.</p></div>
     <div class="node"><div class="top"><span class="id">gate</span><span class="k">도구</span><span class="art">35-gate</span></div><p>허용 밖 파일과 문서가 아닌 파일은 되돌리고, A → B 치환 여부와 변경 크기를 검사합니다.</p></div>
     <div class="node is-llm"><div class="top"><span class="id">verify · 3c</span><span class="k llm">LLM · 읽기 전용</span><span class="art">40-verify</span></div><p>diff를 보고 의견마다 반영 · 부분 반영 · 미반영을 판정합니다.</p></div>
-    <div class="node"><div class="top"><span class="id">summary</span><span class="k">도구</span><span class="art">50-summary</span></div><p>반영 판정을 받은 편집만 커밋 대상으로 남기고, 변경 요약과 미반영 목록을 만듭니다.</p></div>
+    <div class="node"><div class="top"><span class="id">summary</span><span class="k">도구</span><span class="art">50-summary</span></div><p>반영 · 부분 반영 판정을 받은 편집을 커밋 대상으로 남기고, 변경 요약과 미반영 목록을 만듭니다.</p></div>
   </div>
 </section>
 
@@ -662,6 +726,7 @@ footer { margin-top: 56px; padding-top: 16px; border-top: 1px solid var(--rule);
         <li><b>산출물 파일로 진행 상태를 판단</b>해서 중간부터 다시 시작할 수 있음.</li>
         <li><b>밖에서 들어오는 연결 없이</b> 동작. 폴러 + Socket Mode.</li>
         <li>검증하지 못한 것은 <b>"미검증"으로 표시</b>하고 정상으로 숨기지 않음.</li>
+        <li>리바이스 <b>라이브 검증 통과</b>. 의견 1건 → 3곳 수정 → 커밋 · push, 3c 판정 <code>applied 1 / partial 0 / unapplied 0</code>.</li>
       </ul>
     </div>
     <div class="col hard">
@@ -679,10 +744,6 @@ footer { margin-top: 56px; padding-top: 16px; border-top: 1px solid var(--rule);
         <li>리터럴 검증에 떨어진 편집이 재시도를 다 쓴 뒤 <b>커밋될 수 있음</b>.</li>
         <li>리바이스가 제한 시간을 넘기면 <b>이전 실행과 재시도가 겹칠 수 있음</b>.</li>
         <li>리바이스 주의 항목이 <b>Slack까지 전달되지 않음</b>.</li>
-        <li>리바이스 <b>실사용 검증</b>은 MR !47에서 1회 했고, 아래 세 건이 그때 드러났습니다.</li>
-        <li>edit 산출물 파서가 <b>여러 줄 리스트와 프론트매터 앞 산문을 거부</b>해, 내용이 멀쩡한 산출물이 형식 때문에 폐기됨(라운드 2회 연속 abort).</li>
-        <li>의견 하나에 지시를 여럿 담으면 스펙이 <code>from</code>/<code>to</code>를 <code>null</code>로 떨어뜨리고 <b>기계 대조를 건너뜀</b> — 결정론 게이트가 스스로 꺼짐.</li>
-        <li>edit이 원문을 읽지 않고 <b>&ldquo;이미 목표 상태&rdquo;라 단정</b>한 사례. 게이트가 꺼진 상태에선 걸러낼 장치가 없음.</li>
         <li>재시작하면 <b>진행 중이던 리바이스가 사라짐</b>.</li>
         <li><b>MR을 쓰지 않는 팀</b>에 적용하는 방법.</li>
       </ul>
@@ -690,7 +751,7 @@ footer { margin-top: 56px; padding-top: 16px; border-top: 1px solid var(--rule);
   </div>
 </section>
 
-<footer>MR 리뷰 봇 · 코드 기준 2026-09-28 · 노드 이름은 코드의 식별자 그대로입니다.</footer>
+<footer>MR 리뷰 에이전트 · 코드 기준 2026-09-29 · 노드 이름은 코드의 식별자 그대로입니다.</footer>
 
 </div>
 
